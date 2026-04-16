@@ -1,0 +1,4 @@
+@import "tailwindcss";
+@import "@netcfs/styles/globals.css";
+
+@keyframes spin { to { transform: rotate(360deg); } }

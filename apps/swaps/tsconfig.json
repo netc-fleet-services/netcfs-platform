@@ -1,0 +1,19 @@
+{
+  "extends": "@netcfs/config/tsconfig/nextjs.json",
+  "compilerOptions": {
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@netcfs/ui": ["../../packages/ui/src/index.ts"],
+      "@netcfs/ui/*": ["../../packages/ui/src/*"],
+      "@netcfs/auth": ["../../packages/auth/src/index.ts"],
+      "@netcfs/auth/*": ["../../packages/auth/src/*"],
+      "@netcfs/db": ["../../packages/db/src/index.ts"],
+      "@netcfs/db/*": ["../../packages/db/src/*"],
+      "@netcfs/utils": ["../../packages/utils/src/index.ts"],
+      "@netcfs/utils/*": ["../../packages/utils/src/*"],
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}

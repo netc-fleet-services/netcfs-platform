@@ -1,0 +1,21 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Next.js
+.next
+out
+dist
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Turbo
+.turbo
+
+# Misc
+.DS_Store
+*.log
+.vercel
