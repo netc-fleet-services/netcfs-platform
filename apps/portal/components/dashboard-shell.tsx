@@ -104,8 +104,10 @@ export function DashboardShell({ profile, children }: Props) {
 
   function toggleTheme() {
     const next = theme === 'dark' ? 'light' : 'dark'
+    const themeClass = next === 'dark' ? 'theme-midnight' : 'theme-daylight'
     setTheme(next)
-    document.documentElement.className = `theme-${next}`
+    document.documentElement.className = themeClass
+    localStorage.setItem('theme', next === 'dark' ? 'midnight' : 'daylight')
   }
 
   async function handleSignOut() {
@@ -116,29 +118,9 @@ export function DashboardShell({ profile, children }: Props) {
   }
 
   const Logo = (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 32,
-          height: 32,
-          borderRadius: '0.5rem',
-          backgroundColor: 'var(--primary)',
-          flexShrink: 0,
-        }}
-      >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0a0a0a" strokeWidth="2.5">
-          <rect x="1" y="3" width="15" height="13" rx="2" />
-          <path d="M16 8h4l3 4v4h-7V8z" />
-          <circle cx="5.5" cy="18.5" r="2.5" />
-          <circle cx="18.5" cy="18.5" r="2.5" />
-        </svg>
-      </div>
-      <span style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--on-surface)', letterSpacing: '-0.01em' }}>
-        NETCFS
-      </span>
+    <div style={{ padding: '0 0.25rem' }}>
+      <img src="/logo-main.png" alt="NETC Fleet Services" className="logo-light" style={{ height: 28, width: 'auto', display: 'block' }} />
+      <img src="/logo-email.png" alt="NETC Fleet Services" className="logo-dark" style={{ height: 28, width: 'auto', display: 'block' }} />
     </div>
   )
 
