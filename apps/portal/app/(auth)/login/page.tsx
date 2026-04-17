@@ -46,29 +46,12 @@ export default function LoginPage() {
       <div style={{ width: '100%', maxWidth: 380 }}>
         {/* Logo / Brand */}
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 52,
-              height: 52,
-              borderRadius: '0.875rem',
-              backgroundColor: 'var(--primary)',
-              marginBottom: '1rem',
-            }}
-          >
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0a0a0a" strokeWidth="2.5">
-              <rect x="1" y="3" width="15" height="13" rx="2" />
-              <path d="M16 8h4l3 4v4h-7V8z" />
-              <circle cx="5.5" cy="18.5" r="2.5" />
-              <circle cx="18.5" cy="18.5" r="2.5" />
-            </svg>
-          </div>
-          <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, color: 'var(--on-surface)' }}>
-            NETCFS Platform
-          </h1>
-          <p style={{ margin: '0.375rem 0 0', fontSize: '0.875rem', color: 'var(--on-surface-muted)' }}>
+          <img
+            src="/logo-main.png"
+            alt="NETC Fleet Services"
+            style={{ height: 48, width: 'auto', margin: '0 auto 1.25rem', display: 'block' }}
+          />
+          <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--on-surface-muted)' }}>
             Sign in to continue
           </p>
         </div>
