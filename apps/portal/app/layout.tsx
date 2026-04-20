@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'NETC Fleet Services',
+  title: 'NETC Apps Portal',
   description: 'Internal operations platform for NETC Fleet Services',
   icons: { icon: '/favicon.ico' },
 }
