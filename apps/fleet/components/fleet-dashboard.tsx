@@ -163,21 +163,6 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--surface)' }}>
-      <header style={{ borderBottom: '1px solid var(--outline)', padding: '0 1.25rem' }}>
-        <div style={{ maxWidth: 1400, margin: '0 auto', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <img src="/logo-main.png" alt="NETC Fleet Services" style={{ height: 32 }} />
-            <span style={{ fontWeight: 700, fontSize: '0.875rem', color: 'var(--on-surface-muted)' }}>Fleet Tracker</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <span style={{ fontSize: '0.8125rem', color: 'var(--on-surface-muted)' }}>{profile.email}</span>
-            {profile.role === 'admin' && (
-              <a href="/admin" style={{ fontSize: '0.8125rem', color: 'var(--primary)', textDecoration: 'none', fontWeight: 600 }}>Admin</a>
-            )}
-          </div>
-        </div>
-      </header>
-
       <main style={{ maxWidth: 1400, margin: '0 auto', padding: '1.5rem 1.25rem 4rem' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.5rem' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
