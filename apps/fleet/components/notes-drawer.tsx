@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { NOTE_TYPE, NOTE_TYPE_LABELS, STATUS_LABELS, CAN_ADD_MECHANIC_NOTE, ROLE } from '@/lib/constants'
+import { NOTE_TYPE, NOTE_TYPE_LABELS, STATUS_LABELS, ROLE } from '@/lib/constants'
 import { MaintenanceBadge } from './maintenance-badge'
 import type { Truck, FleetProfile, TruckNote, StatusHistoryEntry } from '@/lib/types'
 
@@ -58,7 +58,7 @@ interface Props {
 type TimelineEntry = (TruckNote & { _type: 'note' }) | (StatusHistoryEntry & { _type: 'history' })
 
 export function NotesDrawer({ truck, profile, onAddNote, onClose }: Props) {
-  const [noteType, setNoteType] = useState(profile?.role === ROLE.DRIVER ? NOTE_TYPE.DRIVER : NOTE_TYPE.MECHANIC)
+  const [noteType, setNoteType] = useState<typeof NOTE_TYPE[keyof typeof NOTE_TYPE]>(profile?.role === ROLE.DRIVER ? NOTE_TYPE.DRIVER : NOTE_TYPE.MECHANIC)
   const [noteBody, setNoteBody] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [activeTab, setActiveTab] = useState('history')
@@ -72,7 +72,7 @@ export function NotesDrawer({ truck, profile, onAddNote, onClose }: Props) {
   const history: TimelineEntry[] = (truck.status_history || []).map(h => ({ ...h, _type: 'history' as const }))
   const timeline = [...notes, ...history].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
-  async function handleAddNote(e: React.FormEvent) {
+  async function handleAddNote(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!noteBody.trim()) return
     setSubmitting(true)
@@ -219,8 +219,8 @@ export function NotesDrawer({ truck, profile, onAddNote, onClose }: Props) {
                           <span style={{ fontSize: '0.7rem', color: 'var(--on-surface-muted)' }}>{fmtDateTime(entry.created_at)}</span>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <span style={{ fontSize: '0.8rem', color: STATUS_COLORS[entry.old_status] || 'var(--on-surface-muted)' }}>
-                            {STATUS_LABELS[entry.old_status] || entry.old_status}
+                          <span style={{ fontSize: '0.8rem', color: STATUS_COLORS[entry.old_status ?? ''] || 'var(--on-surface-muted)' }}>
+                            {STATUS_LABELS[entry.old_status ?? ''] || entry.old_status || '—'}
                           </span>
                           <span style={{ color: 'var(--on-surface-muted)', fontSize: '0.75rem' }}>→</span>
                           <span style={{ fontSize: '0.8rem', fontWeight: 700, color: STATUS_COLORS[entry.new_status] || 'var(--on-surface)' }}>

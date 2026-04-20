@@ -22,9 +22,13 @@ interface NotifSetting {
   emails: string[]
 }
 
-const EMPTY_FORM = { unit_number: '', vin: '', category: '', location_id: '', current_status: STATUS.READY, active: true }
+interface TruckForm {
+  unit_number: string; vin: string; category: string
+  location_id: string; current_status: string; active: boolean
+}
+const EMPTY_FORM: TruckForm = { unit_number: '', vin: '', category: '', location_id: '', current_status: STATUS.READY, active: true }
 
-export function AdminSettings({ profile }: { profile: FleetProfile }) {
+export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) {
   const router = useRouter()
   const supabase = getSupabaseBrowserClient()
 
@@ -71,7 +75,7 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
     setShowTruckForm(true)
   }
 
-  async function saveTruck(e: React.FormEvent) {
+  async function saveTruck(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setSaving(true)
     setMsg('')
@@ -103,7 +107,7 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
     fetchAll()
   }
 
-  async function saveNotifSettings(e: React.FormEvent) {
+  async function saveNotifSettings(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setSaving(true)
     const { error } = await supabase.from('notification_settings').upsert(notifSettings, { onConflict: 'status_type' })

@@ -1,7 +1,7 @@
 export interface FleetProfile {
   id: string
   email: string
-  role: 'admin' | 'dispatcher' | 'mechanic' | 'driver'
+  role: 'admin' | 'shop_manager' | 'dispatcher' | 'mechanic' | 'driver'
   full_name?: string | null
 }
 
