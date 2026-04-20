@@ -1,14 +1,18 @@
 import { getUserProfile } from '@netcfs/auth/server'
 import { redirect } from 'next/navigation'
-import { ROLE_PERMISSIONS } from '@netcfs/auth/types'
-import Link from 'next/link'
+import { ROLE_PERMISSIONS, type UserRole } from '@netcfs/auth/types'
+
+const FLEET_URL       = process.env.NEXT_PUBLIC_FLEET_URL       || 'http://localhost:3001'
+const TRANSPORT_URL   = process.env.NEXT_PUBLIC_TRANSPORT_URL   || 'http://localhost:3002'
+const INSPECTIONS_URL = process.env.NEXT_PUBLIC_INSPECTIONS_URL || 'http://localhost:3003'
+const SWAPS_URL       = process.env.NEXT_PUBLIC_SWAPS_URL       || 'http://localhost:3004'
 
 const ALL_MODULES = [
   {
     id: 'fleet',
-    label: 'Fleet Tracker',
+    label: 'Maintenance Tracker',
     description: 'Real-time truck status, maintenance badges, and notes',
-    href: '/fleet',
+    href: FLEET_URL,
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <rect x="1" y="3" width="15" height="13" rx="2" />
@@ -23,7 +27,7 @@ const ALL_MODULES = [
     id: 'transport',
     label: 'Dispatch Board',
     description: 'Job scheduling, driver assignment, and route optimization',
-    href: '/transport',
+    href: TRANSPORT_URL,
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M3 12h18M3 6h18M3 18h18" />
@@ -35,7 +39,7 @@ const ALL_MODULES = [
     id: 'inspections',
     label: 'Inspections',
     description: 'Driver pre-trip inspection compliance and audit reports',
-    href: '/inspections',
+    href: INSPECTIONS_URL,
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M9 11l3 3L22 4" />
@@ -48,7 +52,7 @@ const ALL_MODULES = [
     id: 'swaps',
     label: 'Swap Optimizer',
     description: 'Fleet lifecycle cost analysis and replacement timing',
-    href: '/swaps',
+    href: SWAPS_URL,
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M7 16V4m0 0L3 8m4-4 4 4" />
@@ -88,7 +92,7 @@ export default async function HomePage() {
   const profile = await getUserProfile()
   if (!profile) redirect('/login')
 
-  const allowedModules = ROLE_PERMISSIONS[profile.role] ?? []
+  const allowedModules = ROLE_PERMISSIONS[profile.role as UserRole] ?? []
   const visibleModules = ALL_MODULES.filter((m) => allowedModules.includes(m.id))
 
   const greeting = getGreeting()
@@ -116,7 +120,7 @@ export default async function HomePage() {
         }}
       >
         {visibleModules.map((mod) => (
-          <Link key={mod.id} href={mod.href} className="app-tile">
+          <a key={mod.id} href={mod.href} className="app-tile" style={{ textDecoration: 'none' }}>
             <div
               style={{
                 display: 'flex',
@@ -140,7 +144,7 @@ export default async function HomePage() {
                 {mod.description}
               </div>
             </div>
-          </Link>
+          </a>
         ))}
       </div>
 

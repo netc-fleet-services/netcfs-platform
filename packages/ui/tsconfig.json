@@ -1,6 +1,7 @@
 {
   "extends": "@netcfs/config/tsconfig/nextjs.json",
   "compilerOptions": {
+    "jsx": "preserve",
     "paths": {}
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
