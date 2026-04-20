@@ -56,6 +56,21 @@ export function Header({ profile }: Props) {
         alignItems: 'center',
         gap: '1rem',
       }}>
+        {/* Portal home link */}
+        <a
+          href={process.env.NEXT_PUBLIC_PORTAL_URL || 'http://localhost:3000'}
+          style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', color: 'rgb(var(--on-surface-muted))', textDecoration: 'none', fontSize: '0.8rem', flexShrink: 0, padding: '0.25rem 0.5rem', borderRadius: '0.375rem', transition: 'color 0.15s' }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'rgb(var(--on-surface))')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'rgb(var(--on-surface-muted))')}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+          NETCFS
+        </a>
+
+        <span style={{ color: 'rgb(var(--outline))', fontSize: '1rem', flexShrink: 0 }}>|</span>
+
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0, color: 'rgb(var(--primary))' }}>
           <svg width="24" height="24" viewBox="0 0 32 32" fill="none">
