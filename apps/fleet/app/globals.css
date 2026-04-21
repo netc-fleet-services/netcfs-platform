@@ -9,19 +9,19 @@
   border-radius: 9999px;
   font-size: 0.8rem;
   font-weight: 500;
-  color: var(--on-surface-muted);
+  color: rgb(var(--on-surface-muted));
   background: transparent;
-  border: 1px solid var(--outline);
+  border: 1px solid rgb(var(--outline));
   cursor: pointer;
   transition: background-color 0.15s, color 0.15s, border-color 0.15s;
   white-space: nowrap;
   font-family: inherit;
 }
-.loc-tab:hover { background-color: var(--surface-high); color: var(--on-surface); }
+.loc-tab:hover { background-color: rgb(var(--surface-high)); color: rgb(var(--on-surface)); }
 .loc-tab.active {
-  background-color: var(--primary-container);
-  color: var(--on-primary-container);
-  border-color: transparent;
+  background-color: #3d2e00;
+  color: rgb(var(--primary-container));
+  border-color: rgb(var(--primary-container));
   font-weight: 600;
 }
 
