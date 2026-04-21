@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { getSupabaseBrowserClient } from '@netcfs/auth/client'
-import { STATUS } from '@/lib/constants'
+import { STATUS, CATEGORY_LABELS } from '@/lib/constants'
 import { SearchBar } from './search-bar'
 import { LocationFilter } from './location-filter'
 import { CategoryFilter } from './category-filter'
@@ -23,6 +23,22 @@ function timeAgo(iso: string | null) {
   if (mins < 60) return `${mins} min ago`
   const hrs = Math.floor(mins / 60)
   return `${hrs} hr${hrs !== 1 ? 's' : ''} ago`
+}
+
+const chipStyle: React.CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+  padding: '0.25rem 0.625rem',
+  background: 'var(--primary-container)',
+  color: 'var(--on-primary-container)',
+  borderRadius: '999px',
+  fontSize: '0.75rem',
+  fontWeight: 500,
+}
+
+const chipX: React.CSSProperties = {
+  background: 'none', border: 'none', cursor: 'pointer',
+  padding: '0', lineHeight: 1, fontSize: '0.875rem',
+  color: 'inherit', opacity: 0.7,
 }
 
 const TRUCK_QUERY = `
@@ -194,6 +210,42 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
 
         <LocationFilter locations={locations} value={locationFilter} onChange={setLocationFilter} />
         <CategoryFilter value={categoryFilter} onChange={setCategoryFilter} />
+
+        {/* Active filter chips */}
+        {(locationFilter !== 'all' || categoryFilter !== 'all' || search || maintenanceFilter) && (
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem', marginTop: '-0.25rem' }}>
+            {search && (
+              <span style={chipStyle}>
+                Search: &ldquo;{search}&rdquo;
+                <button style={chipX} onClick={() => setSearch('')}>×</button>
+              </span>
+            )}
+            {locationFilter !== 'all' && (
+              <span style={chipStyle}>
+                {locations.find(l => l.id === locationFilter)?.name ?? locationFilter}
+                <button style={chipX} onClick={() => setLocationFilter('all')}>×</button>
+              </span>
+            )}
+            {categoryFilter !== 'all' && (
+              <span style={chipStyle}>
+                {CATEGORY_LABELS[categoryFilter] ?? categoryFilter}
+                <button style={chipX} onClick={() => setCategoryFilter('all')}>×</button>
+              </span>
+            )}
+            {maintenanceFilter && (
+              <span style={chipStyle}>
+                PM Due
+                <button style={chipX} onClick={() => setMaintenanceFilter(false)}>×</button>
+              </span>
+            )}
+            <button
+              style={{ fontSize: '0.75rem', color: 'var(--on-surface-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0.25rem', textDecoration: 'underline' }}
+              onClick={() => { setSearch(''); setLocationFilter('all'); setCategoryFilter('all'); setMaintenanceFilter(false) }}
+            >
+              Clear all
+            </button>
+          </div>
+        )}
 
         {error && (
           <div style={{ marginTop: '1rem', padding: '0.875rem 1rem', background: 'var(--error-container)', border: '1px solid var(--error)', borderRadius: '0.5rem', color: 'var(--error)', fontSize: '0.875rem' }}>

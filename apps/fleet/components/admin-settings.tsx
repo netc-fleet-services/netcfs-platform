@@ -107,6 +107,11 @@ export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) 
     fetchAll()
   }
 
+  async function reactivateTruck(truck: TruckRow) {
+    await supabase.from('trucks').update({ active: true }).eq('id', truck.id)
+    fetchAll()
+  }
+
   async function saveNotifSettings(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setSaving(true)
@@ -219,20 +224,24 @@ export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) 
               <div style={{ overflowX: 'auto' }}>
                 <table className="fleet-table">
                   <thead>
-                    <tr><th>Unit</th><th>VIN</th><th>Location</th><th>Status</th><th>Active</th><th></th></tr>
+                    <tr><th>Unit</th><th>VIN</th><th>Category</th><th>Location</th><th>Status</th><th>Active</th><th></th></tr>
                   </thead>
                   <tbody>
                     {trucks.map(truck => (
-                      <tr key={truck.id}>
+                      <tr key={truck.id} style={{ opacity: truck.active ? 1 : 0.55 }}>
                         <td style={{ fontWeight: 600 }}>{truck.unit_number}</td>
                         <td style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: 'var(--on-surface-muted)' }}>{truck.vin || '—'}</td>
+                        <td>{CATEGORY_LABELS[truck.category ?? ''] || '—'}</td>
                         <td>{truck.locations?.name || '—'}</td>
                         <td><span className={`status-badge status-badge-${truck.current_status}`}>{STATUS_LABELS[truck.current_status]}</span></td>
                         <td><span style={{ color: truck.active ? 'var(--status-ready)' : 'var(--on-surface-muted)', fontSize: '0.75rem' }}>{truck.active ? 'Active' : 'Inactive'}</span></td>
                         <td>
                           <div style={{ display: 'flex', gap: '0.5rem' }}>
                             <button className="btn-ghost" onClick={() => openEditTruck(truck)}>Edit</button>
-                            {truck.active && <button className="btn-ghost" style={{ color: 'var(--error)' }} onClick={() => deactivateTruck(truck)}>Deactivate</button>}
+                            {truck.active
+                              ? <button className="btn-ghost" style={{ color: 'var(--error)' }} onClick={() => deactivateTruck(truck)}>Deactivate</button>
+                              : <button className="btn-ghost" style={{ color: 'var(--status-ready)' }} onClick={() => reactivateTruck(truck)}>Reactivate</button>
+                            }
                           </div>
                         </td>
                       </tr>
