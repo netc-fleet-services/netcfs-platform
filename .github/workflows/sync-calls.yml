@@ -1,0 +1,58 @@
+# ═══════════════════════════════════════════════
+# TowBook → Supabase Scheduled Calls Sync
+#
+# Runs every 15 minutes. Scrapes the TowBook dispatch page
+# with Playwright and upserts/deletes jobs in Supabase.
+#
+# Required repository secrets (Settings → Secrets → Actions):
+#   TOWBOOK_USER         — TowBook login username
+#   TOWBOOK_PASS         — TowBook login password
+#   SUPABASE_URL         — from Supabase Dashboard → Settings → API
+#   SUPABASE_SERVICE_KEY — service role key (bypasses RLS) — NOT the anon key
+#   GEOCODIO_KEY         — from geocod.io dashboard (optional — improves address quality)
+# ═══════════════════════════════════════════════
+
+name: Sync TowBook Calls
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # every 15 minutes
+  workflow_dispatch:           # allow manual runs from the Actions tab
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10       # kill if TowBook login hangs
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/transport/requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r apps/transport/requirements.txt
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('apps/transport/requirements.txt') }}
+          restore-keys: playwright-chromium-${{ runner.os }}-
+
+      - name: Install Playwright browsers and system deps
+        run: python -m playwright install chromium --with-deps
+
+      - name: Run sync
+        env:
+          TOWBOOK_USER:        ${{ secrets.TOWBOOK_USER }}
+          TOWBOOK_PASS:        ${{ secrets.TOWBOOK_PASS }}
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GEOCODIO_KEY:        ${{ secrets.GEOCODIO_KEY }}
+        run: python apps/transport/scripts/sync_calls.py

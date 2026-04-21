@@ -1,4 +1,57 @@
 @import "tailwindcss";
 @import "@netcfs/styles/globals.css";
 
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes spin  { to { transform: rotate(360deg); } }
+@keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .5 } }
+
+/* Scrollbar */
+::-webkit-scrollbar       { width: 5px; height: 5px }
+::-webkit-scrollbar-track { background: rgb(var(--surface-container)) }
+::-webkit-scrollbar-thumb { background: rgb(var(--outline-variant)); border-radius: 3px }
+select option             { background: rgb(var(--surface-container)); color: rgb(var(--on-surface)) }
+
+/* Date picker icon */
+input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); cursor: pointer; }
+
+/* Calendar strip */
+.cal { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 8px }
+.dc  {
+  min-width: 120px; flex-shrink: 0; border-radius: 8px;
+  padding: 9px; cursor: pointer; transition: all .15s;
+  border: 2px solid transparent;
+}
+.dc:hover { border-color: #3b82f644 }
+.dc.sel   { border-color: #3b82f6 }
+
+/* Dashboard cards */
+.dash      { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-bottom: 10px }
+.dash-card { border-radius: 10px; padding: 12px; text-align: center }
+
+/* Filter buttons */
+.fb   { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px }
+.fbtn {
+  padding: 4px 10px; border-radius: 12px; font-size: 10px;
+  font-weight: 600; cursor: pointer; border: 1px solid rgb(var(--outline-variant));
+  background: rgb(var(--surface-container)); color: rgb(var(--on-surface-muted)); transition: all .15s;
+}
+.fbtn.on { background: #1d3461; color: #3b82f6; border-color: #3b82f6 }
+
+/* Tabs */
+.tabs { display: flex; gap: 0; border-bottom: 2px solid rgb(var(--outline-variant)); margin-bottom: 12px }
+.tab  {
+  padding: 10px 20px; font-size: 13px; font-weight: 600;
+  cursor: pointer; color: rgb(var(--on-surface-muted));
+  border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all .15s;
+}
+.tab:hover { color: rgb(var(--on-surface)) }
+.tab.on    { color: #3b82f6; border-bottom-color: #3b82f6 }
+
+/* Gantt bar (driver timeline) */
+.gantt-bar {
+  height: 24px; border-radius: 4px; display: flex; align-items: center;
+  padding: 0 6px; font-size: 10px; font-weight: 600;
+  position: absolute; overflow: hidden; white-space: nowrap;
+}
+
+/* Priority dot — prefixed tb- to avoid conflicts with portal globals */
+.tb-pri { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px }
