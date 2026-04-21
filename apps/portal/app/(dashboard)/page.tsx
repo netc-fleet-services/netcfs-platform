@@ -2,10 +2,10 @@ import { getUserProfile } from '@netcfs/auth/server'
 import { redirect } from 'next/navigation'
 import { ROLE_PERMISSIONS, type UserRole } from '@netcfs/auth/types'
 
-const FLEET_URL       = process.env.NEXT_PUBLIC_FLEET_URL       || 'http://localhost:3001'
-const TRANSPORT_URL   = process.env.NEXT_PUBLIC_TRANSPORT_URL   || 'http://localhost:3002'
-const INSPECTIONS_URL = process.env.NEXT_PUBLIC_INSPECTIONS_URL || 'http://localhost:3003'
-const SWAPS_URL       = process.env.NEXT_PUBLIC_SWAPS_URL       || 'http://localhost:3004'
+const FLEET_URL       = process.env.NEXT_PUBLIC_FLEET_URL       || 'https://netcfs-platform-fleet.vercel.app'
+const TRANSPORT_URL   = process.env.NEXT_PUBLIC_TRANSPORT_URL   || 'https://netcfs-platform-transport.vercel.app'
+const INSPECTIONS_URL = process.env.NEXT_PUBLIC_INSPECTIONS_URL || 'https://netcfs-platform-inspections.vercel.app'
+const SWAPS_URL       = process.env.NEXT_PUBLIC_SWAPS_URL       || 'https://netcfs-platform-swaps.vercel.app'
 
 const ALL_MODULES = [
   {

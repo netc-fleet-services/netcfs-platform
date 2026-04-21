@@ -8,6 +8,11 @@ import { getSupabaseBrowserClient } from '@netcfs/auth/client'
 import type { UserProfile } from '@netcfs/auth/types'
 import { ROLE_PERMISSIONS, ROLE_LABELS } from '@netcfs/auth/types'
 
+const FLEET_URL       = process.env.NEXT_PUBLIC_FLEET_URL       || 'https://netcfs-platform-fleet.vercel.app'
+const TRANSPORT_URL   = process.env.NEXT_PUBLIC_TRANSPORT_URL   || 'https://netcfs-platform-transport.vercel.app'
+const INSPECTIONS_URL = process.env.NEXT_PUBLIC_INSPECTIONS_URL || 'https://netcfs-platform-inspections.vercel.app'
+const SWAPS_URL       = process.env.NEXT_PUBLIC_SWAPS_URL       || 'https://netcfs-platform-swaps.vercel.app'
+
 const NAV_ITEMS: NavItem[] = [
   {
     label: 'Home',
@@ -22,7 +27,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     label: 'Fleet Tracker',
-    href: '/fleet',
+    href: FLEET_URL,
     requiredModule: 'fleet',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -35,7 +40,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     label: 'Dispatch Board',
-    href: '/transport',
+    href: TRANSPORT_URL,
     requiredModule: 'transport',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -45,7 +50,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     label: 'Inspections',
-    href: '/inspections',
+    href: INSPECTIONS_URL,
     requiredModule: 'inspections',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -56,7 +61,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     label: 'Swap Optimizer',
-    href: '/swaps',
+    href: SWAPS_URL,
     requiredModule: 'swaps',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
