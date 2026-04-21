@@ -96,6 +96,13 @@ function LoginForm() {
       >
         {loading ? 'Signing in…' : 'Sign In'}
       </button>
+
+      <a
+        href="/forgot-password"
+        style={{ textAlign: 'center', fontSize: '0.8125rem', color: 'var(--on-surface-muted)', textDecoration: 'none' }}
+      >
+        Forgot password?
+      </a>
     </form>
   )
 }

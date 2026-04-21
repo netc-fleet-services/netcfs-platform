@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Sidebar, type NavItem } from '@netcfs/ui'
 import { ThemeToggle } from '@netcfs/ui'
@@ -13,11 +13,12 @@ const TRANSPORT_URL   = process.env.NEXT_PUBLIC_TRANSPORT_URL   || 'https://netc
 const INSPECTIONS_URL = process.env.NEXT_PUBLIC_INSPECTIONS_URL || 'https://netcfs-platform-inspections.vercel.app'
 const SWAPS_URL       = process.env.NEXT_PUBLIC_SWAPS_URL       || 'https://netcfs-platform-swaps.vercel.app'
 
-const NAV_ITEMS: NavItem[] = [
+type BaseItem = { label: string; baseUrl: string; requiredModule?: string; icon: React.ReactNode }
+
+const BASE_NAV: BaseItem[] = [
   {
     label: 'Home',
-    href: '/',
-    requiredModule: undefined,
+    baseUrl: '/',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -27,7 +28,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     label: 'Fleet Tracker',
-    href: FLEET_URL,
+    baseUrl: FLEET_URL,
     requiredModule: 'fleet',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -40,7 +41,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     label: 'Dispatch Board',
-    href: TRANSPORT_URL,
+    baseUrl: TRANSPORT_URL,
     requiredModule: 'transport',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -50,7 +51,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     label: 'Inspections',
-    href: INSPECTIONS_URL,
+    baseUrl: INSPECTIONS_URL,
     requiredModule: 'inspections',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -61,7 +62,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     label: 'Swap Optimizer',
-    href: SWAPS_URL,
+    baseUrl: SWAPS_URL,
     requiredModule: 'swaps',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -72,7 +73,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     label: 'Reports',
-    href: '/reports',
+    baseUrl: '/reports',
     requiredModule: 'reports',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -82,7 +83,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     label: 'Settings',
-    href: '/settings',
+    baseUrl: '/settings',
     requiredModule: 'settings',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -101,11 +102,26 @@ interface Props {
 export function DashboardShell({ profile, children }: Props) {
   const router = useRouter()
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const [ssoTokens, setSsoTokens] = useState<{ access_token: string; refresh_token: string } | null>(null)
+
+  useEffect(() => {
+    getSupabaseBrowserClient().auth.getSession().then(({ data: { session } }) => {
+      if (session) setSsoTokens({ access_token: session.access_token, refresh_token: session.refresh_token })
+    })
+  }, [])
+
+  function makeSsoHref(baseUrl: string): string {
+    if (!baseUrl.startsWith('http') || !ssoTokens) return baseUrl
+    const url = new URL(`${baseUrl}/auth/sso`)
+    url.searchParams.set('access_token',  ssoTokens.access_token)
+    url.searchParams.set('refresh_token', ssoTokens.refresh_token)
+    return url.toString()
+  }
 
   const allowedModules = ROLE_PERMISSIONS[profile.role] ?? []
-  const visibleNav = NAV_ITEMS.filter(
-    (item) => !item.requiredModule || allowedModules.includes(item.requiredModule)
-  )
+  const visibleNav: NavItem[] = BASE_NAV
+    .filter(item => !item.requiredModule || allowedModules.includes(item.requiredModule))
+    .map(item => ({ label: item.label, href: makeSsoHref(item.baseUrl), icon: item.icon }))
 
   function toggleTheme() {
     const next = theme === 'dark' ? 'light' : 'dark'
@@ -132,21 +148,13 @@ export function DashboardShell({ profile, children }: Props) {
   const UserFooter = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.25rem 0.75rem' }}>
-        <div
-          style={{
-            width: 30,
-            height: 30,
-            borderRadius: '50%',
-            backgroundColor: 'var(--primary-container)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '0.75rem',
-            fontWeight: 700,
-            color: 'var(--on-primary-container)',
-            flexShrink: 0,
-          }}
-        >
+        <div style={{
+          width: 30, height: 30, borderRadius: '50%',
+          backgroundColor: 'var(--primary-container)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: '0.75rem', fontWeight: 700,
+          color: 'var(--on-primary-container)', flexShrink: 0,
+        }}>
           {(profile.full_name ?? profile.email).charAt(0).toUpperCase()}
         </div>
         <div style={{ overflow: 'hidden' }}>
