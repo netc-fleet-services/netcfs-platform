@@ -22,6 +22,7 @@ interface NotifSetting {
   category: string | null
   location_id: string | null
   emails: string[]
+  rawEmailText: string  // what the user sees while typing — only parsed on blur/save
 }
 
 interface TruckForm {
@@ -61,10 +62,11 @@ export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) 
     setLocations(l || [])
     setNotifSettings(
       (n || []).map((r: { id: string; category: string | null; location_id: string | null; emails: string[] }) => ({
-        id:          r.id,
-        category:    r.category,
-        location_id: r.location_id,
-        emails:      r.emails ?? [],
+        id:           r.id,
+        category:     r.category,
+        location_id:  r.location_id,
+        emails:       r.emails ?? [],
+        rawEmailText: (r.emails ?? []).join(', '),
       }))
     )
   }
@@ -124,7 +126,7 @@ export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) 
 
   function addNotifRule() {
     setTempCounter(n => {
-      setNotifSettings(prev => [...prev, { id: `__new_${n}`, category: null, location_id: null, emails: [] }])
+      setNotifSettings(prev => [...prev, { id: `__new_${n}`, category: null, location_id: null, emails: [], rawEmailText: '' }])
       return n + 1
     })
   }
@@ -145,8 +147,14 @@ export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) 
     const { error: delErr } = await supabase.from('notification_settings').delete().not('id', 'is', null)
     if (delErr) { setMsg('Error: ' + delErr.message); setSaving(false); return }
     const rows = notifSettings
+      .map(s => {
+        // Re-parse rawEmailText in case the user never blurred the field before saving
+        const emails = s.rawEmailText
+          ? s.rawEmailText.split(',').map(x => x.trim()).filter(Boolean)
+          : s.emails
+        return { category: s.category || null, location_id: s.location_id || null, emails }
+      })
       .filter(s => s.emails.length > 0)
-      .map(s => ({ category: s.category || null, location_id: s.location_id || null, emails: s.emails }))
     if (rows.length > 0) {
       const { error: insErr } = await supabase.from('notification_settings').insert(rows)
       if (insErr) { setMsg('Error: ' + insErr.message); setSaving(false); return }
@@ -330,9 +338,10 @@ export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) 
                         className="form-input"
                         type="text"
                         placeholder="user@example.com, manager@example.com"
-                        value={rule.emails.join(', ')}
-                        onChange={e => updateNotifRule(rule.id, {
-                          emails: e.target.value.split(',').map(x => x.trim()).filter(Boolean)
+                        value={rule.rawEmailText}
+                        onChange={e => updateNotifRule(rule.id, { rawEmailText: e.target.value })}
+                        onBlur={e => updateNotifRule(rule.id, {
+                          emails: e.target.value.split(',').map(x => x.trim()).filter(Boolean),
                         })}
                       />
                     </div>
