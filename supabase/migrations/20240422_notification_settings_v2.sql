@@ -20,7 +20,7 @@ CREATE POLICY "Admins manage notification settings"
   ON notification_settings FOR ALL
   USING (
     EXISTS (
-      SELECT 1 FROM fleet_profiles
+      SELECT 1 FROM profiles
       WHERE id = auth.uid()
         AND role IN ('admin', 'shop_manager')
     )

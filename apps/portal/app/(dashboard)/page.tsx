@@ -6,6 +6,7 @@ const FLEET_URL       = process.env.NEXT_PUBLIC_FLEET_URL       || 'https://netc
 const TRANSPORT_URL   = process.env.NEXT_PUBLIC_TRANSPORT_URL   || 'https://netcfs-platform-transport.vercel.app'
 const INSPECTIONS_URL = process.env.NEXT_PUBLIC_INSPECTIONS_URL || 'https://netcfs-platform-inspections.vercel.app'
 const SWAPS_URL       = process.env.NEXT_PUBLIC_SWAPS_URL       || 'https://netcfs-platform-swaps.vercel.app'
+const IMPOUNDS_URL    = process.env.NEXT_PUBLIC_IMPOUNDS_URL    || 'https://netcfs-platform-impounds.vercel.app'
 
 const ALL_MODULES = [
   {
@@ -60,6 +61,19 @@ const ALL_MODULES = [
       </svg>
     ),
     color: '#a78bfa',
+  },
+  {
+    id: 'impounds',
+    label: 'Impound Tracker',
+    description: 'Towbook vehicle impound tracking, photos, and sales management',
+    href: IMPOUNDS_URL,
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="3" y="11" width="18" height="11" rx="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </svg>
+    ),
+    color: '#f97316',
   },
   {
     id: 'reports',
