@@ -74,7 +74,7 @@ const BASE_NAV: BaseItem[] = [
   },
   {
     label: 'Impound Tracker',
-    href: IMPOUNDS_URL,
+    baseUrl: IMPOUNDS_URL,
     requiredModule: 'impounds',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
