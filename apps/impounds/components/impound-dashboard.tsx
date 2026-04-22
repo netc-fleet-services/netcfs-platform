@@ -5,6 +5,7 @@ import { getSupabaseBrowserClient } from '@netcfs/auth/client'
 import type { Impound, ImpoundProfile } from '@/lib/types'
 import { IMPOUND_STATUSES, IMPOUND_LOCATIONS, SCRAP_VALUE } from '@/lib/constants'
 import { VehicleDetailDrawer } from './vehicle-detail-drawer'
+import { SalesHistoryModal } from './sales-history-modal'
 
 const IMPOUND_QUERY = `*, impound_photos(*)`
 
@@ -85,6 +86,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
   const [locationFilter, setLocationFilter] = useState<typeof IMPOUND_LOCATIONS[number] | 'all'>('all')
   const [statusFilter, setStatusFilter]     = useState<typeof IMPOUND_STATUSES[number] | 'all'>('all')
   const [search, setSearch]                 = useState('')
+  const [showHistory, setShowHistory]       = useState(false)
 
   const fetchImpounds = useCallback(async () => {
     const { data, error } = await supabase
@@ -210,8 +212,8 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
           <FilterTabs label="Status"   options={IMPOUND_STATUSES}  value={statusFilter}   onChange={setStatusFilter} />
         </div>
 
-        {/* Search */}
-        <div style={{ marginBottom: '1rem' }}>
+        {/* Search + History button */}
+        <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
           <input
             type="search"
             className="form-input"
@@ -220,6 +222,13 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
             onChange={e => setSearch(e.target.value)}
             style={{ maxWidth: 320, fontSize: '0.85rem', padding: '0.375rem 0.75rem' }}
           />
+          <button
+            className="btn-secondary"
+            onClick={() => setShowHistory(true)}
+            style={{ fontSize: '0.8rem', padding: '0.375rem 0.875rem', whiteSpace: 'nowrap' }}
+          >
+            Sales History
+          </button>
         </div>
 
         {/* Table */}
@@ -345,6 +354,8 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
           onSaved={fetchImpounds}
         />
       )}
+
+      {showHistory && <SalesHistoryModal onClose={() => setShowHistory(false)} />}
     </div>
   )
 }

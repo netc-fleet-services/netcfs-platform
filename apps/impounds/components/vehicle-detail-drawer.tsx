@@ -131,6 +131,12 @@ export function VehicleDetailDrawer({ impound, profile, onClose, onSaved }: Prop
 
   async function handleSave() {
     setSaving(true)
+    const wasDisposed = impound.sold || impound.scrapped
+    const nowDisposed = form.sold || form.scrapped
+    const dispositionDate = nowDisposed && !wasDisposed
+      ? new Date().toISOString()
+      : (impound.disposition_date ?? null)
+
     const { error } = await supabase.from('impounds').update({
       call_number:           form.call_number,
       date_of_impound:       form.date_of_impound || null,
@@ -144,6 +150,7 @@ export function VehicleDetailDrawer({ impound, profile, onClose, onSaved }: Prop
       released:              form.released,
       scrapped:              form.scrapped,
       sold:                  form.sold,
+      disposition_date:      dispositionDate,
       amount_paid:           form.amount_paid    ? parseFloat(form.amount_paid)    : null,
       internal_cost:         form.internal_cost  ? parseFloat(form.internal_cost)  : null,
       sell:                  form.sell,

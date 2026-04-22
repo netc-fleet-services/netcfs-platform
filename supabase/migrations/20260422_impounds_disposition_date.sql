@@ -1,0 +1,2 @@
+ALTER TABLE impounds
+  ADD COLUMN IF NOT EXISTS disposition_date TIMESTAMPTZ;
