@@ -1,6 +1,7 @@
 import { getUserProfile } from '@netcfs/auth/server'
 import { redirect } from 'next/navigation'
-import { ROLE_PERMISSIONS, type UserRole } from '@netcfs/auth/types'
+import { type UserRole } from '@netcfs/auth/types'
+import { AppTilesClient } from '@/components/AppTilesClient'
 
 const FLEET_URL       = process.env.NEXT_PUBLIC_FLEET_URL       || 'https://netcfs-platform-fleet.vercel.app'
 const TRANSPORT_URL   = process.env.NEXT_PUBLIC_TRANSPORT_URL   || 'https://netcfs-platform-transport.vercel.app'
@@ -106,105 +107,14 @@ export default async function HomePage() {
   const profile = await getUserProfile()
   if (!profile) redirect('/login')
 
-  const allowedModules = ROLE_PERMISSIONS[profile.role as UserRole] ?? []
-  const visibleModules = ALL_MODULES.filter((m) => allowedModules.includes(m.id))
-
-  const greeting = getGreeting()
   const firstName = profile.full_name?.split(' ')[0] ?? profile.email.split('@')[0]
+  const greeting  = getGreeting()
 
   return (
-    <div style={{ padding: '2rem', maxWidth: 1100, margin: '0 auto' }}>
-      {/* Welcome */}
-      <div style={{ marginBottom: '2rem' }}>
-        <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: 'var(--on-surface)' }}>
-          {greeting}, {firstName}
-        </h2>
-        <p style={{ margin: '0.375rem 0 0', color: 'var(--on-surface-muted)', fontSize: '0.9375rem' }}>
-          Here&apos;s what&apos;s available to you today.
-        </p>
-      </div>
-
-      {/* App tiles */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-          gap: '1rem',
-          marginBottom: '2.5rem',
-        }}
-      >
-        {visibleModules.map((mod) => (
-          <a key={mod.id} href={mod.href} className="app-tile" style={{ textDecoration: 'none' }}>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: 44,
-                height: 44,
-                borderRadius: '0.625rem',
-                backgroundColor: 'var(--surface-high)',
-                color: mod.color,
-                flexShrink: 0,
-              }}
-            >
-              {mod.icon}
-            </div>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: 'var(--on-surface)', marginBottom: 4 }}>
-                {mod.label}
-              </div>
-              <div style={{ fontSize: '0.8125rem', color: 'var(--on-surface-muted)', lineHeight: 1.4 }}>
-                {mod.description}
-              </div>
-            </div>
-          </a>
-        ))}
-      </div>
-
-      {/* Bottom panels */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-        {/* Recent activity */}
-        <div
-          style={{
-            backgroundColor: 'var(--surface-container)',
-            border: '1px solid var(--outline)',
-            borderRadius: '0.875rem',
-            padding: '1.25rem',
-          }}
-        >
-          <h3 style={{ margin: '0 0 1rem', fontSize: '0.875rem', fontWeight: 700, color: 'var(--on-surface)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-            Recent Activity
-          </h3>
-          <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--on-surface-muted)', fontStyle: 'italic' }}>
-            Activity feed will populate here as data is migrated into the platform.
-          </p>
-        </div>
-
-        {/* Alerts */}
-        <div
-          style={{
-            backgroundColor: 'var(--surface-container)',
-            border: '1px solid var(--outline)',
-            borderRadius: '0.875rem',
-            padding: '1.25rem',
-          }}
-        >
-          <h3 style={{ margin: '0 0 1rem', fontSize: '0.875rem', fontWeight: 700, color: 'var(--on-surface)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-            Alerts
-          </h3>
-          <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--on-surface-muted)', fontStyle: 'italic' }}>
-            PM overdue warnings, inspection flags, and blocked jobs will surface here.
-          </p>
-        </div>
-      </div>
-    </div>
+    <AppTilesClient
+      role={profile.role as UserRole}
+      firstName={firstName}
+      greeting={greeting}
+    />
   )
-}
-
-function getGreeting(): string {
-  const hour = new Date().getHours()
-  if (hour < 12) return 'Good morning'
-  if (hour < 17) return 'Good afternoon'
-  return 'Good evening'
 }

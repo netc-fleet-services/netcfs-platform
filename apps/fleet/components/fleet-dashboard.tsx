@@ -8,7 +8,9 @@ import { LocationFilter } from './location-filter'
 import { CategoryFilter } from './category-filter'
 import { StatusTable } from './status-table'
 import { NotesDrawer } from './notes-drawer'
+import { HistoryReportModal } from './HistoryReportModal'
 import type { Truck, FleetProfile, Location } from '@/lib/types'
+import { CAN_MANAGE_TRUCKS } from '@/lib/constants'
 
 function isPMDue(truck: Truck) {
   if (!truck.maintenance?.next_pm_date) return false
@@ -61,7 +63,8 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [maintenanceFilter, setMaintenanceFilter] = useState(false)
 
-  const [notesDrawer, setNotesDrawer] = useState<Truck | null>(null)
+  const [notesDrawer, setNotesDrawer]       = useState<Truck | null>(null)
+  const [showReportModal, setShowReportModal] = useState(false)
   const [lastSynced, setLastSynced] = useState<string | null>(null)
   const [syncingNow, setSyncingNow] = useState(false)
   const [, setTick] = useState(0)
@@ -216,6 +219,15 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
             >
               {syncingNow ? 'Refreshing…' : '↻ Job Status'}
             </button>
+            {(CAN_MANAGE_TRUCKS as string[]).includes(profile.role) && (
+              <button
+                className="btn-secondary"
+                style={{ fontSize: '0.8rem', padding: '0.4rem 0.875rem' }}
+                onClick={() => setShowReportModal(true)}
+              >
+                ⬇ History Report
+              </button>
+            )}
             {lastSynced && (
               <span style={{ fontSize: '0.7rem', color: 'var(--on-surface-muted)', whiteSpace: 'nowrap' }}>
                 {timeAgo(lastSynced)}
@@ -282,6 +294,13 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
           profile={profile}
           onAddNote={handleAddNote}
           onClose={() => setNotesDrawer(null)}
+        />
+      )}
+
+      {showReportModal && (
+        <HistoryReportModal
+          trucks={trucks}
+          onClose={() => setShowReportModal(false)}
         />
       )}
     </div>
