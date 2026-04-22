@@ -12,6 +12,7 @@ const FLEET_URL       = process.env.NEXT_PUBLIC_FLEET_URL       || 'https://netc
 const TRANSPORT_URL   = process.env.NEXT_PUBLIC_TRANSPORT_URL   || 'https://netcfs-platform-transport.vercel.app'
 const INSPECTIONS_URL = process.env.NEXT_PUBLIC_INSPECTIONS_URL || 'https://netcfs-platform-inspections.vercel.app'
 const SWAPS_URL       = process.env.NEXT_PUBLIC_SWAPS_URL       || 'https://netcfs-platform-swaps.vercel.app'
+const IMPOUNDS_URL    = process.env.NEXT_PUBLIC_IMPOUNDS_URL    || 'https://netcfs-platform-impounds.vercel.app'
 
 type BaseItem = { label: string; baseUrl: string; requiredModule?: string; icon: React.ReactNode }
 
@@ -68,6 +69,17 @@ const BASE_NAV: BaseItem[] = [
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M7 16V4m0 0L3 8m4-4 4 4" />
         <path d="M17 8v12m0 0 4-4m-4 4-4-4" />
+      </svg>
+    ),
+  },
+  {
+    label: 'Impound Tracker',
+    baseUrl: IMPOUNDS_URL,
+    requiredModule: 'impounds',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="3" y="11" width="18" height="11" rx="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
       </svg>
     ),
   },
