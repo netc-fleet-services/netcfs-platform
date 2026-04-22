@@ -18,7 +18,9 @@ interface TruckRow {
 }
 
 interface NotifSetting {
-  status_type: string
+  id: string          // client-side key; equals db id for persisted rules
+  category: string | null
+  location_id: string | null
   emails: string[]
 }
 
@@ -36,6 +38,7 @@ export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) 
   const [trucks, setTrucks] = useState<TruckRow[]>([])
   const [locations, setLocations] = useState<Location[]>([])
   const [notifSettings, setNotifSettings] = useState<NotifSetting[]>([])
+  const [tempCounter, setTempCounter] = useState(0)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
@@ -56,7 +59,14 @@ export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) 
     ])
     setTrucks(t || [])
     setLocations(l || [])
-    setNotifSettings(n || [])
+    setNotifSettings(
+      (n || []).map((r: { id: string; category: string | null; location_id: string | null; emails: string[] }) => ({
+        id:          r.id,
+        category:    r.category,
+        location_id: r.location_id,
+        emails:      r.emails ?? [],
+      }))
+    )
   }
 
   function openNewTruck() {
@@ -112,21 +122,38 @@ export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) 
     fetchAll()
   }
 
-  async function saveNotifSettings(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    setSaving(true)
-    const { error } = await supabase.from('notification_settings').upsert(notifSettings, { onConflict: 'status_type' })
-    setMsg(error ? 'Error: ' + error.message : 'Notification settings saved.')
-    setSaving(false)
+  function addNotifRule() {
+    setTempCounter(n => {
+      setNotifSettings(prev => [...prev, { id: `__new_${n}`, category: null, location_id: null, emails: [] }])
+      return n + 1
+    })
   }
 
-  function updateNotifEmails(statusType: string, value: string) {
-    setNotifSettings(prev =>
-      prev.map(s => s.status_type === statusType
-        ? { ...s, emails: value.split(',').map(e => e.trim()).filter(Boolean) }
-        : s
-      )
-    )
+  function removeNotifRule(id: string) {
+    setNotifSettings(prev => prev.filter(s => s.id !== id))
+  }
+
+  function updateNotifRule(id: string, patch: Partial<Omit<NotifSetting, 'id'>>) {
+    setNotifSettings(prev => prev.map(s => s.id === id ? { ...s, ...patch } : s))
+  }
+
+  async function saveAllNotifSettings(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    setSaving(true)
+    setMsg('')
+    // Delete all rows then re-insert current state
+    const { error: delErr } = await supabase.from('notification_settings').delete().not('id', 'is', null)
+    if (delErr) { setMsg('Error: ' + delErr.message); setSaving(false); return }
+    const rows = notifSettings
+      .filter(s => s.emails.length > 0)
+      .map(s => ({ category: s.category || null, location_id: s.location_id || null, emails: s.emails }))
+    if (rows.length > 0) {
+      const { error: insErr } = await supabase.from('notification_settings').insert(rows)
+      if (insErr) { setMsg('Error: ' + insErr.message); setSaving(false); return }
+    }
+    setMsg('Notification settings saved.')
+    fetchAll()
+    setSaving(false)
   }
 
   if (loading) {
@@ -256,26 +283,80 @@ export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) 
         {tab === 'notifications' && (
           <div>
             <p style={{ color: 'var(--on-surface-muted)', fontSize: '0.875rem', marginBottom: '1.5rem', marginTop: 0 }}>
-              Daily summary emails are sent once per day with all status changes from the previous 24 hours.
-              Enter comma-separated email addresses for each recipient group.
+              Emails are sent instantly when a truck status changes. Each rule targets a specific
+              category and/or location — use &ldquo;All&rdquo; to match any. A truck must match
+              every filter on a rule for those recipients to be notified.
             </p>
-            <form onSubmit={saveNotifSettings} style={{ background: 'var(--surface-container)', border: '1px solid var(--outline)', borderRadius: '0.75rem', padding: '1.5rem' }}>
-              {[STATUS.READY, STATUS.ISSUES, STATUS.OOS].map(statusType => {
-                const setting = notifSettings.find(s => s.status_type === statusType)
-                return (
-                  <div key={statusType} style={{ marginBottom: '1.25rem' }}>
-                    <label className="form-label">Recipients for "{STATUS_LABELS[statusType]}" changes</label>
-                    <input
-                      className="form-input"
-                      type="text"
-                      placeholder="user@example.com, manager@example.com"
-                      value={(setting?.emails || []).join(', ')}
-                      onChange={e => updateNotifEmails(statusType, e.target.value)}
-                    />
+
+            <form onSubmit={saveAllNotifSettings}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1rem' }}>
+                {notifSettings.length === 0 && (
+                  <p style={{ color: 'var(--on-surface-muted)', fontSize: '0.8125rem', fontStyle: 'italic', margin: 0 }}>
+                    No rules yet — add one below.
+                  </p>
+                )}
+
+                {notifSettings.map(rule => (
+                  <div key={rule.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr auto', gap: '0.625rem', alignItems: 'center', background: 'var(--surface-container)', border: '1px solid var(--outline)', borderRadius: '0.625rem', padding: '0.75rem 1rem' }}>
+                    <div>
+                      <label className="form-label" style={{ marginBottom: '0.25rem' }}>Category</label>
+                      <select
+                        className="form-select"
+                        value={rule.category ?? ''}
+                        onChange={e => updateNotifRule(rule.id, { category: e.target.value || null })}
+                      >
+                        <option value="">All Categories</option>
+                        {Object.entries(CATEGORY_LABELS).map(([val, label]) => (
+                          <option key={val} value={val}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="form-label" style={{ marginBottom: '0.25rem' }}>Location</label>
+                      <select
+                        className="form-select"
+                        value={rule.location_id ?? ''}
+                        onChange={e => updateNotifRule(rule.id, { location_id: e.target.value || null })}
+                      >
+                        <option value="">All Locations</option>
+                        {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="form-label" style={{ marginBottom: '0.25rem' }}>Recipients (comma-separated)</label>
+                      <input
+                        className="form-input"
+                        type="text"
+                        placeholder="user@example.com, manager@example.com"
+                        value={rule.emails.join(', ')}
+                        onChange={e => updateNotifRule(rule.id, {
+                          emails: e.target.value.split(',').map(x => x.trim()).filter(Boolean)
+                        })}
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ color: 'var(--error)', alignSelf: 'flex-end', padding: '0.5rem 0.625rem' }}
+                      onClick={() => removeNotifRule(rule.id)}
+                    >
+                      ✕
+                    </button>
                   </div>
-                )
-              })}
-              <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save Notification Settings'}</button>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                <button type="button" className="btn-secondary" style={{ fontSize: '0.8125rem' }} onClick={addNotifRule}>
+                  + Add Rule
+                </button>
+                <button type="submit" className="btn-primary" style={{ fontSize: '0.8125rem' }} disabled={saving}>
+                  {saving ? 'Saving…' : 'Save Notification Settings'}
+                </button>
+              </div>
             </form>
           </div>
         )}
