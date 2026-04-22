@@ -131,15 +131,31 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
   const oosTrucks    = filterTrucks(trucks.filter(t => t.current_status === STATUS.OOS))
 
   async function handleStatusChange(truck: Truck, newStatus: string, comment: string, waitingOn: string | null) {
+    const changedBy = profile?.email || profile?.id || 'Unknown'
     const { error } = await supabase.rpc('change_truck_status', {
       p_truck_id:   truck.id,
       p_new_status: newStatus,
       p_comment:    comment || null,
       p_waiting_on: waitingOn !== undefined ? waitingOn : null,
-      p_changed_by: profile?.email || profile?.id || 'Unknown',
+      p_changed_by: changedBy,
     })
-    if (error) alert(error.message)
-    else fetchTrucks()
+    if (error) {
+      alert(error.message)
+    } else {
+      fetchTrucks()
+      // Fire-and-forget email notification — errors are logged server-side only
+      fetch('/api/notify', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          truckId:    truck.id,
+          oldStatus:  truck.current_status,
+          newStatus,
+          comment:    comment || null,
+          changedBy,
+        }),
+      }).catch(() => {/* swallow — notification is best-effort */})
+    }
   }
 
   async function handleUpdateWaitingOn(truckId: string, waitingOn: string) {
