@@ -38,6 +38,7 @@ export interface Impound {
   estimated_repair_cost: number | null
   scrapped: boolean
   sold: boolean
+  disposition_date: string | null
   created_at: string
   updated_at: string
   impound_photos?: ImpoundPhoto[]
