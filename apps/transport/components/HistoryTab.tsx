@@ -13,6 +13,7 @@ interface Props {
 export function HistoryTab({ jobs, drivers }: Props) {
   const [histDay,   setHistDay]   = useState<string | null>(null)
   const [detailJob, setDetailJob] = useState<Job | null>(null)
+  const [search,    setSearch]    = useState('')
 
   const pastDays = useMemo(() => {
     const days: string[] = []
@@ -64,8 +65,19 @@ export function HistoryTab({ jobs, drivers }: Props) {
     URL.revokeObjectURL(url)
   }
 
-  const complete   = dayJobs.filter(j => j.status === 'complete')
-  const incomplete = dayJobs.filter(j => j.status !== 'complete')
+  const visJobs = search
+    ? dayJobs.filter(j => {
+        const q = search.toLowerCase()
+        return (j.tbCallNum  || '').toLowerCase().includes(q) ||
+               (j.tbAccount  || '').toLowerCase().includes(q) ||
+               (j.tbTruck    || '').toLowerCase().includes(q) ||
+               (j.tbDriver   || '').toLowerCase().includes(q) ||
+               driverName(j.driverId).toLowerCase().includes(q)
+      })
+    : dayJobs
+
+  const complete   = visJobs.filter(j => j.status === 'complete')
+  const incomplete = visJobs.filter(j => j.status !== 'complete')
 
   return (
     <div>
@@ -82,11 +94,19 @@ export function HistoryTab({ jobs, drivers }: Props) {
         ))}
       </div>
 
-      {dayJobs.length > 0 && (
+      <input
+        type="search"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        placeholder="Search driver, truck #, call #, account…"
+        style={{ width: '100%', padding: '6px 10px', marginBottom: 10, background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, color: '#e5e5e5', fontSize: 12, fontFamily: 'inherit', boxSizing: 'border-box' }}
+      />
+
+      {visJobs.length > 0 && (
         <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
           <div style={{ ...cB, flex: 1, textAlign: 'center', padding: '8px 4px' }}>
             <div style={{ fontSize: 9, color: C.dm, textTransform: 'uppercase', marginBottom: 2 }}>Total Jobs</div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: C.ac }}>{dayJobs.length}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: C.ac }}>{visJobs.length}{search && dayJobs.length !== visJobs.length ? <span style={{ fontSize: 11, color: C.dm }}> / {dayJobs.length}</span> : null}</div>
           </div>
           <div style={{ ...cB, flex: 1, textAlign: 'center', padding: '8px 4px' }}>
             <div style={{ fontSize: 9, color: C.dm, textTransform: 'uppercase', marginBottom: 2 }}>Completed</div>
@@ -94,7 +114,7 @@ export function HistoryTab({ jobs, drivers }: Props) {
           </div>
           <div style={{ ...cB, flex: 1, textAlign: 'center', padding: '8px 4px' }}>
             <div style={{ fontSize: 9, color: C.dm, textTransform: 'uppercase', marginBottom: 2 }}>Est Hours</div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: C.am }}>{fH(dayJobs.reduce((s, j) => { const t = jobTotal(j); return s + (isFinite(t) ? t : 0) }, 0))}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: C.am }}>{fH(visJobs.reduce((s, j) => { const t = jobTotal(j); return s + (isFinite(t) ? t : 0) }, 0))}</div>
           </div>
           <div style={{ ...cB, flex: 1, textAlign: 'center', padding: '8px 4px' }}>
             <div style={{ fontSize: 9, color: C.dm, textTransform: 'uppercase', marginBottom: 2 }}>Actual Hours</div>
@@ -153,6 +173,7 @@ export function HistoryTab({ jobs, drivers }: Props) {
       )}
 
       {dayJobs.length === 0 && <div style={{ ...cB, textAlign: 'center', padding: 20, color: C.dm, fontSize: 11 }}>No jobs recorded for this day.</div>}
+      {dayJobs.length > 0 && visJobs.length === 0 && <div style={{ ...cB, textAlign: 'center', padding: 20, color: C.dm, fontSize: 11 }}>No jobs match &ldquo;{search}&rdquo;.</div>}
 
       {detailJob && <JobDetailModal job={detailJob} drivers={drivers} onClose={() => setDetailJob(null)} />}
     </div>

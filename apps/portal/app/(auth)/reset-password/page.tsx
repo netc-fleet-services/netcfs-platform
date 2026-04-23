@@ -56,7 +56,7 @@ export default function ResetPasswordPage() {
           gap: '1rem',
         }}>
           <h2 style={{ margin: 0, fontSize: '1.0625rem', fontWeight: 700, color: 'var(--on-surface)' }}>
-            Set a new password
+            Set your password
           </h2>
 
           {done ? (

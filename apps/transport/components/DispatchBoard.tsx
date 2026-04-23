@@ -101,6 +101,7 @@ export function DispatchBoard() {
   const [stackRadius,     setStackRadius]     = useState(15)
   const [ignoredStacks,   setIgnoredStacks]   = useState<Set<string>>(() => new Set())
   const [calExpanded,     setCalExpanded]     = useState(false)
+  const [schedSearch,     setSchedSearch]     = useState('')
 
   const jobsRef          = useRef<Job[]>([])
   const driversRef       = useRef<Driver[]>([])
@@ -485,6 +486,22 @@ export function DispatchBoard() {
   const vSch  = vJobs.filter(j => j.status === 'scheduled')
   const vDon  = vJobs.filter(j => j.status === 'complete')
   const vCan  = jobs.filter(j => j.day === viewDay && j.status === 'cancelled')
+
+  const matchSched = (j: Job) => {
+    if (!schedSearch) return true
+    const q = schedSearch.toLowerCase()
+    const drv = (id: number | null | undefined) => drivers.find(d => d.id === id)?.name || ''
+    return (j.tbCallNum  || '').toLowerCase().includes(q) ||
+           (j.tbAccount  || '').toLowerCase().includes(q) ||
+           (j.tbTruck    || '').toLowerCase().includes(q) ||
+           (j.tbDriver   || '').toLowerCase().includes(q) ||
+           drv(j.driverId ).toLowerCase().includes(q) ||
+           drv(j.driverId2).toLowerCase().includes(q)
+  }
+  const vActF = vAct.filter(matchSched)
+  const vSchF = vSch.filter(matchSched)
+  const vDonF = vDon.filter(matchSched)
+  const vCanF = vCan.filter(matchSched)
   const stCol = vs.pct >= 90 ? C.rd : vs.pct >= 75 ? C.am : C.gn
 
   const stacks = useMemo(() => {
@@ -552,7 +569,7 @@ export function DispatchBoard() {
           <span style={{ fontSize: 9, color: C.dm, fontWeight: 600, alignSelf: 'center', marginRight: 2 }}>JOB TYPE:</span>
           {allReasons.map(r => (
             <button key={r} className={'fbtn' + (reasonFilter.has(r) ? ' on' : '')} onClick={() => toggleReason(r)}>
-              {r === 'ALL' ? 'All' : r} ({r === 'ALL' ? jobs.filter(j => j.status !== 'cancelled').length : jobs.filter(j => j.tbReason === r && j.status !== 'cancelled').length})
+              {r === 'ALL' ? 'All' : r} ({r === 'ALL' ? jobs.filter(j => j.day === viewDay && j.status !== 'cancelled').length : jobs.filter(j => j.day === viewDay && j.tbReason === r && j.status !== 'cancelled').length})
             </button>
           ))}
         </div>
@@ -564,7 +581,7 @@ export function DispatchBoard() {
           <span style={{ fontSize: 9, color: C.dm, fontWeight: 600, alignSelf: 'center', marginRight: 2 }}>LOCATION:</span>
           {['ALL', 'NETC', "Matt Brown's", "Ray's", 'Interstate'].map(loc => (
             <button key={loc} className={'fbtn' + (locationFilter.has(loc) ? ' on' : '')} onClick={() => toggleLocation(loc)}>
-              {loc === 'ALL' ? 'All' : loc} ({loc === 'ALL' ? jobs.filter(j => j.status !== 'cancelled').length : jobs.filter(j => j.status !== 'cancelled' && locLabel(j.tbCallNum) === loc).length})
+              {loc === 'ALL' ? 'All' : loc} ({loc === 'ALL' ? jobs.filter(j => j.day === viewDay && j.status !== 'cancelled').length : jobs.filter(j => j.day === viewDay && j.status !== 'cancelled' && locLabel(j.tbCallNum) === loc).length})
             </button>
           ))}
         </div>
@@ -639,6 +656,14 @@ export function DispatchBoard() {
         {syncStatus === 'ok'         && <div style={{ ...cB, background: C.gb, borderColor: C.gn, marginBottom: 6, fontSize: 11, color: C.gn, padding: '8px 12px' }}>✓ Sync triggered — new jobs will appear within 2 minutes.</div>}
         {syncStatus === 'triggering' && <div style={{ ...cB, background: C.ab, borderColor: C.am, marginBottom: 6, fontSize: 11, color: C.am, padding: '8px 12px' }}>Triggering sync…</div>}
 
+        <input
+          type="search"
+          value={schedSearch}
+          onChange={e => setSchedSearch(e.target.value)}
+          placeholder="Search driver, truck #, call #, account…"
+          style={{ width: '100%', padding: '6px 10px', marginBottom: 6, background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, color: '#e5e5e5', fontSize: 12, fontFamily: 'inherit', boxSizing: 'border-box' }}
+        />
+
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
           <button style={{ ...bSt, color: C.pu, borderColor: C.pu, opacity: syncStatus === 'triggering' ? 0.5 : 1 }} onClick={triggerSync} disabled={syncStatus === 'triggering'}>🔄 Sync TowBook</button>
           <div style={{ display: 'flex', gap: 6 }}>
@@ -674,19 +699,22 @@ export function DispatchBoard() {
           </div>
         )}
 
-        {vAct.length > 0 && <div style={{ fontSize: 9, fontWeight: 700, color: C.am, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 3, animation: 'pulse 2s infinite' }}>Active ({vAct.length})</div>}
-        {vAct.map(j => <JobCard key={j.id} job={j} drivers={drivers} onUpdate={u => updJob(j.id, u)} onRemove={() => rmJob(j.id)} onDayChange={setViewDay} />)}
-        {vSch.length > 0 && <div style={{ fontSize: 9, fontWeight: 700, color: C.ac, textTransform: 'uppercase', letterSpacing: 1, marginTop: vAct.length ? 5 : 0, marginBottom: 3 }}>Scheduled ({vSch.length})</div>}
-        {vSch.map(j => <JobCard key={j.id} job={j} drivers={drivers} onUpdate={u => updJob(j.id, u)} onRemove={() => rmJob(j.id)} onDayChange={setViewDay} />)}
-        {vDon.length > 0 && <div style={{ fontSize: 9, fontWeight: 700, color: C.gn, textTransform: 'uppercase', letterSpacing: 1, marginTop: 5, marginBottom: 3 }}>Done ({vDon.length})</div>}
-        {vDon.map(j => <JobCard key={j.id} job={j} drivers={drivers} onUpdate={u => updJob(j.id, u)} onRemove={() => rmJob(j.id)} onDayChange={setViewDay} />)}
+        {vActF.length > 0 && <div style={{ fontSize: 9, fontWeight: 700, color: C.am, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 3, animation: 'pulse 2s infinite' }}>Active ({vActF.length})</div>}
+        {vActF.map(j => <JobCard key={j.id} job={j} drivers={drivers} onUpdate={u => updJob(j.id, u)} onRemove={() => rmJob(j.id)} onDayChange={setViewDay} />)}
+        {vSchF.length > 0 && <div style={{ fontSize: 9, fontWeight: 700, color: C.ac, textTransform: 'uppercase', letterSpacing: 1, marginTop: vActF.length ? 5 : 0, marginBottom: 3 }}>Scheduled ({vSchF.length})</div>}
+        {vSchF.map(j => <JobCard key={j.id} job={j} drivers={drivers} onUpdate={u => updJob(j.id, u)} onRemove={() => rmJob(j.id)} onDayChange={setViewDay} />)}
+        {vDonF.length > 0 && <div style={{ fontSize: 9, fontWeight: 700, color: C.gn, textTransform: 'uppercase', letterSpacing: 1, marginTop: 5, marginBottom: 3 }}>Done ({vDonF.length})</div>}
+        {vDonF.map(j => <JobCard key={j.id} job={j} drivers={drivers} onUpdate={u => updJob(j.id, u)} onRemove={() => rmJob(j.id)} onDayChange={setViewDay} />)}
         {vJobs.length === 0 && !showForm && (
           <div style={{ ...cB, textAlign: 'center', padding: 20, color: C.dm, fontSize: 11 }}>
             {!reasonFilter.has('ALL') ? 'No ' + [...reasonFilter].join(', ') + ' jobs' : 'No jobs'} for {dayFull(viewDay).toLowerCase()}
           </div>
         )}
-        {vCan.length > 0 && <div style={{ fontSize: 9, fontWeight: 700, color: '#7f1d1d', textTransform: 'uppercase', letterSpacing: 1, marginTop: 8, marginBottom: 3 }}>Cancelled ({vCan.length})</div>}
-        {vCan.map(j => <JobCard key={j.id} job={j} drivers={drivers} onUpdate={u => updJob(j.id, u)} onRemove={() => {}} onDayChange={setViewDay} />)}
+        {vJobs.length > 0 && (vActF.length + vSchF.length + vDonF.length) === 0 && schedSearch && (
+          <div style={{ ...cB, textAlign: 'center', padding: 20, color: C.dm, fontSize: 11 }}>No jobs match &ldquo;{schedSearch}&rdquo;.</div>
+        )}
+        {vCanF.length > 0 && <div style={{ fontSize: 9, fontWeight: 700, color: '#7f1d1d', textTransform: 'uppercase', letterSpacing: 1, marginTop: 8, marginBottom: 3 }}>Cancelled ({vCanF.length})</div>}
+        {vCanF.map(j => <JobCard key={j.id} job={j} drivers={drivers} onUpdate={u => updJob(j.id, u)} onRemove={() => {}} onDayChange={setViewDay} />)}
       </>}
 
       {tab === 'drivers'  && <DriversTab jobs={jobs.filter(j => j.status !== 'cancelled')} drivers={drivers} viewDay={viewDay} hpd={hpd} onExportCSV={exportCSV} />}

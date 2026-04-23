@@ -31,7 +31,7 @@ interface TruckForm {
 }
 const EMPTY_FORM: TruckForm = { unit_number: '', vin: '', category: '', location_id: '', current_status: STATUS.READY, active: true }
 
-export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) {
+export function AdminSettings({ profile }: { profile: FleetProfile }) {
   const router = useRouter()
   const supabase = getSupabaseBrowserClient()
 
@@ -47,6 +47,7 @@ export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) 
   const [editTruck, setEditTruck] = useState<TruckRow | null>(null)
   const [truckForm, setTruckForm] = useState(EMPTY_FORM)
   const [showTruckForm, setShowTruckForm] = useState(false)
+  const [truckSearch, setTruckSearch] = useState('')
 
   useEffect(() => {
     fetchAll().then(() => setLoading(false))
@@ -187,7 +188,7 @@ export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) 
         </div>
 
         <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--outline)', paddingBottom: '0.75rem', marginBottom: '1.5rem' }}>
-          {[['trucks', 'Manage Trucks'], ['notifications', 'Notifications']].map(([id, label]) => (
+          {([['trucks', 'Manage Trucks'], ...(profile.role === 'admin' ? [['notifications', 'Notifications']] : [])] as [string, string][]).map(([id, label]) => (
             <button key={id} className={tab === id ? 'btn-primary' : 'btn-secondary'} style={{ fontSize: '0.8125rem' }} onClick={() => setTab(id)}>
               {label}
             </button>
@@ -202,57 +203,78 @@ export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) 
 
         {tab === 'trucks' && (
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-              <p style={{ color: 'var(--on-surface-muted)', fontSize: '0.875rem', margin: 0 }}>
-                {trucks.filter(t => t.active).length} active trucks
-              </p>
-              <button className="btn-primary" style={{ fontSize: '0.8125rem' }} onClick={openNewTruck}>+ Add Truck</button>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <input
+                type="search"
+                className="form-input"
+                placeholder="Search by unit #, VIN, category, location…"
+                value={truckSearch}
+                onChange={e => setTruckSearch(e.target.value)}
+                style={{ maxWidth: 320, fontSize: '0.85rem', padding: '0.375rem 0.75rem' }}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <p style={{ color: 'var(--on-surface-muted)', fontSize: '0.875rem', margin: 0, whiteSpace: 'nowrap' }}>
+                  {trucks.filter(t => t.active).length} active trucks
+                </p>
+                <button className="btn-primary" style={{ fontSize: '0.8125rem' }} onClick={openNewTruck}>+ Add Truck</button>
+              </div>
             </div>
 
             {showTruckForm && (
-              <div style={{ marginBottom: '1.5rem', padding: '1.5rem', background: 'var(--surface-container)', border: '1px solid var(--outline)', borderRadius: '0.75rem' }}>
-                <h3 style={{ margin: '0 0 1.25rem', fontWeight: 700, fontSize: '1rem', color: 'var(--on-surface)' }}>
-                  {editTruck ? `Edit ${editTruck.unit_number}` : 'Add New Truck'}
-                </h3>
-                <form onSubmit={saveTruck}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                    <div>
-                      <label className="form-label">Unit Number *</label>
-                      <input className="form-input" value={truckForm.unit_number} onChange={e => setTruckForm(f => ({ ...f, unit_number: e.target.value }))} required placeholder="e.g. T-101" />
-                    </div>
-                    <div>
-                      <label className="form-label">VIN <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--on-surface-muted)' }}>(optional)</span></label>
-                      <input className="form-input" value={truckForm.vin} onChange={e => setTruckForm(f => ({ ...f, vin: e.target.value }))} placeholder="17-character VIN" maxLength={17} />
-                    </div>
-                    <div>
-                      <label className="form-label">Category</label>
-                      <select className="form-select" value={truckForm.category} onChange={e => setTruckForm(f => ({ ...f, category: e.target.value }))}>
-                        <option value="">-- No Category --</option>
-                        {Object.entries(CATEGORY_LABELS).map(([val, label]) => (
-                          <option key={val} value={val}>{label}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="form-label">Location</label>
-                      <select className="form-select" value={truckForm.location_id} onChange={e => setTruckForm(f => ({ ...f, location_id: e.target.value }))}>
-                        <option value="">-- No Location --</option>
-                        {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="form-label">Initial Status</label>
-                      <select className="form-select" value={truckForm.current_status} onChange={e => setTruckForm(f => ({ ...f, current_status: e.target.value }))}>
-                        {Object.entries(STATUS_LABELS).map(([val, label]) => <option key={val} value={val}>{label}</option>)}
-                      </select>
-                    </div>
+              <>
+                <div onClick={() => setShowTruckForm(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 40 }} />
+                <div style={{
+                  position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+                  width: 'min(560px, 95vw)', maxHeight: '90vh', overflowY: 'auto',
+                  background: 'var(--surface-container)', border: '1px solid var(--outline)',
+                  borderRadius: '0.875rem', padding: '1.5rem', zIndex: 50,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+                    <h3 style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: 'var(--on-surface)' }}>
+                      {editTruck ? `Edit ${editTruck.unit_number}` : 'Add New Truck'}
+                    </h3>
+                    <button type="button" onClick={() => setShowTruckForm(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.5rem', color: 'var(--on-surface-muted)', lineHeight: 1, padding: '0.25rem' }}>×</button>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem' }}>
-                    <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving…' : editTruck ? 'Save Changes' : 'Add Truck'}</button>
-                    <button type="button" className="btn-secondary" onClick={() => setShowTruckForm(false)}>Cancel</button>
-                  </div>
-                </form>
-              </div>
+                  <form onSubmit={saveTruck}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                      <div>
+                        <label className="form-label">Unit Number *</label>
+                        <input className="form-input" value={truckForm.unit_number} onChange={e => setTruckForm(f => ({ ...f, unit_number: e.target.value }))} required placeholder="e.g. T-101" />
+                      </div>
+                      <div>
+                        <label className="form-label">VIN <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--on-surface-muted)' }}>(optional)</span></label>
+                        <input className="form-input" value={truckForm.vin} onChange={e => setTruckForm(f => ({ ...f, vin: e.target.value }))} placeholder="17-character VIN" maxLength={17} />
+                      </div>
+                      <div>
+                        <label className="form-label">Category</label>
+                        <select className="form-select" value={truckForm.category} onChange={e => setTruckForm(f => ({ ...f, category: e.target.value }))}>
+                          <option value="">-- No Category --</option>
+                          {Object.entries(CATEGORY_LABELS).map(([val, label]) => (
+                            <option key={val} value={val}>{label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="form-label">Location</label>
+                        <select className="form-select" value={truckForm.location_id} onChange={e => setTruckForm(f => ({ ...f, location_id: e.target.value }))}>
+                          <option value="">-- No Location --</option>
+                          {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="form-label">Initial Status</label>
+                        <select className="form-select" value={truckForm.current_status} onChange={e => setTruckForm(f => ({ ...f, current_status: e.target.value }))}>
+                          {Object.entries(STATUS_LABELS).map(([val, label]) => <option key={val} value={val}>{label}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem' }}>
+                      <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving…' : editTruck ? 'Save Changes' : 'Add Truck'}</button>
+                      <button type="button" className="btn-secondary" onClick={() => setShowTruckForm(false)}>Cancel</button>
+                    </div>
+                  </form>
+                </div>
+              </>
             )}
 
             <div style={{ background: 'var(--surface-container)', border: '1px solid var(--outline-variant)', borderRadius: '0.75rem', overflow: 'hidden' }}>
@@ -262,7 +284,14 @@ export function AdminSettings({ profile: _profile }: { profile: FleetProfile }) 
                     <tr><th>Unit</th><th>VIN</th><th>Category</th><th>Location</th><th>Status</th><th>Active</th><th></th></tr>
                   </thead>
                   <tbody>
-                    {trucks.map(truck => (
+                    {trucks.filter(t => {
+                      if (!truckSearch) return true
+                      const q = truckSearch.toLowerCase()
+                      return t.unit_number.toLowerCase().includes(q) ||
+                        (t.vin || '').toLowerCase().includes(q) ||
+                        (CATEGORY_LABELS[t.category || ''] || '').toLowerCase().includes(q) ||
+                        (t.locations?.name || '').toLowerCase().includes(q)
+                    }).map(truck => (
                       <tr key={truck.id} style={{ opacity: truck.active ? 1 : 0.55 }}>
                         <td style={{ fontWeight: 600 }}>{truck.unit_number}</td>
                         <td style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: 'var(--on-surface-muted)' }}>{truck.vin || '—'}</td>
