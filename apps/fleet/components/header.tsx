@@ -91,7 +91,7 @@ export function Header({ profile }: Props) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           {isAdmin && (
             <button className="btn-ghost" onClick={() => router.push('/admin')}>
-              Settings
+              Admin
             </button>
           )}
 

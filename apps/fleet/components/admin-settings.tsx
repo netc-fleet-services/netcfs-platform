@@ -71,9 +71,12 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
   const [requestDateFrom,  setRequestDateFrom]  = useState('')
   const [requestDateTo,    setRequestDateTo]    = useState('')
   const [requestStatusFilter, setRequestStatusFilter] = useState<'all' | 'pending' | 'approved' | 'denied'>('all')
-  const [reviewingId,      setReviewingId]      = useState<string | null>(null)
-  const [reviewNotes,      setReviewNotes]      = useState('')
-  const [denialReason,     setDenialReason]     = useState('')
+  const [reviewingId,         setReviewingId]         = useState<string | null>(null)
+  const [reviewNotes,         setReviewNotes]         = useState('')
+  const [denialReason,        setDenialReason]        = useState('')
+  const [equipNotifyEmail,    setEquipNotifyEmail]    = useState('')
+  const [emailSaving,         setEmailSaving]         = useState(false)
+  const [emailSaveMsg,        setEmailSaveMsg]        = useState('')
 
   useEffect(() => {
     fetchAll().then(() => setLoading(false))
@@ -90,8 +93,24 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
   }
 
   useEffect(() => {
-    if (tab === 'equipment_requests') fetchEquipRequests()
+    if (tab === 'equipment_requests') {
+      fetchEquipRequests()
+      supabase.from('settings').select('value').eq('key', 'equipment_request_notify_email').single()
+        .then(({ data }) => { if (data?.value) setEquipNotifyEmail(data.value) })
+    }
   }, [tab])
+
+  async function saveEquipNotifyEmail() {
+    setEmailSaving(true)
+    setEmailSaveMsg('')
+    const { error } = await supabase.from('settings').upsert(
+      { key: 'equipment_request_notify_email', value: equipNotifyEmail.trim() },
+      { onConflict: 'key' }
+    )
+    setEmailSaveMsg(error ? 'Error: ' + error.message : 'Saved.')
+    setEmailSaving(false)
+    setTimeout(() => setEmailSaveMsg(''), 3000)
+  }
 
   async function reviewRequest(id: string, status: 'approved' | 'denied') {
     const payload: Record<string, unknown> = {
@@ -398,6 +417,32 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
 
           return (
             <div>
+              {/* Notification email config */}
+              <div style={{ background: 'var(--surface-container)', border: '1px solid var(--outline)', borderRadius: '0.625rem', padding: '0.875rem 1rem', marginBottom: '1.25rem' }}>
+                <p style={{ margin: '0 0 0.5rem', fontWeight: 700, fontSize: '0.875rem', color: 'var(--on-surface)' }}>Notification Email</p>
+                <p style={{ margin: '0 0 0.625rem', fontSize: '0.8rem', color: 'var(--on-surface-muted)' }}>
+                  New equipment requests are emailed to this address. Leave blank to disable notifications.
+                </p>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input
+                    className="form-input"
+                    type="email"
+                    placeholder="manager@example.com"
+                    value={equipNotifyEmail}
+                    onChange={e => setEquipNotifyEmail(e.target.value)}
+                    style={{ flex: 1, minWidth: 220, fontSize: '0.85rem' }}
+                  />
+                  <button className="btn-primary" style={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }} onClick={saveEquipNotifyEmail} disabled={emailSaving}>
+                    {emailSaving ? 'Saving…' : 'Save Email'}
+                  </button>
+                  {emailSaveMsg && (
+                    <span style={{ fontSize: '0.8rem', color: emailSaveMsg.startsWith('Error') ? 'var(--error)' : 'var(--status-ready)' }}>
+                      {emailSaveMsg}
+                    </span>
+                  )}
+                </div>
+              </div>
+
               {/* Filters */}
               <div style={{ display: 'flex', gap: '0.625rem', flexWrap: 'wrap', marginBottom: '1rem', alignItems: 'flex-end' }}>
                 <div style={{ flex: 1, minWidth: 180 }}>
