@@ -24,20 +24,26 @@ export async function updateSession(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
-  const isAuthRoute =
+
+  // Routes only accessible when logged OUT (redirect to / if authenticated)
+  const isGuestOnlyRoute =
     pathname.startsWith('/login') ||
     pathname.startsWith('/auth') ||
-    pathname.startsWith('/forgot-password') ||
+    pathname.startsWith('/forgot-password')
+
+  // Routes accessible without auth (no redirect to login either direction)
+  const isOpenRoute =
+    isGuestOnlyRoute ||
     pathname.startsWith('/reset-password')
 
-  if (!user && !isAuthRoute) {
+  if (!user && !isOpenRoute) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     url.searchParams.set('next', pathname)
     return NextResponse.redirect(url)
   }
 
-  if (user && isAuthRoute) {
+  if (user && isGuestOnlyRoute) {
     const url = request.nextUrl.clone()
     url.pathname = '/'
     return NextResponse.redirect(url)
