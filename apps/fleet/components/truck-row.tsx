@@ -93,11 +93,10 @@ interface TruckRowProps {
   onStatusChange: (truck: Truck, newStatus: string, comment: string, waitingOn: string | null) => Promise<void>
   onViewHistory: (truck: Truck) => void
   onInspect: (truck: Truck) => void
-  onViewInspections: (truck: Truck) => void
   onUpdateWaitingOn: (id: string, val: string) => Promise<void>
 }
 
-export function TruckRow({ truck, currentStatus, profile, onStatusChange, onViewHistory, onInspect, onViewInspections, onUpdateWaitingOn }: TruckRowProps) {
+export function TruckRow({ truck, currentStatus, profile, onStatusChange, onViewHistory, onInspect, onUpdateWaitingOn }: TruckRowProps) {
   const [changing, setChanging] = useState(false)
   const role = profile?.role
   const canChangeStatus = CAN_CHANGE_STATUS.includes(role as any)
@@ -184,10 +183,9 @@ export function TruckRow({ truck, currentStatus, profile, onStatusChange, onView
       </td>
 
       <td data-label="">
-        <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: '0.375rem' }}>
           <button className="btn-ghost" onClick={() => onViewHistory(truck)}>History</button>
           <button className="btn-ghost" onClick={() => onInspect(truck)}>Inspect</button>
-          <button className="btn-ghost" onClick={() => onViewInspections(truck)} style={{ fontSize: '0.72rem', padding: '0.25rem 0.5rem' }}>Inspection Log</button>
         </div>
       </td>
     </tr>

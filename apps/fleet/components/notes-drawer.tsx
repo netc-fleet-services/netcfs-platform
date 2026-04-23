@@ -1,9 +1,25 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { NOTE_TYPE, NOTE_TYPE_LABELS, STATUS_LABELS, ROLE } from '@/lib/constants'
 import { MaintenanceBadge } from './maintenance-badge'
+import { getSupabaseBrowserClient } from '@netcfs/auth/client'
 import type { Truck, FleetProfile, TruckNote, StatusHistoryEntry } from '@/lib/types'
+
+interface InspectionRecord {
+  id: string
+  inspector: string
+  inspected_date: string
+  has_fails: boolean
+  items: { key: string; label: string; rating: string; comment: string; section?: string }[]
+}
+
+const RATING_COLOR: Record<string, string> = {
+  ok:  'var(--status-ready)',
+  na:  'var(--on-surface-muted)',
+  bad: 'var(--error)',
+}
+const RATING_LABEL: Record<string, string> = { ok: 'OK', na: 'N/A', bad: 'Bad' }
 
 function fmtDateTime(iso: string | null | undefined) {
   if (!iso) return '—'
@@ -58,10 +74,27 @@ interface Props {
 type TimelineEntry = (TruckNote & { _type: 'note' }) | (StatusHistoryEntry & { _type: 'history' })
 
 export function NotesDrawer({ truck, profile, onAddNote, onClose }: Props) {
+  const supabase = getSupabaseBrowserClient()
   const [noteType, setNoteType] = useState<typeof NOTE_TYPE[keyof typeof NOTE_TYPE]>(profile?.role === ROLE.DRIVER ? NOTE_TYPE.DRIVER : NOTE_TYPE.MECHANIC)
   const [noteBody, setNoteBody] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [activeTab, setActiveTab] = useState('history')
+
+  const [inspections,     setInspections]     = useState<InspectionRecord[]>([])
+  const [inspLoading,     setInspLoading]     = useState(false)
+  const [expandedInspId,  setExpandedInspId]  = useState<string | null>(null)
+
+  useEffect(() => {
+    if (activeTab !== 'inspections') return
+    setInspLoading(true)
+    supabase
+      .from('vehicle_inspections')
+      .select('id, inspector, inspected_date, has_fails, items')
+      .eq('truck_id', truck.id)
+      .order('inspected_date', { ascending: false })
+      .limit(24)
+      .then(({ data }) => { setInspections(data || []); setInspLoading(false) })
+  }, [activeTab, truck.id, supabase])
 
   const isDriver = profile?.role === ROLE.DRIVER
   const availableNoteTypes = isDriver
@@ -103,7 +136,7 @@ export function NotesDrawer({ truck, profile, onAddNote, onClose }: Props) {
         </div>
 
         <div style={{ display: 'flex', borderBottom: '1px solid var(--outline)', padding: '0 1.5rem', flexShrink: 0 }}>
-          {[['history', 'History'], ['maintenance', 'Maintenance']].map(([id, label]) => (
+          {[['history', 'History'], ['inspections', 'Inspections'], ['maintenance', 'Maintenance']].map(([id, label]) => (
             <button
               key={id}
               onClick={() => setActiveTab(id)}
@@ -235,6 +268,81 @@ export function NotesDrawer({ truck, profile, onAddNote, onClose }: Props) {
                 ))}
               </div>
             </>
+          )}
+
+          {activeTab === 'inspections' && (
+            <div>
+              {inspLoading && (
+                <p style={{ color: 'var(--on-surface-muted)', fontSize: '0.875rem' }}>Loading…</p>
+              )}
+              {!inspLoading && inspections.length === 0 && (
+                <p style={{ color: 'var(--on-surface-muted)', fontSize: '0.875rem' }}>No inspections recorded for this truck yet.</p>
+              )}
+              {inspections.map(rec => {
+                const isOpen   = expandedInspId === rec.id
+                const badItems = rec.items.filter(i => i.rating === 'bad')
+                const passCount = rec.items.filter(i => i.rating === 'ok').length
+                const naCount   = rec.items.filter(i => i.rating === 'na').length
+
+                const sections: Record<string, typeof rec.items> = {}
+                for (const item of rec.items) {
+                  const sec = item.section || 'Other'
+                  if (!sections[sec]) sections[sec] = []
+                  sections[sec].push(item)
+                }
+
+                return (
+                  <div key={rec.id} style={{ border: `1px solid ${rec.has_fails ? 'var(--error)' : 'var(--outline-variant)'}`, borderRadius: '0.5rem', marginBottom: '0.625rem', overflow: 'hidden' }}>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedInspId(isOpen ? null : rec.id)}
+                      style={{ width: '100%', background: 'var(--surface-high)', border: 'none', cursor: 'pointer', padding: '0.625rem 0.875rem', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '0.625rem' }}
+                    >
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: 'var(--on-surface)' }}>
+                            {new Date(rec.inspected_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                          </span>
+                          {rec.has_fails
+                            ? <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: 'var(--error-container)', color: 'var(--error)' }}>{badItems.length} FAIL{badItems.length !== 1 ? 'S' : ''}</span>
+                            : <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: 'var(--status-ready-bg)', color: 'var(--status-ready)' }}>PASS</span>
+                          }
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--on-surface-muted)', marginTop: 2 }}>
+                          {rec.inspector} · {passCount} OK · {naCount} N/A{rec.has_fails ? <> · <span style={{ color: 'var(--error)' }}>{badItems.length} Bad</span></> : null}
+                        </div>
+                      </div>
+                      <span style={{ color: 'var(--on-surface-muted)', fontSize: '0.7rem', transform: isOpen ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s', display: 'inline-block' }}>▾</span>
+                    </button>
+
+                    {isOpen && (
+                      <div style={{ padding: '0.625rem 0.875rem', borderTop: '1px solid var(--outline-variant)' }}>
+                        {Object.entries(sections).map(([sectionTitle, sectionItems]) => (
+                          <div key={sectionTitle} style={{ marginBottom: '0.625rem' }}>
+                            <div style={{ fontSize: '0.68rem', fontWeight: 800, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>
+                              {sectionTitle}
+                            </div>
+                            {sectionItems.map(item => (
+                              <div key={item.key} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem', marginBottom: '0.2rem' }}>
+                                <span style={{ flexShrink: 0, fontWeight: 700, fontSize: '0.67rem', padding: '1px 5px', borderRadius: 3, minWidth: 28, textAlign: 'center', color: RATING_COLOR[item.rating] || 'var(--on-surface-muted)', background: (RATING_COLOR[item.rating] || 'var(--on-surface-muted)') + '22' }}>
+                                  {RATING_LABEL[item.rating] || item.rating}
+                                </span>
+                                <span style={{ fontSize: '0.775rem', color: 'var(--on-surface)', lineHeight: 1.4 }}>{item.label}</span>
+                              </div>
+                            ))}
+                            {sectionItems.filter(i => i.rating === 'bad' && i.comment).map(item => (
+                              <div key={item.key + '_c'} style={{ marginLeft: '2.25rem', marginBottom: '0.2rem', padding: '0.2rem 0.5rem', background: 'var(--error-container)', borderRadius: '0.25rem', fontSize: '0.72rem', color: 'var(--error)' }}>
+                                {item.comment}
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           )}
 
           {activeTab === 'maintenance' && (

@@ -10,7 +10,6 @@ import { StatusTable } from './status-table'
 import { NotesDrawer } from './notes-drawer'
 import { HistoryReportModal } from './HistoryReportModal'
 import { InspectionModal } from './InspectionModal'
-import { InspectionHistoryModal } from './InspectionHistoryModal'
 import { EquipmentRequestModal } from './EquipmentRequestModal'
 import type { Truck, FleetProfile, Location } from '@/lib/types'
 import { CAN_MANAGE_TRUCKS } from '@/lib/constants'
@@ -68,9 +67,8 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
 
   const [notesDrawer,        setNotesDrawer]        = useState<Truck | null>(null)
   const [showReportModal,    setShowReportModal]    = useState(false)
-  const [inspectTruck,          setInspectTruck]          = useState<Truck | null>(null)
-  const [inspectionLogTruck,    setInspectionLogTruck]    = useState<Truck | null>(null)
-  const [showEquipmentRequest,  setShowEquipmentRequest]  = useState(false)
+  const [inspectTruck,         setInspectTruck]         = useState<Truck | null>(null)
+  const [showEquipmentRequest, setShowEquipmentRequest] = useState(false)
   const [lastSynced, setLastSynced] = useState<string | null>(null)
   const [syncingNow, setSyncingNow] = useState(false)
   const [, setTick] = useState(0)
@@ -295,9 +293,9 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
         )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1.25rem' }}>
-          <StatusTable status={STATUS.OOS}    trucks={oosTrucks}    totalCount={trucks.filter(t => t.current_status === STATUS.OOS).length}    profile={profile} onStatusChange={handleStatusChange} onViewHistory={t => setNotesDrawer(t)} onInspect={t => setInspectTruck(t)} onViewInspections={t => setInspectionLogTruck(t)} onUpdateWaitingOn={handleUpdateWaitingOn} />
-          <StatusTable status={STATUS.ISSUES} trucks={issuesTrucks} totalCount={trucks.filter(t => t.current_status === STATUS.ISSUES).length} profile={profile} onStatusChange={handleStatusChange} onViewHistory={t => setNotesDrawer(t)} onInspect={t => setInspectTruck(t)} onViewInspections={t => setInspectionLogTruck(t)} onUpdateWaitingOn={handleUpdateWaitingOn} />
-          <StatusTable status={STATUS.READY}  trucks={readyTrucks}  totalCount={trucks.filter(t => t.current_status === STATUS.READY).length}  profile={profile} onStatusChange={handleStatusChange} onViewHistory={t => setNotesDrawer(t)} onInspect={t => setInspectTruck(t)} onViewInspections={t => setInspectionLogTruck(t)} onUpdateWaitingOn={handleUpdateWaitingOn} />
+          <StatusTable status={STATUS.OOS}    trucks={oosTrucks}    totalCount={trucks.filter(t => t.current_status === STATUS.OOS).length}    profile={profile} onStatusChange={handleStatusChange} onViewHistory={t => setNotesDrawer(t)} onInspect={t => setInspectTruck(t)} onUpdateWaitingOn={handleUpdateWaitingOn} />
+          <StatusTable status={STATUS.ISSUES} trucks={issuesTrucks} totalCount={trucks.filter(t => t.current_status === STATUS.ISSUES).length} profile={profile} onStatusChange={handleStatusChange} onViewHistory={t => setNotesDrawer(t)} onInspect={t => setInspectTruck(t)} onUpdateWaitingOn={handleUpdateWaitingOn} />
+          <StatusTable status={STATUS.READY}  trucks={readyTrucks}  totalCount={trucks.filter(t => t.current_status === STATUS.READY).length}  profile={profile} onStatusChange={handleStatusChange} onViewHistory={t => setNotesDrawer(t)} onInspect={t => setInspectTruck(t)} onUpdateWaitingOn={handleUpdateWaitingOn} />
         </div>
       </main>
 
@@ -322,13 +320,6 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
           truck={inspectTruck}
           onClose={() => setInspectTruck(null)}
           onSaved={() => setInspectTruck(null)}
-        />
-      )}
-
-      {inspectionLogTruck && (
-        <InspectionHistoryModal
-          truck={inspectionLogTruck}
-          onClose={() => setInspectionLogTruck(null)}
         />
       )}
 
