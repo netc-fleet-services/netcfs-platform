@@ -100,7 +100,7 @@ def scrape_page(page, col_index: dict) -> list[dict]:
             "reason_for_impound": cell(cells, "reason", "reason for impound", "impound reason"),
             "location":           cell(cells, "location", "lot", "yard"),
             "status":             cell(cells, "status"),
-            "released":           parse_bool(cell(cells, "released")) or False,
+            "released":           False,  # default for new records; upsert logic preserves existing value
             "amount_paid":        parse_money(cell(cells, "amount paid", "paid", "amount")),
             "internal_cost":      parse_money(cell(cells, "internal cost", "cost")),
             "keys":               parse_bool(cell(cells, "keys", "has keys")),
@@ -148,15 +148,46 @@ def scrape_impounds(page) -> list[dict]:
         print("Timed out waiting for impound table — screenshot saved as no_table.png")
         return []
 
-    # Extra settle time: TowBook sometimes renders placeholder rows first,
-    # then replaces them with real data via a second XHR.
-    page.wait_for_timeout(3_000)
+    # TowBook uses infinite scroll — rows load as you scroll down.
+    # Scroll to the bottom repeatedly until the row count stops growing.
+    print("Scrolling to load all records (infinite scroll)…")
+    prev_count = 0
+    stable_rounds = 0
+    scroll_attempts = 0
+
+    while stable_rounds < 3 and scroll_attempts < 60:
+        # Scroll both the window and the table's scrollable parent
+        page.evaluate("""
+            window.scrollTo(0, document.body.scrollHeight);
+            const tbl = document.querySelector('table');
+            if (tbl) {
+                let el = tbl.parentElement;
+                while (el) {
+                    el.scrollTop = el.scrollHeight;
+                    el = el.parentElement;
+                }
+            }
+        """)
+        page.wait_for_timeout(1_200)
+
+        curr_count = len(page.query_selector_all("table tbody tr"))
+        print(f"  scroll {scroll_attempts + 1}: {curr_count} rows")
+
+        if curr_count == prev_count:
+            stable_rounds += 1
+        else:
+            stable_rounds = 0
+            prev_count = curr_count
+
+        scroll_attempts += 1
+
+    print(f"All records loaded — {prev_count} rows total")
 
     # Capture screenshot so we can verify what the scraper actually sees
     page.screenshot(path="impounds_view.png")
     print("Screenshot saved as impounds_view.png")
 
-    # Build column index from header row (only needs to be done once)
+    # Build column index from header row
     headers = page.query_selector_all("table thead th")
     col_index: dict[str, int] = {}
     for i, th in enumerate(headers):
@@ -165,59 +196,9 @@ def scrape_impounds(page) -> list[dict]:
 
     print(f"Detected columns: {list(col_index.keys())}")
 
-    all_impounds: list[dict] = []
-    page_num = 1
-
-    while True:
-        page_records = scrape_page(page, col_index)
-        print(f"Page {page_num}: scraped {len(page_records)} rows")
-        all_impounds.extend(page_records)
-
-        # Look for a "Next" pagination button that is enabled
-        next_btn = None
-        for selector in [
-            "a[title='Next']",
-            "a[aria-label='Next']",
-            "button[title='Next']",
-            "li.next:not(.disabled) a",
-            "li.page-item.next:not(.disabled) a",
-            ".pagination .next:not(.disabled) a",
-            "a:has-text('Next')",
-            "button:has-text('Next')",
-        ]:
-            try:
-                candidate = page.query_selector(selector)
-                if candidate and candidate.is_visible() and candidate.is_enabled():
-                    # Make sure it's not in a disabled wrapper
-                    parent_classes = page.evaluate(
-                        "(el) => el.parentElement ? el.parentElement.className : ''",
-                        candidate
-                    )
-                    if "disabled" not in str(parent_classes).lower():
-                        next_btn = candidate
-                        break
-            except Exception:
-                continue
-
-        if not next_btn:
-            print("No more pages (no enabled Next button found)")
-            break
-
-        print(f"Navigating to page {page_num + 1}…")
-        next_btn.click()
-        try:
-            page.wait_for_load_state("networkidle", timeout=15_000)
-            page.wait_for_selector("table tbody tr", timeout=15_000)
-        except PlaywrightTimeout:
-            print("Timed out waiting for next page — stopping pagination")
-            break
-
-        page_num += 1
-        if page_num > 50:  # safety cap
-            print("Reached 50-page safety limit — stopping")
-            break
-
-    print(f"Scraped {len(all_impounds)} total impound records across {page_num} page(s)")
+    # Single pass — all rows are now in the DOM after scrolling
+    all_impounds = scrape_page(page, col_index)
+    print(f"Scraped {len(all_impounds)} impound records")
     if all_impounds:
         print("First 5 records scraped:")
         for r in all_impounds[:5]:
@@ -246,19 +227,32 @@ def upsert_impounds(impounds: list[dict]):
         print("Nothing to upsert.")
         return
 
-    # Load existing call numbers so we know which are new vs updates
-    existing_resp = sb.table("impounds").select("call_number, notes, sell, estimated_value, sales_description").execute()
+    # Load existing records — include disposition flags and all manually-edited fields
+    existing_resp = sb.table("impounds").select(
+        "call_number, notes, sell, estimated_value, sales_description, released, scrapped, sold"
+    ).execute()
     existing: dict[str, dict] = {r["call_number"]: r for r in (existing_resp.data or [])}
 
+    new_count = 0
     to_upsert: list[dict] = []
     for rec in impounds:
         cn = rec["call_number"]
         if cn in existing:
             ex = existing[cn]
-            # Preserve manual edits — only overwrite notes if we have new content and DB is empty
+            # Preserve manual text/value edits
             if not rec.get("notes") and ex.get("notes"):
                 rec["notes"] = ex["notes"]
+            # Never let the scraper overwrite a disposition set by a user.
+            # Once a manager marks a vehicle released/scrapped/sold it stays that
+            # way until they change it — regardless of what TowBook shows.
+            if ex.get("released"): rec["released"] = True
+            if ex.get("scrapped"): rec["scrapped"] = True
+            if ex.get("sold"):     rec["sold"]     = True
+        else:
+            new_count += 1
         to_upsert.append(rec)
+
+    print(f"  {new_count} new, {len(to_upsert) - new_count} existing records in this sync")
 
     # Supabase upsert on call_number (unique constraint)
     result = sb.table("impounds").upsert(to_upsert, on_conflict="call_number").execute()
