@@ -6,6 +6,7 @@ import type { FleetProfile } from '@/lib/types'
 export default async function AdminPage() {
   const profile = await getUserProfile()
   if (!profile) redirect('/login')
-  if ((profile as any).role !== 'admin') redirect('/')
+  const canAccessAdmin = ['admin', 'shop_manager', 'dispatcher'].includes((profile as any).role)
+  if (!canAccessAdmin) redirect('/')
   return <AdminSettings profile={profile as FleetProfile} />
 }

@@ -36,7 +36,7 @@ export function Header({ profile }: Props) {
     router.refresh()
   }
 
-  const isAdmin = profile.role === 'admin' || profile.role === 'shop_manager'
+  const isAdmin = profile.role === 'admin' || profile.role === 'shop_manager' || profile.role === 'dispatcher'
   const initial = (profile.email || '?')[0].toUpperCase()
 
   return (
