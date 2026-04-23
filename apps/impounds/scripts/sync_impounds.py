@@ -70,35 +70,9 @@ def parse_money(raw: str) -> float | None:
 
 # ── Scraper ────────────────────────────────────────────────────────────────────
 
-def scrape_impounds(page) -> list[dict]:
-    """
-    Navigate to the TowBook impound management page and extract rows.
-    Returns a list of dicts keyed to our DB columns.
-
-    NOTE: TowBook's impound grid uses a table with one row per vehicle.
-    Column order may shift — we locate columns by header text.
-    """
-    print("Navigating to impound page…")
-    page.goto(IMPOUND_URL, wait_until="networkidle", timeout=60_000)
-
-    # Wait for the data table to appear
-    try:
-        page.wait_for_selector("table tbody tr", timeout=30_000)
-    except PlaywrightTimeout:
-        print("Timed out waiting for impound table — no rows?")
-        return []
-
-    # Build column index from header row
-    headers = page.query_selector_all("table thead th")
-    col_index: dict[str, int] = {}
-    for i, th in enumerate(headers):
-        text = (th.inner_text() or "").strip().lower()
-        col_index[text] = i
-
-    print(f"Detected columns: {list(col_index.keys())}")
-
+def scrape_page(page, col_index: dict) -> list[dict]:
+    """Scrape all data rows visible on the current page."""
     def cell(cells, *names: str) -> str:
-        """Return the text of the first matching column name."""
         for name in names:
             idx = col_index.get(name)
             if idx is not None and idx < len(cells):
@@ -136,8 +110,119 @@ def scrape_impounds(page) -> list[dict]:
 
         impounds.append(record)
 
-    print(f"Scraped {len(impounds)} impound records")
     return impounds
+
+
+def scrape_impounds(page) -> list[dict]:
+    """
+    Navigate to the TowBook impound management page and extract all rows,
+    handling pagination automatically.
+    """
+    print("Navigating to impound page…")
+    page.goto(IMPOUND_URL, wait_until="networkidle", timeout=60_000)
+    print(f"Page URL: {page.url}")
+    print(f"Page title: {page.title()}")
+
+    # Try to maximize rows per page before scraping
+    try:
+        # Look for a page-size selector (e.g. "Show 25 entries")
+        size_select = page.query_selector("select[name*='length'], select[name*='pageSize'], select[name*='perPage']")
+        if size_select:
+            # Pick the largest option
+            options = size_select.query_selector_all("option")
+            values = [o.get_attribute("value") for o in options]
+            numeric = [v for v in values if v and v.isdigit()]
+            if numeric:
+                largest = max(numeric, key=int)
+                size_select.select_option(largest)
+                print(f"Set page size to {largest}")
+                page.wait_for_load_state("networkidle", timeout=15_000)
+    except Exception as e:
+        print(f"Could not set page size: {e}")
+
+    # Wait for the data table to appear
+    try:
+        page.wait_for_selector("table tbody tr", timeout=30_000)
+    except PlaywrightTimeout:
+        page.screenshot(path="no_table.png")
+        print("Timed out waiting for impound table — screenshot saved as no_table.png")
+        return []
+
+    # Extra settle time: TowBook sometimes renders placeholder rows first,
+    # then replaces them with real data via a second XHR.
+    page.wait_for_timeout(3_000)
+
+    # Capture screenshot so we can verify what the scraper actually sees
+    page.screenshot(path="impounds_view.png")
+    print("Screenshot saved as impounds_view.png")
+
+    # Build column index from header row (only needs to be done once)
+    headers = page.query_selector_all("table thead th")
+    col_index: dict[str, int] = {}
+    for i, th in enumerate(headers):
+        text = (th.inner_text() or "").strip().lower()
+        col_index[text] = i
+
+    print(f"Detected columns: {list(col_index.keys())}")
+
+    all_impounds: list[dict] = []
+    page_num = 1
+
+    while True:
+        page_records = scrape_page(page, col_index)
+        print(f"Page {page_num}: scraped {len(page_records)} rows")
+        all_impounds.extend(page_records)
+
+        # Look for a "Next" pagination button that is enabled
+        next_btn = None
+        for selector in [
+            "a[title='Next']",
+            "a[aria-label='Next']",
+            "button[title='Next']",
+            "li.next:not(.disabled) a",
+            "li.page-item.next:not(.disabled) a",
+            ".pagination .next:not(.disabled) a",
+            "a:has-text('Next')",
+            "button:has-text('Next')",
+        ]:
+            try:
+                candidate = page.query_selector(selector)
+                if candidate and candidate.is_visible() and candidate.is_enabled():
+                    # Make sure it's not in a disabled wrapper
+                    parent_classes = page.evaluate(
+                        "(el) => el.parentElement ? el.parentElement.className : ''",
+                        candidate
+                    )
+                    if "disabled" not in str(parent_classes).lower():
+                        next_btn = candidate
+                        break
+            except Exception:
+                continue
+
+        if not next_btn:
+            print("No more pages (no enabled Next button found)")
+            break
+
+        print(f"Navigating to page {page_num + 1}…")
+        next_btn.click()
+        try:
+            page.wait_for_load_state("networkidle", timeout=15_000)
+            page.wait_for_selector("table tbody tr", timeout=15_000)
+        except PlaywrightTimeout:
+            print("Timed out waiting for next page — stopping pagination")
+            break
+
+        page_num += 1
+        if page_num > 50:  # safety cap
+            print("Reached 50-page safety limit — stopping")
+            break
+
+    print(f"Scraped {len(all_impounds)} total impound records across {page_num} page(s)")
+    if all_impounds:
+        print("First 5 records scraped:")
+        for r in all_impounds[:5]:
+            print(f"  call={r['call_number']}  date={r['date_of_impound']}  vehicle={r['make_model']}")
+    return all_impounds
 
 # ── Login ──────────────────────────────────────────────────────────────────────
 

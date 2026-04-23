@@ -131,8 +131,8 @@ export function VehicleDetailDrawer({ impound, profile, onClose, onSaved }: Prop
 
   async function handleSave() {
     setSaving(true)
-    const wasDisposed = impound.sold || impound.scrapped
-    const nowDisposed = form.sold || form.scrapped
+    const wasDisposed = impound.sold || impound.scrapped || impound.released
+    const nowDisposed = form.sold || form.scrapped || form.released
     const dispositionDate = nowDisposed && !wasDisposed
       ? new Date().toISOString()
       : (impound.disposition_date ?? null)

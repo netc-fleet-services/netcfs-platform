@@ -57,10 +57,12 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: python apps/impounds/scripts/sync_impounds.py
 
-      - name: Upload debug screenshot on failure
-        if: failure()
+      - name: Upload debug screenshots
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: login-debug-screenshot
-          path: login_debug.png
+          name: impounds-debug-screenshots
+          path: |
+            impounds_view.png
+            no_table.png
           if-no-files-found: ignore
