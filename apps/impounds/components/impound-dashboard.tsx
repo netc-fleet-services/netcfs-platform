@@ -162,23 +162,38 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
       <div style={{
         borderBottom: '1px solid rgb(var(--outline))',
         background: 'rgb(var(--surface-container))',
-        padding: '1rem 1.5rem',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem',
+        padding: '0 1.5rem',
+        height: '3.5rem',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        position: 'relative',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        {/* Left: back + app name */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
           <a
             href={process.env.NEXT_PUBLIC_PORTAL_URL ?? 'https://netcfs-platform-portal.vercel.app'}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', textDecoration: 'none' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', color: 'rgb(var(--on-surface-muted))', textDecoration: 'none', fontSize: '0.8rem', padding: '0.25rem 0.5rem', borderRadius: '0.375rem', transition: 'color 0.15s' }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'rgb(var(--on-surface))')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'rgb(var(--on-surface-muted))')}
           >
-            <img src="/logo-main.png" alt="NETC Fleet Services" className="logo-light" style={{ height: 32, width: 'auto', display: 'block' }} />
-            <img src="/logo-email.png" alt="NETC Fleet Services" className="logo-dark"  style={{ height: 32, width: 'auto', display: 'block' }} />
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+            NETCFS
           </a>
-          <span style={{ color: 'rgb(var(--on-surface-muted))', fontSize: '0.875rem' }}>/</span>
-          <span style={{ fontSize: '1rem', fontWeight: 700, color: 'rgb(var(--on-surface))' }}>
+          <span style={{ color: 'rgb(var(--outline))', fontSize: '1rem', flexShrink: 0 }}>|</span>
+          <span style={{ fontWeight: 800, fontSize: '0.9375rem', color: 'rgb(var(--on-surface))', letterSpacing: '-0.01em', whiteSpace: 'nowrap' }}>
             Impound Tracker
           </span>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+
+        {/* Center: company logo */}
+        <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none' }}>
+          <img src="/logo-main.png" alt="NETC Fleet Services" className="logo-light" style={{ height: 28, width: 'auto', display: 'block' }} />
+          <img src="/logo-email.png" alt="NETC Fleet Services" className="logo-dark"  style={{ height: 28, width: 'auto', display: 'block' }} />
+        </div>
+
+        {/* Right: user + sync */}
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0 }}>
           <span style={{ fontSize: '0.75rem', color: 'rgb(var(--on-surface-muted))' }}>
             {profile.full_name ?? profile.email}
           </span>

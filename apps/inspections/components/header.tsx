@@ -19,6 +19,7 @@ export function Header() {
         display: 'flex',
         alignItems: 'center',
         gap: '0.75rem',
+        position: 'relative',
       }}>
         <a
           href={portalUrl}
@@ -38,6 +39,11 @@ export function Header() {
         </a>
 
         <span style={{ color: 'rgb(var(--outline))', fontSize: '1rem' }}>|</span>
+
+        {/* Center: company logo */}
+        <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none' }}>
+          <img src="/logo-main.png" alt="NETC Fleet Services" style={{ height: 28, width: 'auto', display: 'block' }} />
+        </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'rgb(var(--primary))' }}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

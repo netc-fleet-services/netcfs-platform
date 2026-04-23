@@ -55,6 +55,7 @@ export function Header({ profile }: Props) {
         display: 'flex',
         alignItems: 'center',
         gap: '1rem',
+        position: 'relative',
       }}>
         {/* Portal home link */}
         <a
@@ -83,6 +84,11 @@ export function Header({ profile }: Props) {
           <span style={{ fontWeight: 800, fontSize: '0.9375rem', color: 'rgb(var(--on-surface))', letterSpacing: '-0.01em', whiteSpace: 'nowrap' }}>
             Fleet Tracker
           </span>
+        </div>
+
+        {/* Center: company logo */}
+        <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none' }}>
+          <img src="/logo-main.png" alt="NETC Fleet Services" style={{ height: 28, width: 'auto', display: 'block' }} />
         </div>
 
         <div style={{ flex: 1 }} />
