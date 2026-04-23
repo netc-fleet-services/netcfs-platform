@@ -141,16 +141,38 @@ def scrape_impounds(page) -> list[dict]:
 
 # ── Login ──────────────────────────────────────────────────────────────────────
 
+# TowBook uses ASP.NET MVC — field names are PascalCase (UserName, Password).
+# The selector list covers current and any legacy variants.
+_USERNAME_SEL = (
+    'input[name="UserName"], input[name="username"], '
+    'input[type="email"], #UserName, #username'
+)
+_PASSWORD_SEL = (
+    'input[name="Password"], input[name="password"], '
+    'input[type="password"], #Password, #password'
+)
+
 def login(page):
     print("Logging in to TowBook…")
-    page.goto("https://app.towbook.com/", wait_until="networkidle", timeout=30_000)
+    page.goto("https://app.towbook.com/", wait_until="domcontentloaded", timeout=60_000)
+    print(f"Page loaded — URL: {page.url} | title: {page.title()}")
 
-    page.fill('input[name="username"], input[type="email"], #username', TOWBOOK_USER)
-    page.fill('input[name="password"], input[type="password"], #password', TOWBOOK_PASS)
+    # Wait explicitly for the username field before attempting to fill
+    try:
+        page.wait_for_selector(_USERNAME_SEL, timeout=30_000)
+    except PlaywrightTimeout:
+        page.screenshot(path="login_debug.png")
+        print("ERROR: username field not found within 30 s.")
+        print("--- page HTML (first 3000 chars) ---")
+        print(page.content()[:3000])
+        raise
+
+    page.locator(_USERNAME_SEL).first.fill(TOWBOOK_USER)
+    page.locator(_PASSWORD_SEL).first.fill(TOWBOOK_PASS)
     page.keyboard.press("Enter")
 
     # Wait for post-login redirect
-    page.wait_for_load_state("networkidle", timeout=30_000)
+    page.wait_for_load_state("networkidle", timeout=60_000)
     print(f"Logged in — current URL: {page.url}")
 
 # ── Upsert ─────────────────────────────────────────────────────────────────────
