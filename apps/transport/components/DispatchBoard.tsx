@@ -569,7 +569,7 @@ export function DispatchBoard() {
           <span style={{ fontSize: 9, color: C.dm, fontWeight: 600, alignSelf: 'center', marginRight: 2 }}>JOB TYPE:</span>
           {allReasons.map(r => (
             <button key={r} className={'fbtn' + (reasonFilter.has(r) ? ' on' : '')} onClick={() => toggleReason(r)}>
-              {r === 'ALL' ? 'All' : r} ({r === 'ALL' ? jobs.filter(j => j.status !== 'cancelled').length : jobs.filter(j => j.tbReason === r && j.status !== 'cancelled').length})
+              {r === 'ALL' ? 'All' : r} ({r === 'ALL' ? jobs.filter(j => j.day === viewDay && j.status !== 'cancelled').length : jobs.filter(j => j.day === viewDay && j.tbReason === r && j.status !== 'cancelled').length})
             </button>
           ))}
         </div>
@@ -581,7 +581,7 @@ export function DispatchBoard() {
           <span style={{ fontSize: 9, color: C.dm, fontWeight: 600, alignSelf: 'center', marginRight: 2 }}>LOCATION:</span>
           {['ALL', 'NETC', "Matt Brown's", "Ray's", 'Interstate'].map(loc => (
             <button key={loc} className={'fbtn' + (locationFilter.has(loc) ? ' on' : '')} onClick={() => toggleLocation(loc)}>
-              {loc === 'ALL' ? 'All' : loc} ({loc === 'ALL' ? jobs.filter(j => j.status !== 'cancelled').length : jobs.filter(j => j.status !== 'cancelled' && locLabel(j.tbCallNum) === loc).length})
+              {loc === 'ALL' ? 'All' : loc} ({loc === 'ALL' ? jobs.filter(j => j.day === viewDay && j.status !== 'cancelled').length : jobs.filter(j => j.day === viewDay && j.status !== 'cancelled' && locLabel(j.tbCallNum) === loc).length})
             </button>
           ))}
         </div>
