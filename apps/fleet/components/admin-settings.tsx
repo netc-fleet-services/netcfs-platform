@@ -47,6 +47,7 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
   const [editTruck, setEditTruck] = useState<TruckRow | null>(null)
   const [truckForm, setTruckForm] = useState(EMPTY_FORM)
   const [showTruckForm, setShowTruckForm] = useState(false)
+  const [truckSearch, setTruckSearch] = useState('')
 
   useEffect(() => {
     fetchAll().then(() => setLoading(false))
@@ -202,11 +203,21 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
 
         {tab === 'trucks' && (
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-              <p style={{ color: 'var(--on-surface-muted)', fontSize: '0.875rem', margin: 0 }}>
-                {trucks.filter(t => t.active).length} active trucks
-              </p>
-              <button className="btn-primary" style={{ fontSize: '0.8125rem' }} onClick={openNewTruck}>+ Add Truck</button>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <input
+                type="search"
+                className="form-input"
+                placeholder="Search by unit #, VIN, category, location…"
+                value={truckSearch}
+                onChange={e => setTruckSearch(e.target.value)}
+                style={{ maxWidth: 320, fontSize: '0.85rem', padding: '0.375rem 0.75rem' }}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <p style={{ color: 'var(--on-surface-muted)', fontSize: '0.875rem', margin: 0, whiteSpace: 'nowrap' }}>
+                  {trucks.filter(t => t.active).length} active trucks
+                </p>
+                <button className="btn-primary" style={{ fontSize: '0.8125rem' }} onClick={openNewTruck}>+ Add Truck</button>
+              </div>
             </div>
 
             {showTruckForm && (
@@ -273,7 +284,14 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
                     <tr><th>Unit</th><th>VIN</th><th>Category</th><th>Location</th><th>Status</th><th>Active</th><th></th></tr>
                   </thead>
                   <tbody>
-                    {trucks.map(truck => (
+                    {trucks.filter(t => {
+                      if (!truckSearch) return true
+                      const q = truckSearch.toLowerCase()
+                      return t.unit_number.toLowerCase().includes(q) ||
+                        (t.vin || '').toLowerCase().includes(q) ||
+                        (CATEGORY_LABELS[t.category || ''] || '').toLowerCase().includes(q) ||
+                        (t.locations?.name || '').toLowerCase().includes(q)
+                    }).map(truck => (
                       <tr key={truck.id} style={{ opacity: truck.active ? 1 : 0.55 }}>
                         <td style={{ fontWeight: 600 }}>{truck.unit_number}</td>
                         <td style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: 'var(--on-surface-muted)' }}>{truck.vin || '—'}</td>
