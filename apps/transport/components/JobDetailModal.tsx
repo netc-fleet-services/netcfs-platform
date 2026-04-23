@@ -134,6 +134,7 @@ export function JobDetailModal({ job, drivers, onClose }: Props) {
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', color: C.dm }}>
             {job.startedAt   && <span>Started: <strong style={{ color: C.tx }}>{fT(job.startedAt)}</strong></span>}
             {job.completedAt && <span>Done: <strong style={{ color: C.tx }}>{fT(job.completedAt)}</strong></span>}
+            {job.hasTolls && <span style={{ padding: '1px 6px', borderRadius: 4, background: '#2d1f00', border: '1px solid #f59e0b', color: '#f59e0b', fontWeight: 700, fontSize: 9 }}>TOLLS</span>}
           </div>
           {job.notes && <div style={{ marginTop: 6, padding: '6px 8px', background: C.sf, borderRadius: 4, fontSize: 10, color: C.tx }}>{job.notes}</div>}
         </div>

@@ -9,6 +9,8 @@ import { CategoryFilter } from './category-filter'
 import { StatusTable } from './status-table'
 import { NotesDrawer } from './notes-drawer'
 import { HistoryReportModal } from './HistoryReportModal'
+import { InspectionModal } from './InspectionModal'
+import { EquipmentRequestModal } from './EquipmentRequestModal'
 import type { Truck, FleetProfile, Location } from '@/lib/types'
 import { CAN_MANAGE_TRUCKS } from '@/lib/constants'
 
@@ -63,8 +65,10 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [maintenanceFilter, setMaintenanceFilter] = useState(false)
 
-  const [notesDrawer, setNotesDrawer]       = useState<Truck | null>(null)
-  const [showReportModal, setShowReportModal] = useState(false)
+  const [notesDrawer,        setNotesDrawer]        = useState<Truck | null>(null)
+  const [showReportModal,    setShowReportModal]    = useState(false)
+  const [inspectTruck,         setInspectTruck]         = useState<Truck | null>(null)
+  const [showEquipmentRequest, setShowEquipmentRequest] = useState(false)
   const [lastSynced, setLastSynced] = useState<string | null>(null)
   const [syncingNow, setSyncingNow] = useState(false)
   const [, setTick] = useState(0)
@@ -219,6 +223,13 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
             >
               {syncingNow ? 'Refreshing…' : '↻ Job Status'}
             </button>
+            <button
+              className="btn-secondary"
+              style={{ fontSize: '0.8rem', padding: '0.4rem 0.875rem' }}
+              onClick={() => setShowEquipmentRequest(true)}
+            >
+              Equipment Request
+            </button>
             {(CAN_MANAGE_TRUCKS as string[]).includes(profile.role) && (
               <button
                 className="btn-secondary"
@@ -282,9 +293,9 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
         )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1.25rem' }}>
-          <StatusTable status={STATUS.OOS}    trucks={oosTrucks}    totalCount={trucks.filter(t => t.current_status === STATUS.OOS).length}    profile={profile} onStatusChange={handleStatusChange} onViewHistory={t => setNotesDrawer(t)} onUpdateWaitingOn={handleUpdateWaitingOn} />
-          <StatusTable status={STATUS.ISSUES} trucks={issuesTrucks} totalCount={trucks.filter(t => t.current_status === STATUS.ISSUES).length} profile={profile} onStatusChange={handleStatusChange} onViewHistory={t => setNotesDrawer(t)} onUpdateWaitingOn={handleUpdateWaitingOn} />
-          <StatusTable status={STATUS.READY}  trucks={readyTrucks}  totalCount={trucks.filter(t => t.current_status === STATUS.READY).length}  profile={profile} onStatusChange={handleStatusChange} onViewHistory={t => setNotesDrawer(t)} onUpdateWaitingOn={handleUpdateWaitingOn} />
+          <StatusTable status={STATUS.OOS}    trucks={oosTrucks}    totalCount={trucks.filter(t => t.current_status === STATUS.OOS).length}    profile={profile} onStatusChange={handleStatusChange} onViewHistory={t => setNotesDrawer(t)} onInspect={t => setInspectTruck(t)} onUpdateWaitingOn={handleUpdateWaitingOn} />
+          <StatusTable status={STATUS.ISSUES} trucks={issuesTrucks} totalCount={trucks.filter(t => t.current_status === STATUS.ISSUES).length} profile={profile} onStatusChange={handleStatusChange} onViewHistory={t => setNotesDrawer(t)} onInspect={t => setInspectTruck(t)} onUpdateWaitingOn={handleUpdateWaitingOn} />
+          <StatusTable status={STATUS.READY}  trucks={readyTrucks}  totalCount={trucks.filter(t => t.current_status === STATUS.READY).length}  profile={profile} onStatusChange={handleStatusChange} onViewHistory={t => setNotesDrawer(t)} onInspect={t => setInspectTruck(t)} onUpdateWaitingOn={handleUpdateWaitingOn} />
         </div>
       </main>
 
@@ -301,6 +312,21 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
         <HistoryReportModal
           trucks={trucks}
           onClose={() => setShowReportModal(false)}
+        />
+      )}
+
+      {inspectTruck && (
+        <InspectionModal
+          truck={inspectTruck}
+          onClose={() => setInspectTruck(null)}
+          onSaved={() => setInspectTruck(null)}
+        />
+      )}
+
+      {showEquipmentRequest && (
+        <EquipmentRequestModal
+          profile={profile}
+          onClose={() => setShowEquipmentRequest(false)}
         />
       )}
     </div>

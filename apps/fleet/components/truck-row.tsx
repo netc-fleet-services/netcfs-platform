@@ -92,10 +92,11 @@ interface TruckRowProps {
   profile: FleetProfile | null
   onStatusChange: (truck: Truck, newStatus: string, comment: string, waitingOn: string | null) => Promise<void>
   onViewHistory: (truck: Truck) => void
+  onInspect: (truck: Truck) => void
   onUpdateWaitingOn: (id: string, val: string) => Promise<void>
 }
 
-export function TruckRow({ truck, currentStatus, profile, onStatusChange, onViewHistory, onUpdateWaitingOn }: TruckRowProps) {
+export function TruckRow({ truck, currentStatus, profile, onStatusChange, onViewHistory, onInspect, onUpdateWaitingOn }: TruckRowProps) {
   const [changing, setChanging] = useState(false)
   const role = profile?.role
   const canChangeStatus = CAN_CHANGE_STATUS.includes(role as any)
@@ -182,7 +183,10 @@ export function TruckRow({ truck, currentStatus, profile, onStatusChange, onView
       </td>
 
       <td data-label="">
-        <button className="btn-ghost" onClick={() => onViewHistory(truck)}>History</button>
+        <div style={{ display: 'flex', gap: '0.375rem' }}>
+          <button className="btn-ghost" onClick={() => onViewHistory(truck)}>History</button>
+          <button className="btn-ghost" onClick={() => onInspect(truck)}>Inspect</button>
+        </div>
       </td>
     </tr>
   )
