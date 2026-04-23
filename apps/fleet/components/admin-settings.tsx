@@ -222,7 +222,7 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
 
             {showTruckForm && (
               <>
-                <div onClick={() => setShowTruckForm(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 40 }} />
+                <div onClick={() => setShowTruckForm(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 40 }} />
                 <div style={{
                   position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
                   width: 'min(560px, 95vw)', maxHeight: '90vh', overflowY: 'auto',
