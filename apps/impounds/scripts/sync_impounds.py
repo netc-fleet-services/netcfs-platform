@@ -141,38 +141,17 @@ def scrape_impounds(page) -> list[dict]:
 
 # ── Login ──────────────────────────────────────────────────────────────────────
 
-# TowBook uses ASP.NET MVC — field names are PascalCase (UserName, Password).
-# The selector list covers current and any legacy variants.
-_USERNAME_SEL = (
-    'input[name="UserName"], input[name="username"], '
-    'input[type="email"], #UserName, #username'
-)
-_PASSWORD_SEL = (
-    'input[name="Password"], input[name="password"], '
-    'input[type="password"], #Password, #password'
-)
-
 def login(page):
     print("Logging in to TowBook…")
-    page.goto("https://app.towbook.com/", wait_until="domcontentloaded", timeout=60_000)
-    print(f"Page loaded — URL: {page.url} | title: {page.title()}")
-
-    # Wait explicitly for the username field before attempting to fill
-    try:
-        page.wait_for_selector(_USERNAME_SEL, timeout=30_000)
-    except PlaywrightTimeout:
-        page.screenshot(path="login_debug.png")
-        print("ERROR: username field not found within 30 s.")
-        print("--- page HTML (first 3000 chars) ---")
-        print(page.content()[:3000])
-        raise
-
-    page.locator(_USERNAME_SEL).first.fill(TOWBOOK_USER)
-    page.locator(_PASSWORD_SEL).first.fill(TOWBOOK_PASS)
-    page.keyboard.press("Enter")
-
-    # Wait for post-login redirect
-    page.wait_for_load_state("networkidle", timeout=60_000)
+    page.goto("https://app.towbook.com/Security/Login.aspx")
+    # TowBook keeps persistent connections open so networkidle never fires —
+    # wait for the specific field instead.
+    page.wait_for_selector("#Username", timeout=20_000)
+    page.evaluate(f'document.getElementById("Username").value = "{TOWBOOK_USER}"')
+    page.evaluate(f'document.getElementById("Password").value = "{TOWBOOK_PASS}"')
+    page.locator('button[name="bSignIn"]').click()
+    # Wait for redirect away from the login page
+    page.wait_for_url(lambda url: "Login" not in url, timeout=30_000)
     print(f"Logged in — current URL: {page.url}")
 
 # ── Upsert ─────────────────────────────────────────────────────────────────────
@@ -205,10 +184,7 @@ def upsert_impounds(impounds: list[dict]):
 def main():
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
-        ctx     = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        )
-        page = ctx.new_page()
+        page    = browser.new_context().new_page()
 
         try:
             login(page)
