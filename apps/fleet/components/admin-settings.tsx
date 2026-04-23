@@ -6,6 +6,22 @@ import { getSupabaseBrowserClient } from '@netcfs/auth/client'
 import { STATUS, STATUS_LABELS, CATEGORY_LABELS } from '@/lib/constants'
 import type { FleetProfile, Location } from '@/lib/types'
 
+interface EquipmentRequest {
+  id: string
+  submitted_by: string
+  submitted_at: string
+  urgent: boolean
+  request_type: 'replacement' | 'new'
+  description: string
+  purpose: string
+  if_not_purchased: string
+  status: 'pending' | 'approved' | 'denied'
+  manager_notes: string | null
+  denial_reason: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+}
+
 interface TruckRow {
   id: string
   unit_number: string
@@ -49,9 +65,48 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
   const [showTruckForm, setShowTruckForm] = useState(false)
   const [truckSearch, setTruckSearch] = useState('')
 
+  const [equipRequests,    setEquipRequests]    = useState<EquipmentRequest[]>([])
+  const [requestsLoading,  setRequestsLoading]  = useState(false)
+  const [requestSearch,    setRequestSearch]    = useState('')
+  const [requestDateFrom,  setRequestDateFrom]  = useState('')
+  const [requestDateTo,    setRequestDateTo]    = useState('')
+  const [requestStatusFilter, setRequestStatusFilter] = useState<'all' | 'pending' | 'approved' | 'denied'>('all')
+  const [reviewingId,      setReviewingId]      = useState<string | null>(null)
+  const [reviewNotes,      setReviewNotes]      = useState('')
+  const [denialReason,     setDenialReason]     = useState('')
+
   useEffect(() => {
     fetchAll().then(() => setLoading(false))
   }, [])
+
+  async function fetchEquipRequests() {
+    setRequestsLoading(true)
+    const { data } = await supabase
+      .from('equipment_requests')
+      .select('*')
+      .order('submitted_at', { ascending: false })
+    setEquipRequests(data || [])
+    setRequestsLoading(false)
+  }
+
+  useEffect(() => {
+    if (tab === 'equipment_requests') fetchEquipRequests()
+  }, [tab])
+
+  async function reviewRequest(id: string, status: 'approved' | 'denied') {
+    const payload: Record<string, unknown> = {
+      status,
+      reviewed_by: profile.email,
+      reviewed_at: new Date().toISOString(),
+      manager_notes:  reviewNotes.trim() || null,
+      denial_reason:  status === 'denied' ? (denialReason.trim() || null) : null,
+    }
+    await supabase.from('equipment_requests').update(payload).eq('id', id)
+    setReviewingId(null)
+    setReviewNotes('')
+    setDenialReason('')
+    fetchEquipRequests()
+  }
 
   async function fetchAll() {
     const [{ data: t }, { data: l }, { data: n }] = await Promise.all([
@@ -188,7 +243,11 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
         </div>
 
         <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--outline)', paddingBottom: '0.75rem', marginBottom: '1.5rem' }}>
-          {([['trucks', 'Manage Trucks'], ...(profile.role === 'admin' ? [['notifications', 'Notifications']] : [])] as [string, string][]).map(([id, label]) => (
+          {([
+            ['trucks', 'Manage Trucks'],
+            ['equipment_requests', 'Equipment Requests'],
+            ...(profile.role === 'admin' ? [['notifications', 'Notifications']] : []),
+          ] as [string, string][]).map(([id, label]) => (
             <button key={id} className={tab === id ? 'btn-primary' : 'btn-secondary'} style={{ fontSize: '0.8125rem' }} onClick={() => setTab(id)}>
               {label}
             </button>
@@ -316,6 +375,140 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
             </div>
           </div>
         )}
+
+        {tab === 'equipment_requests' && (() => {
+          const TYPE_LABELS: Record<string, string> = { replacement: 'Replacement', new: 'New Equipment' }
+          const STATUS_BADGE: Record<string, { bg: string; color: string }> = {
+            pending:  { bg: 'var(--surface-high)', color: 'var(--on-surface-muted)' },
+            approved: { bg: 'var(--status-ready-bg)', color: 'var(--status-ready)' },
+            denied:   { bg: 'var(--error-container)', color: 'var(--error)' },
+          }
+
+          const filtered = equipRequests.filter(r => {
+            if (requestStatusFilter !== 'all' && r.status !== requestStatusFilter) return false
+            if (requestDateFrom && r.submitted_at < requestDateFrom) return false
+            if (requestDateTo   && r.submitted_at.slice(0, 10) > requestDateTo) return false
+            if (requestSearch) {
+              const q = requestSearch.toLowerCase()
+              if (!r.submitted_by.toLowerCase().includes(q) &&
+                  !r.description.toLowerCase().includes(q)) return false
+            }
+            return true
+          })
+
+          return (
+            <div>
+              {/* Filters */}
+              <div style={{ display: 'flex', gap: '0.625rem', flexWrap: 'wrap', marginBottom: '1rem', alignItems: 'flex-end' }}>
+                <div style={{ flex: 1, minWidth: 180 }}>
+                  <label className="form-label">Search</label>
+                  <input className="form-input" placeholder="Requester or description…" value={requestSearch} onChange={e => setRequestSearch(e.target.value)} style={{ fontSize: '0.85rem' }} />
+                </div>
+                <div>
+                  <label className="form-label">Status</label>
+                  <select className="form-select" value={requestStatusFilter} onChange={e => setRequestStatusFilter(e.target.value as any)} style={{ fontSize: '0.85rem' }}>
+                    <option value="all">All</option>
+                    <option value="pending">Pending</option>
+                    <option value="approved">Approved</option>
+                    <option value="denied">Denied</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="form-label">From</label>
+                  <input className="form-input" type="date" value={requestDateFrom} onChange={e => setRequestDateFrom(e.target.value)} style={{ fontSize: '0.85rem' }} />
+                </div>
+                <div>
+                  <label className="form-label">To</label>
+                  <input className="form-input" type="date" value={requestDateTo} onChange={e => setRequestDateTo(e.target.value)} style={{ fontSize: '0.85rem' }} />
+                </div>
+              </div>
+
+              <p style={{ fontSize: '0.8rem', color: 'var(--on-surface-muted)', marginBottom: '0.75rem' }}>
+                {filtered.length} request{filtered.length !== 1 ? 's' : ''}{requestStatusFilter !== 'all' ? ` · ${requestStatusFilter}` : ''}
+              </p>
+
+              {requestsLoading && <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--on-surface-muted)', fontSize: '0.875rem' }}>Loading…</div>}
+
+              {!requestsLoading && filtered.map(req => {
+                const isReviewing = reviewingId === req.id
+                const badge = STATUS_BADGE[req.status]
+                return (
+                  <div key={req.id} style={{ background: 'var(--surface)', border: `1px solid ${req.urgent ? 'var(--error)' : 'var(--outline-variant)'}`, borderRadius: '0.625rem', padding: '1rem', marginBottom: '0.75rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          {req.urgent && <span style={{ fontSize: '0.7rem', fontWeight: 800, padding: '1px 6px', borderRadius: 3, background: 'var(--error-container)', color: 'var(--error)' }}>URGENT</span>}
+                          <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--on-surface)' }}>{req.submitted_by}</span>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--on-surface-muted)' }}>· {TYPE_LABELS[req.request_type] ?? req.request_type}</span>
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--on-surface-muted)', marginTop: 2 }}>
+                          {new Date(req.submitted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 700, padding: '2px 8px', borderRadius: 4, background: badge.bg, color: badge.color }}>
+                        {req.status.toUpperCase()}
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: '0.8125rem', color: 'var(--on-surface)', marginBottom: '0.375rem' }}>
+                      <strong>Description:</strong> {req.description}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--on-surface-muted)', marginBottom: '0.25rem' }}>
+                      <strong style={{ color: 'var(--on-surface)' }}>Purpose:</strong> {req.purpose}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--on-surface-muted)', marginBottom: req.status === 'pending' ? '0.75rem' : 0 }}>
+                      <strong style={{ color: 'var(--on-surface)' }}>If not purchased:</strong> {req.if_not_purchased}
+                    </div>
+
+                    {req.manager_notes && (
+                      <div style={{ fontSize: '0.8rem', marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: 'var(--primary-container)', borderRadius: 4, color: 'var(--on-primary-container)' }}>
+                        <strong>Manager notes:</strong> {req.manager_notes}
+                      </div>
+                    )}
+                    {req.denial_reason && (
+                      <div style={{ fontSize: '0.8rem', marginTop: '0.375rem', padding: '0.4rem 0.6rem', background: 'var(--error-container)', borderRadius: 4, color: 'var(--error)' }}>
+                        <strong>Denial reason:</strong> {req.denial_reason}
+                      </div>
+                    )}
+                    {req.reviewed_by && (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--on-surface-muted)', marginTop: '0.375rem' }}>
+                        Reviewed by {req.reviewed_by} · {req.reviewed_at ? new Date(req.reviewed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''}
+                      </div>
+                    )}
+
+                    {req.status === 'pending' && !isReviewing && (
+                      <button className="btn-secondary" style={{ fontSize: '0.8rem', marginTop: '0.5rem' }} onClick={() => { setReviewingId(req.id); setReviewNotes(''); setDenialReason('') }}>
+                        Review
+                      </button>
+                    )}
+
+                    {isReviewing && (
+                      <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: 'var(--surface-high)', borderRadius: '0.5rem', border: '1px solid var(--outline)' }}>
+                        <div style={{ marginBottom: '0.5rem' }}>
+                          <label className="form-label">Manager recommendation / notes (optional)</label>
+                          <input className="form-input" value={reviewNotes} onChange={e => setReviewNotes(e.target.value)} placeholder="Recommendation and reason…" style={{ fontSize: '0.85rem' }} />
+                        </div>
+                        <div style={{ marginBottom: '0.625rem' }}>
+                          <label className="form-label">Reason for denial (if denying)</label>
+                          <input className="form-input" value={denialReason} onChange={e => setDenialReason(e.target.value)} placeholder="Leave blank if approving" style={{ fontSize: '0.85rem' }} />
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <button className="btn-primary" style={{ fontSize: '0.8rem', background: 'var(--status-ready)', borderColor: 'var(--status-ready)' }} onClick={() => reviewRequest(req.id, 'approved')}>Approve</button>
+                          <button className="btn-primary" style={{ fontSize: '0.8rem', background: 'var(--error)', borderColor: 'var(--error)' }} onClick={() => reviewRequest(req.id, 'denied')}>Deny</button>
+                          <button className="btn-secondary" style={{ fontSize: '0.8rem' }} onClick={() => setReviewingId(null)}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+
+              {!requestsLoading && filtered.length === 0 && (
+                <p style={{ color: 'var(--on-surface-muted)', fontSize: '0.875rem', fontStyle: 'italic' }}>No requests match the current filters.</p>
+              )}
+            </div>
+          )
+        })()}
 
         {tab === 'notifications' && (
           <div>
