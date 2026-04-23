@@ -227,7 +227,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
             onClick={() => setShowHistory(true)}
             style={{ fontSize: '0.8rem', padding: '0.375rem 0.875rem', whiteSpace: 'nowrap' }}
           >
-            Sales History
+            History
           </button>
         </div>
 
@@ -242,7 +242,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid rgb(var(--outline))', background: 'rgb(var(--surface-high))' }}>
-                  {['Call #', 'Date', 'Time on Lot', 'Vehicle', 'Location', 'Status', 'Reason', 'Notes', 'Keys', 'Drives', 'Type', 'Value'].map(h => (
+                  {['Call #', 'Date', 'Time on Lot', 'Vehicle', 'VIN', 'Location', 'Status', 'Reason', 'Notes', 'Keys', 'Drives', 'Type', 'Value'].map(h => (
                     <th key={h} style={{
                       padding: '0.625rem 0.875rem', textAlign: 'left',
                       fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase',
@@ -255,7 +255,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
               <tbody>
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={12} style={{ padding: '2rem', textAlign: 'center', color: 'rgb(var(--on-surface-muted))', fontStyle: 'italic' }}>
+                    <td colSpan={13} style={{ padding: '2rem', textAlign: 'center', color: 'rgb(var(--on-surface-muted))', fontStyle: 'italic' }}>
                       No vehicles found
                     </td>
                   </tr>
@@ -287,6 +287,9 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
                     </td>
                     <td style={{ padding: '0.625rem 0.875rem' }}>
                       {[imp.year, imp.make_model].filter(Boolean).join(' ') || '—'}
+                    </td>
+                    <td style={{ padding: '0.625rem 0.875rem', fontFamily: 'monospace', fontSize: '0.75rem', color: 'rgb(var(--on-surface-muted))', whiteSpace: 'nowrap' }}>
+                      {imp.vin || '—'}
                     </td>
                     <td style={{ padding: '0.625rem 0.875rem' }}>{imp.location || '—'}</td>
                     <td style={{ padding: '0.625rem 0.875rem' }}>
