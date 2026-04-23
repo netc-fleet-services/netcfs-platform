@@ -22,20 +22,18 @@ export async function POST(req: NextRequest) {
 
     const supabase = createClient(supabaseUrl, serviceKey)
 
-    // Notify all emails across all notification_settings rules (no truck filter — equipment
-    // requests aren't truck-specific). Deduplicate across rules.
-    const { data: rules } = await supabase
-      .from('notification_settings')
-      .select('emails')
+    // Read the dedicated equipment-request notification email from settings
+    const { data: setting } = await supabase
+      .from('settings')
+      .select('value')
+      .eq('key', 'equipment_request_notify_email')
+      .single()
 
-    const recipients = new Set<string>()
-    for (const rule of rules ?? []) {
-      for (const email of rule.emails ?? []) {
-        if (email) recipients.add(email)
-      }
+    const notifyEmail = setting?.value?.trim()
+    if (!notifyEmail) {
+      console.warn('[notify-equipment-request] equipment_request_notify_email not configured — skipping email')
+      return NextResponse.json({ skipped: true, reason: 'no_email_configured' })
     }
-
-    if (recipients.size === 0) return NextResponse.json({ sent: 0 })
 
     const urgentBanner = urgent
       ? `<div style="background:#fef2f2;border:2px solid #ef4444;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-weight:700;color:#dc2626;font-size:14px">
@@ -81,7 +79,7 @@ export async function POST(req: NextRequest) {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: fromEmail, to: [...recipients], subject, html }),
+      body: JSON.stringify({ from: fromEmail, to: [notifyEmail], subject, html }),
     })
 
     if (!res.ok) {
@@ -90,7 +88,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: err }, { status: 500 })
     }
 
-    return NextResponse.json({ sent: recipients.size })
+    return NextResponse.json({ sent: 1 })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
     console.error('[notify-equipment-request] Unexpected error:', message)
