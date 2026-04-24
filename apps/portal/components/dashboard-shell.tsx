@@ -51,7 +51,7 @@ const BASE_NAV: BaseItem[] = [
     ),
   },
   {
-    label: 'Inspections',
+    label: 'Safety',
     baseUrl: INSPECTIONS_URL,
     requiredModule: 'inspections',
     icon: (

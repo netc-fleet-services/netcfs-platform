@@ -40,7 +40,7 @@ const ALL_MODULES = [
   },
   {
     id: 'inspections',
-    label: 'Inspections',
+    label: 'Safety',
     description: 'Driver pre-trip inspection compliance and audit reports',
     baseUrl: INSPECTIONS_URL,
     icon: (
