@@ -30,8 +30,12 @@ BASE_URL = "https://api.samsara.com"
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def utc_fmt(dt: datetime) -> str:
-    """Convert any tz-aware datetime to UTC RFC3339 with Z suffix (Samsara requirement)."""
+    """RFC3339 UTC string with Z suffix — required by Samsara v2 endpoints."""
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def to_ms(dt: datetime) -> int:
+    """Unix milliseconds — required by Samsara v1 endpoints (e.g. /v1/fleet/trips)."""
+    return int(dt.astimezone(timezone.utc).timestamp() * 1000)
 
 # ── API helper ─────────────────────────────────────────────────────────────────
 
@@ -108,9 +112,9 @@ def sync_mileage(target_date: date):
     day_end   = day_start + timedelta(days=1)
 
     trips = samsara_get("/v1/fleet/trips", {
-        "startTime": utc_fmt(day_start),
-        "endTime":   utc_fmt(day_end),
-        "limit":     512,
+        "startMs": to_ms(day_start),
+        "endMs":   to_ms(day_end),
+        "limit":   512,
     })
     print(f"  {len(trips)} trips retrieved")
 

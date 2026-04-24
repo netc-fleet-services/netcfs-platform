@@ -37,9 +37,12 @@ BASE_URL = "https://api.samsara.com"
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def utc_fmt(dt: datetime) -> str:
-    """Convert any tz-aware datetime to UTC and format as RFC3339 with Z suffix.
-    Samsara rejects localized offsets like -05:00; it requires the Z form."""
+    """RFC3339 UTC string with Z suffix — required by Samsara v2 endpoints."""
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def to_ms(dt: datetime) -> int:
+    """Unix milliseconds — required by Samsara v1 endpoints (e.g. /v1/fleet/trips)."""
+    return int(dt.astimezone(timezone.utc).timestamp() * 1000)
 
 # ── Severity map (mirrors sync_samsara_events.py) ─────────────────────────────
 
@@ -247,18 +250,22 @@ def date_range(start: date, end: date):
 # ── 1. Safety events backfill ─────────────────────────────────────────────────
 
 def _get_event_time(ev: dict) -> str | None:
-    """Return the event occurrence timestamp, trying all known field names."""
-    return (ev.get("time")
-            or ev.get("occurredAtTime")
-            or ev.get("createdAtTime")
-            or ev.get("startTime"))
+    """Return the event occurrence timestamp.
+    Stream endpoint uses createdAtTime; keep fallbacks for forward-compat."""
+    return (ev.get("createdAtTime")
+            or ev.get("time")
+            or ev.get("occurredAtTime"))
 
 def _get_event_type(ev: dict) -> str:
-    """Return the event behavior type, trying all known field names."""
-    return (ev.get("type")
-            or ev.get("behaviorType")
-            or ev.get("eventType")
-            or "unknown")
+    """Return the event behavior type.
+    Stream endpoint has no top-level type field; derive from behaviorLabels."""
+    labels = ev.get("behaviorLabels") or []
+    if labels and isinstance(labels[0], dict):
+        label = labels[0].get("label", "")
+        if label:
+            # Convert PascalCase label to camelCase to match SEVERITY_MAP keys
+            return label[0].lower() + label[1:]
+    return (ev.get("type") or ev.get("behaviorType") or ev.get("eventType") or "unknown")
 
 def _parse_event_row(ev, by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_vehicles):
     """Extract a DB row dict from a single /safety-events/stream response object.
@@ -273,7 +280,7 @@ def _parse_event_row(ev, by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, s
     occurred_at  = _get_event_time(ev)
     max_speed    = ev.get("maxSpeedMph") or ev.get("maxSpeed")
     speed_limit  = ev.get("speedLimitMph") or ev.get("speedLimit")
-    coaching     = ev.get("coachingState", "")
+    coaching     = ev.get("eventState") or ev.get("coachingState") or ""
     sam_drv_id   = driver_info.get("id", "")
     sam_veh_id   = vehicle_info.get("id", "")
     sam_unit     = vehicle_info.get("name", "")
@@ -324,6 +331,7 @@ def backfill_events(by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_ve
         "startTime":        utc_fmt(start_ts),
         "endTime":          utc_fmt(end_ts),
         "queryByTimeField": "createdAtTime",
+        "eventStates":      "coached",
         "includeDriver":    "true",
         "includeAsset":     "true",
         "limit":            512,
@@ -385,9 +393,9 @@ def backfill_mileage(driver_map: dict[str, int]):
         day_end   = day_start + timedelta(days=1)
 
         trips = samsara_get("/v1/fleet/trips", {
-            "startTime": utc_fmt(day_start),
-            "endTime":   utc_fmt(day_end),
-            "limit":     512,
+            "startMs": to_ms(day_start),
+            "endMs":   to_ms(day_end),
+            "limit":   512,
         })
 
         # Aggregate miles per Samsara driver ID

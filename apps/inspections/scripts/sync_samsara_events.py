@@ -72,16 +72,17 @@ def map_coaching_state(raw: str) -> str:
     return "pending"
 
 def _get_event_time(ev: dict) -> str | None:
-    return (ev.get("time")
-            or ev.get("occurredAtTime")
-            or ev.get("createdAtTime")
-            or ev.get("startTime"))
+    return (ev.get("createdAtTime")
+            or ev.get("time")
+            or ev.get("occurredAtTime"))
 
 def _get_event_type(ev: dict) -> str:
-    return (ev.get("type")
-            or ev.get("behaviorType")
-            or ev.get("eventType")
-            or "unknown")
+    labels = ev.get("behaviorLabels") or []
+    if labels and isinstance(labels[0], dict):
+        label = labels[0].get("label", "")
+        if label:
+            return label[0].lower() + label[1:]
+    return (ev.get("type") or ev.get("behaviorType") or ev.get("eventType") or "unknown")
 
 # ── API helper ─────────────────────────────────────────────────────────────────
 
@@ -264,6 +265,7 @@ def sync_events():
     events = samsara_get("/safety-events/stream", {
         "startTime":     utc_fmt(start),
         "endTime":       utc_fmt(now),
+        "eventStates":   "coached",
         "includeDriver": "true",
         "includeAsset":  "true",
         "limit":         512,
@@ -292,7 +294,7 @@ def sync_events():
         occurred_at  = _get_event_time(ev)
         max_speed    = ev.get("maxSpeedMph") or ev.get("maxSpeed")
         speed_limit  = ev.get("speedLimitMph") or ev.get("speedLimit")
-        coaching     = ev.get("coachingState", "")
+        coaching     = ev.get("eventState") or ev.get("coachingState") or ""
         sam_drv_id   = driver_info.get("id", "")
         sam_veh_id   = vehicle_info.get("id", "")
         sam_unit     = vehicle_info.get("name", "")
