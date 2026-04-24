@@ -3,8 +3,8 @@ import { PortalHeader } from '@netcfs/ui'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Pre-Trip Compliance Audit — NETCFS',
-  description: 'Driver pre-trip inspection compliance tracking',
+  title: 'Safety Program — NETCFS',
+  description: 'Driver safety scoring, compliance tracking, and pre-trip audits',
   icons: { icon: '/favicon.ico' },
 }
 
@@ -26,7 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <PortalHeader
-          appTitle="Driver Inspections"
+          appTitle="Safety Program"
           portalUrl={process.env.NEXT_PUBLIC_PORTAL_URL || 'http://localhost:3000'}
         />
         {children}

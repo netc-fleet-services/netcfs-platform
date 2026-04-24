@@ -1,0 +1,56 @@
+# ═══════════════════════════════════════════════
+# Samsara Historical Backfill
+#
+# Manual-only workflow. Run this to populate safety_events, mileage_logs,
+# and dvir_logs for a past date range before running the scoring engine.
+#
+# Typical flow for testing a past quarter:
+#   1. Run this workflow with the quarter's start/end dates
+#   2. Run "Compute Safety Scores" with the same dates
+#   3. Open the Safety Dashboard and select the scored period
+#
+# Required repository secrets (Settings → Secrets → Actions):
+#   SAMSARA_API_KEY      — Samsara API token
+#   SUPABASE_URL         — from Supabase Dashboard → Settings → API
+#   SUPABASE_SERVICE_KEY — service role key (bypasses RLS) — NOT the anon key
+# ═══════════════════════════════════════════════
+
+name: Backfill Samsara Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      backfill_start:
+        description: 'Start date (YYYY-MM-DD) — e.g. 2026-01-01'
+        required: true
+      backfill_end:
+        description: 'End date (YYYY-MM-DD) — e.g. 2026-03-31'
+        required: true
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/inspections/requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r apps/inspections/requirements.txt
+
+      - name: Run backfill
+        env:
+          SAMSARA_API_KEY:      ${{ secrets.SAMSARA_API_KEY }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          BACKFILL_START:       ${{ github.event.inputs.backfill_start }}
+          BACKFILL_END:         ${{ github.event.inputs.backfill_end }}
+        run: python apps/inspections/scripts/backfill_samsara.py

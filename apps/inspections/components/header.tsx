@@ -45,7 +45,7 @@ export function Header() {
             <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
           </svg>
           <span style={{ fontWeight: 800, fontSize: '0.9375rem', color: 'rgb(var(--on-surface))', letterSpacing: '-0.01em' }}>
-            Driver Inspections
+            Safety Program
           </span>
         </div>
       </div>

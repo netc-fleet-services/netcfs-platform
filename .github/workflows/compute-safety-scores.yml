@@ -1,0 +1,57 @@
+# ═══════════════════════════════════════════════
+# Quarterly Safety Score Engine
+#
+# Runs automatically on the 1st of Jan, Apr, Jul, Oct to score
+# the quarter that just ended. Also triggerable manually.
+#
+# To score a specific period, use "Run workflow" and supply:
+#   PERIOD_START — e.g. 2026-01-01
+#   PERIOD_END   — e.g. 2026-03-31
+#
+# Required repository secrets (Settings → Secrets → Actions):
+#   SUPABASE_URL         — from Supabase Dashboard → Settings → API
+#   SUPABASE_SERVICE_KEY — service role key (bypasses RLS) — NOT the anon key
+# ═══════════════════════════════════════════════
+
+name: Compute Safety Scores
+
+on:
+  schedule:
+    - cron: '0 8 1 1,4,7,10 *'   # 08:00 UTC on the 1st of each quarter-start month
+  workflow_dispatch:
+    inputs:
+      period_start:
+        description: 'Period start date (YYYY-MM-DD). Leave blank to auto-detect last quarter.'
+        required: false
+        default: ''
+      period_end:
+        description: 'Period end date (YYYY-MM-DD). Leave blank to auto-detect last quarter.'
+        required: false
+        default: ''
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/inspections/requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r apps/inspections/requirements.txt
+
+      - name: Run scoring engine
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PERIOD_START:         ${{ github.event.inputs.period_start }}
+          PERIOD_END:           ${{ github.event.inputs.period_end }}
+        run: python apps/inspections/scripts/compute_safety_scores.py
