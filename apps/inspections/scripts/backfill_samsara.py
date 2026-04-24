@@ -198,14 +198,13 @@ def date_range(start: date, end: date):
         yield current
         current += timedelta(days=1)
 
-def month_chunks(start: date, end: date):
-    """Yields (chunk_start, chunk_end) in ~30-day segments."""
+def week_chunks(start: date, end: date):
+    """Yields (chunk_start, chunk_end) in 7-day segments.
+    Samsara /safety-events rejects windows larger than ~30 days; weekly chunks
+    are well within the limit and keep request counts reasonable."""
     current = start
     while current <= end:
-        chunk_end = min(date(current.year, current.month, 1) + timedelta(days=31), end)
-        # Back up to last day of month if we overshot
-        while chunk_end > end:
-            chunk_end -= timedelta(days=1)
+        chunk_end = min(current + timedelta(days=6), end)
         yield current, chunk_end
         current = chunk_end + timedelta(days=1)
 
@@ -218,7 +217,7 @@ def backfill_events(by_sam_id, by_name, by_unit, by_vin, sam_vehicles):
     total_resolved = 0
     total_unresolved = 0
 
-    for chunk_start, chunk_end in month_chunks(BACKFILL_START, BACKFILL_END):
+    for chunk_start, chunk_end in week_chunks(BACKFILL_START, BACKFILL_END):
         start_ts = datetime(chunk_start.year, chunk_start.month, chunk_start.day, 0, 0, 0, tzinfo=EASTERN)
         end_ts   = datetime(chunk_end.year,   chunk_end.month,   chunk_end.day,   23, 59, 59, tzinfo=EASTERN)
 
