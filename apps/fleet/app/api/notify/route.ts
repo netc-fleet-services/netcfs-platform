@@ -16,7 +16,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 export async function POST(req: NextRequest) {
   try {
-    const { truckId, oldStatus, newStatus, comment, changedBy } = await req.json()
+    const { truckId, oldStatus, newStatus, comment, waitingOn, changedBy } = await req.json()
 
     if (!truckId || !newStatus) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -90,6 +90,8 @@ export async function POST(req: NextRequest) {
               <td style="padding:8px 0;font-size:13px">${oldLabel}</td></tr>
           <tr><td style="padding:8px 0;color:#64748b;font-size:13px">To</td>
               <td style="padding:8px 0;font-weight:600;font-size:13px">${newLabel}</td></tr>
+          ${waitingOn ? `<tr><td style="padding:8px 0;color:#64748b;font-size:13px">Waiting on</td>
+              <td style="padding:8px 0;font-size:13px">${waitingOn}</td></tr>` : ''}
           ${comment ? `<tr><td style="padding:8px 0;color:#64748b;font-size:13px">Comment</td>
               <td style="padding:8px 0;font-size:13px">${comment}</td></tr>` : ''}
           <tr><td style="padding:8px 0;color:#64748b;font-size:13px">Changed by</td>

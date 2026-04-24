@@ -186,8 +186,8 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
           </span>
         </div>
 
-        {/* Center: company logo */}
-        <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none' }}>
+        {/* Center: company logo — hidden on narrow screens */}
+        <div className="header-center-logo" style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none' }}>
           <img src="/logo-main.png" alt="NETC Fleet Services" className="logo-light" style={{ height: 28, width: 'auto', display: 'block' }} />
           <img src="/logo-email.png" alt="NETC Fleet Services" className="logo-dark"  style={{ height: 28, width: 'auto', display: 'block' }} />
         </div>

@@ -508,6 +508,126 @@ a, button, [role="button"] {
 }
 
 /* ============================================
+   Responsive Sidebar (portal)
+   ============================================ */
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 59;
+}
+.sidebar-backdrop.open { display: block; }
+
+.sidebar-hamburger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.375rem;
+  background: transparent;
+  border: 1px solid rgb(var(--outline));
+  color: rgb(var(--on-surface));
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 1rem;
+  line-height: 1;
+  font-family: inherit;
+}
+.sidebar-hamburger:hover { background: rgb(var(--surface-high)); }
+
+.sidebar-mobile-topbar {
+  display: none;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 1rem;
+  background: rgb(var(--surface-container));
+  border-bottom: 1px solid rgb(var(--outline));
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
+
+@media (max-width: 767px) {
+  .sidebar-nav {
+    position: fixed !important;
+    top: 0;
+    left: -240px;
+    height: 100vh;
+    width: 240px !important;
+    z-index: 60;
+    transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.45);
+  }
+  .sidebar-nav.open { left: 0; }
+  .sidebar-hamburger { display: flex; }
+  .sidebar-mobile-topbar { display: flex; }
+}
+
+/* ============================================
+   Header center logo — hide on narrow screens
+   ============================================ */
+@media (max-width: 639px) {
+  .header-center-logo { display: none !important; }
+}
+
+/* ============================================
+   User menu dropdown
+   ============================================ */
+.user-menu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.user-menu-trigger:hover { border-color: rgb(var(--primary-container)); }
+
+.user-menu-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.5rem);
+  background: rgb(var(--surface-container));
+  border: 1px solid rgb(var(--outline));
+  border-radius: 0.625rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  min-width: 188px;
+  z-index: 50;
+  overflow: hidden;
+}
+
+.user-menu-header {
+  padding: 0.75rem 0.875rem 0.625rem;
+  border-bottom: 1px solid rgb(var(--outline-variant));
+}
+
+.user-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgb(var(--outline-variant));
+  color: rgb(var(--on-surface));
+  font-size: 0.8125rem;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+.user-menu-item:last-child { border-bottom: none; }
+.user-menu-item:hover { background: rgb(var(--surface-high)); }
+.user-menu-item.danger { color: rgb(var(--error)); }
+
+/* ============================================
    Mobile Card Table
    ============================================ */
 @media (max-width: 639px) {

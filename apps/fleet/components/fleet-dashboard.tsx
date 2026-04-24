@@ -136,6 +136,18 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
 
   async function handleStatusChange(truck: Truck, newStatus: string, comment: string, waitingOn: string | null) {
     const changedBy = profile?.email || profile?.id || 'Unknown'
+
+    // When clearing to Ready, preserve the waiting_on text as a work history note
+    const previousWaitingOn = truck.waiting_on ?? null
+    if (newStatus === STATUS.READY && previousWaitingOn) {
+      await supabase.from('truck_notes').insert({
+        truck_id:   truck.id,
+        note_type:  'work_done',
+        body:       `Resolved: ${previousWaitingOn}`,
+        created_by: changedBy,
+      })
+    }
+
     const { error } = await supabase.rpc('change_truck_status', {
       p_truck_id:   truck.id,
       p_new_status: newStatus,
@@ -156,6 +168,7 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
           oldStatus:  truck.current_status,
           newStatus,
           comment:    comment || null,
+          waitingOn:  previousWaitingOn,
           changedBy,
         }),
       }).catch(() => {/* swallow — notification is best-effort */})
@@ -207,7 +220,7 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
           <div style={{ flex: 1, minWidth: 0 }}>
             <SearchBar value={search} onChange={setSearch} />
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <button
               className={maintenanceFilter ? 'btn-primary' : 'btn-secondary'}
               style={{ fontSize: '0.8rem', padding: '0.4rem 0.875rem' }}
