@@ -240,10 +240,12 @@ def sync_events():
 
     print(f"Fetching safety events {utc_fmt(start)} → {utc_fmt(now)} …")
 
-    events = samsara_get("/safety-events", {
-        "startTime": utc_fmt(start),
-        "endTime":   utc_fmt(now),
-        "limit":     512,
+    events = samsara_get("/safety-events/stream", {
+        "startTime":     utc_fmt(start),
+        "endTime":       utc_fmt(now),
+        "includeDriver": "true",
+        "includeAsset":  "true",
+        "limit":         512,
     })
     print(f"  Retrieved {len(events)} events from Samsara")
 
@@ -257,13 +259,14 @@ def sync_events():
     print(f"  Loaded {len(by_sam_id)} linked drivers, {len(by_unit)} trucks by unit, {len(by_vin)} trucks by VIN, {len(sam_vehicles)} Samsara vehicles")
 
     unmatched_drivers:  set[str] = set()
+    unmatched_assets:   set[str] = set()
     vehicle_resolved:   int = 0
     vehicle_unresolved: int = 0
 
     rows = []
     for ev in events:
-        driver_info  = ev.get("driver",  {}) or {}
-        vehicle_info = ev.get("vehicle", {}) or {}
+        driver_info  = ev.get("driver", {}) or {}
+        vehicle_info = ev.get("asset", ev.get("vehicle", {})) or {}
         event_type   = ev.get("type", "unknown")
         max_speed    = ev.get("maxSpeedMph") or ev.get("maxSpeed")
         speed_limit  = ev.get("speedLimitMph") or ev.get("speedLimit")
@@ -292,6 +295,8 @@ def sync_events():
                     vehicle_unresolved += 1
             else:
                 vehicle_unresolved += 1
+                if sam_unit:
+                    unmatched_assets.add(sam_unit)
 
         rows.append({
             "samsara_event_id": ev["id"],
@@ -314,6 +319,10 @@ def sync_events():
 
     if vehicle_resolved or vehicle_unresolved:
         print(f"  Non-interstate vehicle resolution: {vehicle_resolved} matched, {vehicle_unresolved} unmatched")
+    if unmatched_assets:
+        print(f"  Asset names that did not match any truck ({len(unmatched_assets)}):")
+        for name in sorted(unmatched_assets):
+            print(f"    {name!r}  (normalized: {normalize_unit(name)!r})")
 
     if unmatched_drivers:
         print(f"  WARNING — {len(unmatched_drivers)} Samsara drivers not linked to internal drivers table:")
