@@ -103,7 +103,7 @@ def sync_mileage(target_date: date):
                          0, 0, 0, tzinfo=EASTERN)
     day_end   = day_start + timedelta(days=1)
 
-    trips = samsara_get("/fleet/trips", {
+    trips = samsara_get("/v1/fleet/trips", {
         "startTime": day_start.isoformat(),
         "endTime":   day_end.isoformat(),
         "limit":     512,
@@ -187,20 +187,22 @@ def sync_dvirs(target_date: date):
         print("  No linked Interstate drivers found — skipping")
         return
 
-    sam_ids = [d["samsara_driver_id"] for d in interstate]
     id_to_driver = {d["samsara_driver_id"]: d for d in interstate}
+    interstate_sam_ids = {d["samsara_driver_id"] for d in interstate}
 
     day_start = datetime(target_date.year, target_date.month, target_date.day,
                          0, 0, 0, tzinfo=EASTERN)
     day_end   = day_start + timedelta(days=1)
 
-    dvirs = samsara_get("/fleet/dvirs", {
-        "startTime":  day_start.isoformat(),
-        "endTime":    day_end.isoformat(),
-        "driverIds":  ",".join(sam_ids),
-        "limit":      512,
+    # /dvirs/stream filters by updatedAtTime, max 200 per page, no driverIds filter
+    all_dvirs = samsara_get("/dvirs/stream", {
+        "startTime": day_start.isoformat(),
+        "endTime":   day_end.isoformat(),
+        "limit":     200,
     })
-    print(f"  {len(dvirs)} DVIRs submitted by Interstate drivers")
+    # Filter client-side to only Interstate drivers
+    dvirs = [d for d in all_dvirs if (d.get("driver") or {}).get("id") in interstate_sam_ids]
+    print(f"  {len(all_dvirs)} total DVIRs, {len(dvirs)} from Interstate drivers")
 
     # Determine which drivers submitted at least one DVIR
     submitted: set[str] = set()
