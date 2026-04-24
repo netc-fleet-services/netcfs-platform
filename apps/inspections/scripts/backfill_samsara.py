@@ -89,10 +89,12 @@ def samsara_get(path: str, params: dict) -> list[dict]:
         params = {**params, "after": pagination["endCursor"]}
     return results
 
-# ── Unit normalisation ────────────────────────────────────────────────────────
+# ── Unit matching helpers ─────────────────────────────────────────────────────
 
-def normalize_unit(s: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+def leading_number(s: str) -> str:
+    """Extract the first run of digits: '#1023 Peterbilt Ramp' → '1023'."""
+    m = re.search(r'\d+', s or '')
+    return m.group(0) if m else ''
 
 # ── Data loaders ───────────────────────────────────────────────────────────────
 
@@ -107,18 +109,28 @@ def load_driver_maps() -> tuple[dict[str, int], dict[str, int]]:
             by_name[r["name"].strip().lower()] = r["id"]
     return by_sam_id, by_name
 
-def load_truck_maps() -> tuple[dict[str, str], dict[str, str]]:
+def load_truck_maps() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """
+    Returns:
+      by_unit_raw — {unit_number.strip().lower(): truck_uuid}  (raw string match)
+      by_unit_num — {leading_number(unit_number): truck_uuid}  (number-only fallback)
+      by_vin      — {vin_upper: truck_uuid}
+    """
     resp = sb.table("trucks").select("id, unit_number, vin").execute()
-    by_unit: dict[str, str] = {}
-    by_vin:  dict[str, str] = {}
+    by_unit_raw: dict[str, str] = {}
+    by_unit_num: dict[str, str] = {}
+    by_vin:      dict[str, str] = {}
     for t in (resp.data or []):
-        unit = normalize_unit(t.get("unit_number") or "")
+        unit = (t.get("unit_number") or "").strip()
         if unit:
-            by_unit[unit] = t["id"]
+            by_unit_raw[unit.lower()] = t["id"]
+            num = leading_number(unit)
+            if num:
+                by_unit_num.setdefault(num, t["id"])
         vin = (t.get("vin") or "").strip().upper()
         if len(vin) >= 10:
             by_vin[vin] = t["id"]
-    return by_unit, by_vin
+    return by_unit_raw, by_unit_num, by_vin
 
 def extract_vin_from_vehicle(v: dict) -> str:
     ext = v.get("externalIds") or {}
@@ -134,20 +146,18 @@ def load_samsara_vehicle_info() -> dict[str, dict]:
     except Exception as e:
         print(f"  WARNING: could not load Samsara vehicle list ({e})")
         print("  VIN-based truck matching will be skipped; unit number matching still active.")
-        print("  To enable VIN matching, add the 'fleet/vehicles' scope to your Samsara API key.")
         return {}
     result: dict[str, dict] = {}
     for v in vehicles:
         result[v["id"]] = {
-            "normalized_unit": normalize_unit(v.get("name") or ""),
-            "vin":             extract_vin_from_vehicle(v),
-            "raw_name":        (v.get("name") or "").strip(),
+            "raw_name": (v.get("name") or "").strip(),
+            "vin":      extract_vin_from_vehicle(v),
         }
-    # Print a sample so the asset names can be verified against TowBook unit numbers
+    # Print a sample so asset names can be compared against TowBook unit numbers
     sample = sorted(result.values(), key=lambda x: x["raw_name"])[:20]
-    print("  Samsara asset name sample (raw → normalized):")
+    print("  Samsara asset name sample (raw → leading number):")
     for s in sample:
-        print(f"    {s['raw_name']!r:30s} → {s['normalized_unit']!r}")
+        print(f"    {s['raw_name']!r:35s} → {leading_number(s['raw_name'])!r}")
     return result
 
 def load_interstate_drivers() -> list[dict]:
@@ -162,17 +172,47 @@ def load_interstate_drivers() -> list[dict]:
 
 # ── Vehicle → driver resolution ────────────────────────────────────────────────
 
-def resolve_truck_id(sam_veh_id, sam_unit, sam_vehicles, by_unit, by_vin) -> str | None:
-    norm_event_unit = normalize_unit(sam_unit)
-    if norm_event_unit and norm_event_unit in by_unit:
-        return by_unit[norm_event_unit]
+def resolve_truck_id(
+    sam_veh_id:  str,
+    sam_unit:    str,
+    sam_vehicles: dict[str, dict],
+    by_unit_raw: dict[str, str],
+    by_unit_num: dict[str, str],
+    by_vin:      dict[str, str],
+) -> str | None:
+    """
+    Match a Samsara asset to a trucks table UUID.
+    1. Raw case-insensitive match on the asset name from the event.
+    2. Leading-number match on the asset name (e.g. '#1023 ...' → '1023').
+    3. Same two passes on the asset name from the Samsara vehicle list.
+    4. VIN fallback.
+    """
+    def _try(name: str) -> str | None:
+        if not name:
+            return None
+        if name.lower() in by_unit_raw:
+            return by_unit_raw[name.lower()]
+        num = leading_number(name)
+        if num:
+            if num in by_unit_raw:
+                return by_unit_raw[num]
+            if num in by_unit_num:
+                return by_unit_num[num]
+        return None
+
+    result = _try(sam_unit)
+    if result:
+        return result
+
     veh_info = sam_vehicles.get(sam_veh_id, {})
-    norm_veh_unit = veh_info.get("normalized_unit", "")
-    if norm_veh_unit and norm_veh_unit in by_unit:
-        return by_unit[norm_veh_unit]
+    result = _try(veh_info.get("raw_name", ""))
+    if result:
+        return result
+
     veh_vin = veh_info.get("vin", "")
     if veh_vin and veh_vin in by_vin:
         return by_vin[veh_vin]
+
     return None
 
 def resolve_driver_from_job(truck_uuid, event_date, by_name) -> int | None:
@@ -206,15 +246,31 @@ def date_range(start: date, end: date):
 
 # ── 1. Safety events backfill ─────────────────────────────────────────────────
 
-def _parse_event_row(ev, by_sam_id, by_name, by_unit, by_vin, sam_vehicles):
+def _get_event_time(ev: dict) -> str | None:
+    """Return the event occurrence timestamp, trying all known field names."""
+    return (ev.get("time")
+            or ev.get("occurredAtTime")
+            or ev.get("createdAtTime")
+            or ev.get("startTime"))
+
+def _get_event_type(ev: dict) -> str:
+    """Return the event behavior type, trying all known field names."""
+    return (ev.get("type")
+            or ev.get("behaviorType")
+            or ev.get("eventType")
+            or "unknown")
+
+def _parse_event_row(ev, by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_vehicles):
     """Extract a DB row dict from a single /safety-events/stream response object.
-    Returns (row_dict, resolved: bool | None, asset_name: str)
-      resolved=None  → driver came from Samsara driver ID (interstate path)
-      resolved=True  → vehicle matched a truck AND a driver was found in jobs
-      resolved=False → vehicle didn't match a truck, or truck matched but no job found"""
+    Returns (row_dict | None, resolved: bool | None, asset_name: str)
+      row_dict=None   → event missing occurred_at; skip it
+      resolved=None   → driver came from Samsara driver ID (interstate path)
+      resolved=True   → vehicle matched a truck AND a driver was found in jobs
+      resolved=False  → vehicle didn't match a truck, or truck matched but no job found"""
     driver_info  = ev.get("driver",  {}) or {}
     vehicle_info = ev.get("asset", ev.get("vehicle", {})) or {}
-    event_type   = ev.get("type", "unknown")
+    event_type   = _get_event_type(ev)
+    occurred_at  = _get_event_time(ev)
     max_speed    = ev.get("maxSpeedMph") or ev.get("maxSpeed")
     speed_limit  = ev.get("speedLimitMph") or ev.get("speedLimit")
     coaching     = ev.get("coachingState", "")
@@ -222,15 +278,18 @@ def _parse_event_row(ev, by_sam_id, by_name, by_unit, by_vin, sam_vehicles):
     sam_veh_id   = vehicle_info.get("id", "")
     sam_unit     = vehicle_info.get("name", "")
 
+    if not occurred_at:
+        return None, None, sam_unit
+
     internal_id: int | None = None
     resolved: bool | None   = None
 
     if sam_drv_id:
         internal_id = by_sam_id.get(sam_drv_id)
     elif sam_veh_id:
-        truck_uuid = resolve_truck_id(sam_veh_id, sam_unit, sam_vehicles, by_unit, by_vin)
+        truck_uuid = resolve_truck_id(sam_veh_id, sam_unit, sam_vehicles, by_unit_raw, by_unit_num, by_vin)
         if truck_uuid:
-            event_date = datetime.fromisoformat(ev["time"].replace("Z", "+00:00")).astimezone(EASTERN).date()
+            event_date = datetime.fromisoformat(occurred_at.replace("Z", "+00:00")).astimezone(EASTERN).date()
             internal_id = resolve_driver_from_job(truck_uuid, event_date, by_name)
             resolved = internal_id is not None
         else:
@@ -242,7 +301,7 @@ def _parse_event_row(ev, by_sam_id, by_name, by_unit, by_vin, sam_vehicles):
         "driver_name":      driver_info.get("name") or None,
         "vehicle_id":       sam_veh_id or None,
         "unit_number":      sam_unit or None,
-        "occurred_at":      ev.get("time"),
+        "occurred_at":      occurred_at,
         "event_type":       event_type,
         "raw_status":       coaching,
         "final_status":     map_coaching_state(coaching),
@@ -254,7 +313,7 @@ def _parse_event_row(ev, by_sam_id, by_name, by_unit, by_vin, sam_vehicles):
     return row, resolved, sam_unit
 
 
-def backfill_events(by_sam_id, by_name, by_unit, by_vin, sam_vehicles):
+def backfill_events(by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_vehicles):
     print(f"\n── Safety events backfill {BACKFILL_START} → {BACKFILL_END} ──")
 
     start_ts = datetime(BACKFILL_START.year, BACKFILL_START.month, BACKFILL_START.day, 0, 0, 0, tzinfo=EASTERN)
@@ -275,13 +334,20 @@ def backfill_events(by_sam_id, by_name, by_unit, by_vin, sam_vehicles):
         print("  Nothing to upsert.")
         return
 
+    # Print first event keys so field names can be verified if anything looks wrong
+    print(f"  First event keys: {sorted(events[0].keys())}")
+
     rows = []
     total_resolved   = 0
     total_unresolved = 0
+    skipped_no_time  = 0
     unmatched_assets: set[str] = set()
 
     for ev in events:
-        row, resolved, asset_name = _parse_event_row(ev, by_sam_id, by_name, by_unit, by_vin, sam_vehicles)
+        row, resolved, asset_name = _parse_event_row(ev, by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_vehicles)
+        if row is None:
+            skipped_no_time += 1
+            continue
         rows.append(row)
         if resolved is True:
             total_resolved += 1
@@ -290,6 +356,9 @@ def backfill_events(by_sam_id, by_name, by_unit, by_vin, sam_vehicles):
             if asset_name:
                 unmatched_assets.add(asset_name)
 
+    if skipped_no_time:
+        print(f"  Skipped {skipped_no_time} events with no occurrence timestamp")
+
     sb.table("safety_events").upsert(rows, on_conflict="samsara_event_id").execute()
     print(f"  Upserted {len(rows)} events")
     if total_resolved or total_unresolved:
@@ -297,7 +366,7 @@ def backfill_events(by_sam_id, by_name, by_unit, by_vin, sam_vehicles):
     if unmatched_assets:
         print(f"  Asset names that did not match any truck ({len(unmatched_assets)}):")
         for name in sorted(unmatched_assets):
-            print(f"    {name!r}  (normalized: {normalize_unit(name)!r})")
+            print(f"    {name!r}  (leading number: {leading_number(name)!r})")
 
 # ── 2. Mileage backfill ────────────────────────────────────────────────────────
 
@@ -436,17 +505,16 @@ def main():
     print(f"  ({(BACKFILL_END - BACKFILL_START).days + 1} days)")
 
     # Load shared reference data once
-    by_sam_id, by_name = load_driver_maps()
-    by_unit, by_vin    = load_truck_maps()
-    sam_vehicles       = load_samsara_vehicle_info()
+    by_sam_id, by_name           = load_driver_maps()
+    by_unit_raw, by_unit_num, by_vin = load_truck_maps()
+    sam_vehicles                 = load_samsara_vehicle_info()
 
     print(f"\nReference data loaded:")
     print(f"  {len(by_sam_id)} drivers with Samsara ID, {len(by_name)} drivers by name")
-    print(f"  {len(by_unit)} trucks by unit number, {len(by_vin)} trucks by VIN")
+    print(f"  {len(by_unit_raw)} trucks by unit (raw), {len(by_unit_num)} by leading number, {len(by_vin)} by VIN")
     print(f"  {len(sam_vehicles)} Samsara vehicles")
 
-    # Safety events (chunks by month)
-    backfill_events(by_sam_id, by_name, by_unit, by_vin, sam_vehicles)
+    backfill_events(by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_vehicles)
 
     # Mileage (day-by-day, Interstate only since that's what Samsara trips track)
     backfill_mileage(by_sam_id)
