@@ -15,13 +15,16 @@ interface SidebarProps {
   items: NavItem[]
   logo?: React.ReactNode
   footer?: React.ReactNode
+  mobileOpen?: boolean
+  onClose?: () => void
 }
 
-export function Sidebar({ items, logo, footer }: SidebarProps) {
+export function Sidebar({ items, logo, footer, mobileOpen, onClose }: SidebarProps) {
   const pathname = usePathname()
 
   return (
     <nav
+      className={`sidebar-nav${mobileOpen ? ' open' : ''}`}
       style={{
         width: 220,
         flexShrink: 0,
@@ -30,8 +33,8 @@ export function Sidebar({ items, logo, footer }: SidebarProps) {
         top: 0,
         display: 'flex',
         flexDirection: 'column',
-        backgroundColor: 'var(--surface-container)',
-        borderRight: '1px solid var(--outline)',
+        backgroundColor: 'rgb(var(--surface-container))',
+        borderRight: '1px solid rgb(var(--outline))',
         padding: '1rem 0.75rem',
         gap: '0.25rem',
         overflowY: 'auto',
@@ -51,6 +54,7 @@ export function Sidebar({ items, logo, footer }: SidebarProps) {
               key={item.href}
               href={item.href}
               className={`sidebar-link${isActive ? ' active' : ''}`}
+              onClick={onClose}
             >
               {item.icon && (
                 <span style={{ width: 18, flexShrink: 0, display: 'flex', alignItems: 'center' }}>

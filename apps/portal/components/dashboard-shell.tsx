@@ -115,6 +115,7 @@ export function DashboardShell({ profile, children }: Props) {
   const router = useRouter()
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [ssoTokens, setSsoTokens] = useState<{ access_token: string; refresh_token: string } | null>(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   useEffect(() => {
     getSupabaseBrowserClient().auth.getSession().then(({ data: { session } }) => {
@@ -189,8 +190,36 @@ export function DashboardShell({ profile, children }: Props) {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
-      <Sidebar items={visibleNav} logo={Logo} footer={UserFooter} />
-      <main style={{ flex: 1, overflow: 'auto', backgroundColor: 'var(--surface)' }}>
+      {/* Mobile backdrop */}
+      <div
+        className={`sidebar-backdrop${sidebarOpen ? ' open' : ''}`}
+        onClick={() => setSidebarOpen(false)}
+      />
+
+      <Sidebar
+        items={visibleNav}
+        logo={Logo}
+        footer={UserFooter}
+        mobileOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
+
+      <main style={{ flex: 1, overflow: 'auto', backgroundColor: 'var(--surface)', minWidth: 0 }}>
+        {/* Mobile-only top bar */}
+        <div className="sidebar-mobile-topbar">
+          <button
+            className="sidebar-hamburger"
+            onClick={() => setSidebarOpen(v => !v)}
+            aria-label="Open navigation"
+          >
+            ☰
+          </button>
+          <div style={{ padding: '0 0.25rem' }}>
+            <img src="/logo-main.png" alt="NETC Fleet Services" className="logo-light" style={{ height: 24, width: 'auto', display: 'block' }} />
+            <img src="/logo-email.png" alt="NETC Fleet Services" className="logo-dark" style={{ height: 24, width: 'auto', display: 'block' }} />
+          </div>
+        </div>
+
         {children}
       </main>
     </div>

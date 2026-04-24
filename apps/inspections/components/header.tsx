@@ -40,8 +40,8 @@ export function Header() {
 
         <span style={{ color: 'rgb(var(--outline))', fontSize: '1rem' }}>|</span>
 
-        {/* Center: company logo */}
-        <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none' }}>
+        {/* Center: company logo — hidden on narrow screens */}
+        <div className="header-center-logo" style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none' }}>
           <img src="/logo-main.png" alt="NETC Fleet Services" style={{ height: 28, width: 'auto', display: 'block' }} />
         </div>
 
