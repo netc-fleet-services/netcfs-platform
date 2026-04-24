@@ -141,7 +141,13 @@ def load_samsara_vehicle_info() -> dict[str, dict]:
         result[v["id"]] = {
             "normalized_unit": normalize_unit(v.get("name") or ""),
             "vin":             extract_vin_from_vehicle(v),
+            "raw_name":        (v.get("name") or "").strip(),
         }
+    # Print a sample so the asset names can be verified against TowBook unit numbers
+    sample = sorted(result.values(), key=lambda x: x["raw_name"])[:20]
+    print("  Samsara asset name sample (raw → normalized):")
+    for s in sample:
+        print(f"    {s['raw_name']!r:30s} → {s['normalized_unit']!r}")
     return result
 
 def load_interstate_drivers() -> list[dict]:
@@ -198,90 +204,100 @@ def date_range(start: date, end: date):
         yield current
         current += timedelta(days=1)
 
-def week_chunks(start: date, end: date):
-    """Yields (chunk_start, chunk_end) in 7-day segments.
-    Samsara /safety-events rejects windows larger than ~30 days; weekly chunks
-    are well within the limit and keep request counts reasonable."""
-    current = start
-    while current <= end:
-        chunk_end = min(current + timedelta(days=6), end)
-        yield current, chunk_end
-        current = chunk_end + timedelta(days=1)
-
 # ── 1. Safety events backfill ─────────────────────────────────────────────────
+
+def _parse_event_row(ev, by_sam_id, by_name, by_unit, by_vin, sam_vehicles):
+    """Extract a DB row dict from a single /safety-events/stream response object.
+    Returns (row_dict, resolved: bool | None, asset_name: str)
+      resolved=None  → driver came from Samsara driver ID (interstate path)
+      resolved=True  → vehicle matched a truck AND a driver was found in jobs
+      resolved=False → vehicle didn't match a truck, or truck matched but no job found"""
+    driver_info  = ev.get("driver",  {}) or {}
+    vehicle_info = ev.get("asset", ev.get("vehicle", {})) or {}
+    event_type   = ev.get("type", "unknown")
+    max_speed    = ev.get("maxSpeedMph") or ev.get("maxSpeed")
+    speed_limit  = ev.get("speedLimitMph") or ev.get("speedLimit")
+    coaching     = ev.get("coachingState", "")
+    sam_drv_id   = driver_info.get("id", "")
+    sam_veh_id   = vehicle_info.get("id", "")
+    sam_unit     = vehicle_info.get("name", "")
+
+    internal_id: int | None = None
+    resolved: bool | None   = None
+
+    if sam_drv_id:
+        internal_id = by_sam_id.get(sam_drv_id)
+    elif sam_veh_id:
+        truck_uuid = resolve_truck_id(sam_veh_id, sam_unit, sam_vehicles, by_unit, by_vin)
+        if truck_uuid:
+            event_date = datetime.fromisoformat(ev["time"].replace("Z", "+00:00")).astimezone(EASTERN).date()
+            internal_id = resolve_driver_from_job(truck_uuid, event_date, by_name)
+            resolved = internal_id is not None
+        else:
+            resolved = False
+
+    row = {
+        "samsara_event_id": ev["id"],
+        "driver_id":        internal_id,
+        "driver_name":      driver_info.get("name") or None,
+        "vehicle_id":       sam_veh_id or None,
+        "unit_number":      sam_unit or None,
+        "occurred_at":      ev.get("time"),
+        "event_type":       event_type,
+        "raw_status":       coaching,
+        "final_status":     map_coaching_state(coaching),
+        "severity_points":  get_severity_points(event_type, max_speed, speed_limit),
+        "max_speed":        max_speed,
+        "speed_limit":      speed_limit,
+        "labels":           ev.get("behaviorLabels") or [],
+    }
+    return row, resolved, sam_unit
+
 
 def backfill_events(by_sam_id, by_name, by_unit, by_vin, sam_vehicles):
     print(f"\n── Safety events backfill {BACKFILL_START} → {BACKFILL_END} ──")
 
-    total_upserted = 0
-    total_resolved = 0
+    start_ts = datetime(BACKFILL_START.year, BACKFILL_START.month, BACKFILL_START.day, 0, 0, 0, tzinfo=EASTERN)
+    end_ts   = datetime(BACKFILL_END.year,   BACKFILL_END.month,   BACKFILL_END.day,   23, 59, 59, tzinfo=EASTERN)
+
+    print(f"  Fetching {utc_fmt(start_ts)} → {utc_fmt(end_ts)} …", flush=True)
+    events = samsara_get("/safety-events/stream", {
+        "startTime":        utc_fmt(start_ts),
+        "endTime":          utc_fmt(end_ts),
+        "queryByTimeField": "createdAtTime",
+        "includeDriver":    "true",
+        "includeAsset":     "true",
+        "limit":            512,
+    })
+    print(f"  Retrieved {len(events)} events")
+
+    if not events:
+        print("  Nothing to upsert.")
+        return
+
+    rows = []
+    total_resolved   = 0
     total_unresolved = 0
+    unmatched_assets: set[str] = set()
 
-    for chunk_start, chunk_end in week_chunks(BACKFILL_START, BACKFILL_END):
-        start_ts = datetime(chunk_start.year, chunk_start.month, chunk_start.day, 0, 0, 0, tzinfo=EASTERN)
-        end_ts   = datetime(chunk_end.year,   chunk_end.month,   chunk_end.day,   23, 59, 59, tzinfo=EASTERN)
+    for ev in events:
+        row, resolved, asset_name = _parse_event_row(ev, by_sam_id, by_name, by_unit, by_vin, sam_vehicles)
+        rows.append(row)
+        if resolved is True:
+            total_resolved += 1
+        elif resolved is False:
+            total_unresolved += 1
+            if asset_name:
+                unmatched_assets.add(asset_name)
 
-        print(f"  Fetching {chunk_start} → {chunk_end} …", end=" ", flush=True)
-        events = samsara_get("/safety-events", {
-            "startTime": utc_fmt(start_ts),
-            "endTime":   utc_fmt(end_ts),
-            "limit":     512,
-        })
-        print(f"{len(events)} events")
-
-        if not events:
-            continue
-
-        rows = []
-        for ev in events:
-            driver_info  = ev.get("driver",  {}) or {}
-            vehicle_info = ev.get("vehicle", {}) or {}
-            event_type   = ev.get("type", "unknown")
-            max_speed    = ev.get("maxSpeedMph") or ev.get("maxSpeed")
-            speed_limit  = ev.get("speedLimitMph") or ev.get("speedLimit")
-            coaching     = ev.get("coachingState", "")
-            sam_drv_id   = driver_info.get("id", "")
-            sam_veh_id   = vehicle_info.get("id", "")
-            sam_unit     = vehicle_info.get("name", "")
-
-            internal_id: int | None = None
-            if sam_drv_id:
-                internal_id = by_sam_id.get(sam_drv_id)
-            elif sam_veh_id:
-                truck_uuid = resolve_truck_id(sam_veh_id, sam_unit, sam_vehicles, by_unit, by_vin)
-                if truck_uuid:
-                    event_date = datetime.fromisoformat(ev["time"].replace("Z", "+00:00")).astimezone(EASTERN).date()
-                    internal_id = resolve_driver_from_job(truck_uuid, event_date, by_name)
-                    if internal_id:
-                        total_resolved += 1
-                    else:
-                        total_unresolved += 1
-                else:
-                    total_unresolved += 1
-
-            rows.append({
-                "samsara_event_id": ev["id"],
-                "driver_id":        internal_id,
-                "driver_name":      driver_info.get("name") or None,
-                "vehicle_id":       sam_veh_id or None,
-                "unit_number":      sam_unit or None,
-                "occurred_at":      ev.get("time"),
-                "event_type":       event_type,
-                "raw_status":       coaching,
-                "final_status":     map_coaching_state(coaching),
-                "severity_points":  get_severity_points(event_type, max_speed, speed_limit),
-                "max_speed":        max_speed,
-                "speed_limit":      speed_limit,
-                "labels":           ev.get("behaviorLabels") or [],
-            })
-
-        if rows:
-            sb.table("safety_events").upsert(rows, on_conflict="samsara_event_id").execute()
-            total_upserted += len(rows)
-
-    print(f"  Total upserted: {total_upserted} events")
+    sb.table("safety_events").upsert(rows, on_conflict="samsara_event_id").execute()
+    print(f"  Upserted {len(rows)} events")
     if total_resolved or total_unresolved:
         print(f"  Vehicle→driver resolution: {total_resolved} matched, {total_unresolved} unmatched")
+    if unmatched_assets:
+        print(f"  Asset names that did not match any truck ({len(unmatched_assets)}):")
+        for name in sorted(unmatched_assets):
+            print(f"    {name!r}  (normalized: {normalize_unit(name)!r})")
 
 # ── 2. Mileage backfill ────────────────────────────────────────────────────────
 
