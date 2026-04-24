@@ -265,6 +265,7 @@ def sync_events():
     events = samsara_get("/safety-events/stream", {
         "startTime":     utc_fmt(start),
         "endTime":       utc_fmt(now),
+        "eventStates":   "coached",
         "includeDriver": "true",
         "includeAsset":  "true",
         "limit":         512,

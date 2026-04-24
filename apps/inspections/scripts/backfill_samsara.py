@@ -331,6 +331,7 @@ def backfill_events(by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_ve
         "startTime":        utc_fmt(start_ts),
         "endTime":          utc_fmt(end_ts),
         "queryByTimeField": "createdAtTime",
+        "eventStates":      "coached",
         "includeDriver":    "true",
         "includeAsset":     "true",
         "limit":            512,
