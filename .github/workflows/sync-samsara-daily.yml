@@ -1,0 +1,44 @@
+# ═══════════════════════════════════════════════
+# Samsara → Supabase Daily Sync
+#
+# Runs once per day at 06:00 UTC (2 AM ET).
+# Syncs driver list, prior-day mileage, and DVIR compliance.
+#
+# Required repository secrets (Settings → Secrets → Actions):
+#   SAMSARA_API_KEY      — Samsara API token
+#   SUPABASE_URL         — from Supabase Dashboard → Settings → API
+#   SUPABASE_SERVICE_KEY — service role key (bypasses RLS) — NOT the anon key
+# ═══════════════════════════════════════════════
+
+name: Sync Samsara Daily
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # daily at 06:00 UTC (2 AM ET)
+  workflow_dispatch:        # allow manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/inspections/requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r apps/inspections/requirements.txt
+
+      - name: Run daily sync
+        env:
+          SAMSARA_API_KEY:      ${{ secrets.SAMSARA_API_KEY }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python apps/inspections/scripts/sync_samsara_daily.py

@@ -1,0 +1,44 @@
+# ═══════════════════════════════════════════════
+# Samsara → Supabase Safety Events Sync
+#
+# Runs every 15 minutes. Re-fetches the last 72 hours so coaching
+# status changes (needsReview → coached/dismissed) are captured.
+#
+# Required repository secrets (Settings → Secrets → Actions):
+#   SAMSARA_API_KEY      — Samsara API token
+#   SUPABASE_URL         — from Supabase Dashboard → Settings → API
+#   SUPABASE_SERVICE_KEY — service role key (bypasses RLS) — NOT the anon key
+# ═══════════════════════════════════════════════
+
+name: Sync Samsara Safety Events
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # every 15 minutes
+  workflow_dispatch:           # allow manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/inspections/requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r apps/inspections/requirements.txt
+
+      - name: Run safety events sync
+        env:
+          SAMSARA_API_KEY:      ${{ secrets.SAMSARA_API_KEY }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python apps/inspections/scripts/sync_samsara_events.py
