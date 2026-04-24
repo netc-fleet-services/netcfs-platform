@@ -32,7 +32,7 @@ sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 # ── API helper ─────────────────────────────────────────────────────────────────
 
 def samsara_get(path: str, params: dict) -> list[dict]:
-    headers = {"Authorization": f"Token {SAMSARA_API_KEY}"}
+    headers = {"Authorization": f"Bearer {SAMSARA_API_KEY}"}
     results = []
     while True:
         resp = requests.get(f"{BASE_URL}{path}", headers=headers, params=params, timeout=30)

@@ -70,7 +70,7 @@ def map_coaching_state(raw: str) -> str:
 # ── API helper ─────────────────────────────────────────────────────────────────
 
 def samsara_get(path: str, params: dict) -> list[dict]:
-    headers = {"Authorization": f"Token {SAMSARA_API_KEY}"}
+    headers = {"Authorization": f"Bearer {SAMSARA_API_KEY}"}
     results = []
     while True:
         resp = requests.get(f"{BASE_URL}{path}", headers=headers, params=params, timeout=30)
@@ -142,8 +142,14 @@ def load_samsara_vehicle_info() -> dict[str, dict]:
     """
     Returns {samsara_vehicle_id: {normalized_unit: str, vin: str}}
     Used to resolve VIN when the safety event only carries the vehicle ID.
+    Falls back to empty dict if the API key lacks the fleet/vehicles scope.
     """
-    vehicles = samsara_get("/fleet/vehicles", {"limit": 512})
+    try:
+        vehicles = samsara_get("/fleet/vehicles", {"limit": 512})
+    except Exception as e:
+        print(f"  WARNING: could not load Samsara vehicle list ({e})")
+        print("  VIN-based truck matching unavailable; unit number matching still active.")
+        return {}
     result: dict[str, dict] = {}
     for v in vehicles:
         result[v["id"]] = {

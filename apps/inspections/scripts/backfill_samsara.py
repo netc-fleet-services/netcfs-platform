@@ -71,7 +71,7 @@ def map_coaching_state(raw: str) -> str:
 # ── API helper ─────────────────────────────────────────────────────────────────
 
 def samsara_get(path: str, params: dict) -> list[dict]:
-    headers = {"Authorization": f"Token {SAMSARA_API_KEY}"}
+    headers = {"Authorization": f"Bearer {SAMSARA_API_KEY}"}
     results = []
     while True:
         resp = requests.get(f"{BASE_URL}{path}", headers=headers, params=params, timeout=60)
@@ -124,7 +124,13 @@ def extract_vin_from_vehicle(v: dict) -> str:
     return (v.get("vin") or v.get("serial") or "").strip().upper()
 
 def load_samsara_vehicle_info() -> dict[str, dict]:
-    vehicles = samsara_get("/fleet/vehicles", {"limit": 512})
+    try:
+        vehicles = samsara_get("/fleet/vehicles", {"limit": 512})
+    except Exception as e:
+        print(f"  WARNING: could not load Samsara vehicle list ({e})")
+        print("  VIN-based truck matching will be skipped; unit number matching still active.")
+        print("  To enable VIN matching, add the 'fleet/vehicles' scope to your Samsara API key.")
+        return {}
     result: dict[str, dict] = {}
     for v in vehicles:
         result[v["id"]] = {
