@@ -37,9 +37,10 @@ def to_ms(dt: datetime) -> int:
     """Unix milliseconds — required by Samsara v1 endpoints (e.g. /v1/fleet/trips)."""
     return int(dt.astimezone(timezone.utc).timestamp() * 1000)
 
-# ── API helper ─────────────────────────────────────────────────────────────────
+# ── API helpers ────────────────────────────────────────────────────────────────
 
 def samsara_get(path: str, params: dict) -> list[dict]:
+    """v2 paginated GET — response data is under 'data' key with cursor pagination."""
     headers = {"Authorization": f"Bearer {SAMSARA_API_KEY}"}
     results = []
     while True:
@@ -52,6 +53,31 @@ def samsara_get(path: str, params: dict) -> list[dict]:
             break
         params = {**params, "after": pagination["endCursor"]}
     return results
+
+def samsara_get_v1_trips(group_id: int, start_ms: int, end_ms: int) -> list[dict]:
+    """v1 trips GET — response data is under 'trips' key, no cursor pagination."""
+    headers = {"Authorization": f"Bearer {SAMSARA_API_KEY}"}
+    resp = requests.get(
+        f"{BASE_URL}/v1/fleet/trips",
+        headers=headers,
+        params={"groupId": group_id, "startMs": start_ms, "endMs": end_ms},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json().get("trips", [])
+
+def load_samsara_group_id() -> int | None:
+    """Fetch the first fleet group ID from Samsara (required by v1 endpoints)."""
+    headers = {"Authorization": f"Bearer {SAMSARA_API_KEY}"}
+    try:
+        resp = requests.get(f"{BASE_URL}/v1/groups", headers=headers, timeout=30)
+        resp.raise_for_status()
+        groups = resp.json().get("groups", [])
+        if groups:
+            return groups[0]["id"]
+    except Exception as e:
+        print(f"  WARNING: could not fetch Samsara group ID: {e}")
+    return None
 
 # ── 1. Driver sync ─────────────────────────────────────────────────────────────
 
@@ -111,11 +137,12 @@ def sync_mileage(target_date: date):
                          0, 0, 0, tzinfo=EASTERN)
     day_end   = day_start + timedelta(days=1)
 
-    trips = samsara_get("/v1/fleet/trips", {
-        "startMs": to_ms(day_start),
-        "endMs":   to_ms(day_end),
-        "limit":   512,
-    })
+    group_id = load_samsara_group_id()
+    if not group_id:
+        print("  ERROR: could not determine Samsara group ID — skipping mileage sync")
+        return
+
+    trips = samsara_get_v1_trips(group_id, to_ms(day_start), to_ms(day_end))
     print(f"  {len(trips)} trips retrieved")
 
     # Load driver map
@@ -126,14 +153,18 @@ def sync_mileage(target_date: date):
     driver_map = {r["samsara_driver_id"]: r for r in (resp.data or [])}
 
     # Aggregate miles per Samsara driver ID
+    # v1 trips use distanceMiles directly; fall back to distanceMeters conversion
     miles_by_driver: dict[str, dict] = {}
     for trip in trips:
         drv_info = trip.get("driver") or {}
         sam_id   = drv_info.get("id", "")
         if not sam_id:
             continue
-        dist_m = trip.get("distanceMeters") or 0
-        miles  = float(dist_m) / 1609.344
+        if trip.get("distanceMiles") is not None:
+            miles = float(trip["distanceMiles"])
+        else:
+            dist_m = trip.get("distanceMeters") or 0
+            miles  = float(dist_m) / 1609.344
 
         if sam_id not in miles_by_driver:
             miles_by_driver[sam_id] = {

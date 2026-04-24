@@ -76,9 +76,10 @@ def map_coaching_state(raw: str) -> str:
     if raw == "dismissed": return "dismissed"
     return "pending"
 
-# ── API helper ─────────────────────────────────────────────────────────────────
+# ── API helpers ────────────────────────────────────────────────────────────────
 
 def samsara_get(path: str, params: dict) -> list[dict]:
+    """v2 paginated GET — response data is under 'data' key with cursor pagination."""
     headers = {"Authorization": f"Bearer {SAMSARA_API_KEY}"}
     results = []
     while True:
@@ -91,6 +92,33 @@ def samsara_get(path: str, params: dict) -> list[dict]:
             break
         params = {**params, "after": pagination["endCursor"]}
     return results
+
+def samsara_get_v1_trips(group_id: int, start_ms: int, end_ms: int) -> list[dict]:
+    """v1 trips GET — response data is under 'trips' key, no cursor pagination."""
+    headers = {"Authorization": f"Bearer {SAMSARA_API_KEY}"}
+    resp = requests.get(
+        f"{BASE_URL}/v1/fleet/trips",
+        headers=headers,
+        params={"groupId": group_id, "startMs": start_ms, "endMs": end_ms},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json().get("trips", [])
+
+def load_samsara_group_id() -> int | None:
+    """Fetch the first fleet group ID from Samsara (required by v1 endpoints)."""
+    headers = {"Authorization": f"Bearer {SAMSARA_API_KEY}"}
+    try:
+        resp = requests.get(f"{BASE_URL}/v1/groups", headers=headers, timeout=30)
+        resp.raise_for_status()
+        groups = resp.json().get("groups", [])
+        if groups:
+            gid = groups[0]["id"]
+            print(f"  Samsara group ID: {gid} ({groups[0].get('name', '')})")
+            return gid
+    except Exception as e:
+        print(f"  WARNING: could not fetch Samsara group ID: {e}")
+    return None
 
 # ── Unit matching helpers ─────────────────────────────────────────────────────
 
@@ -382,6 +410,11 @@ def backfill_mileage(driver_map: dict[str, int]):
     """driver_map: {samsara_driver_id: internal_id}"""
     print(f"\n── Mileage backfill {BACKFILL_START} → {BACKFILL_END} ──")
 
+    group_id = load_samsara_group_id()
+    if not group_id:
+        print("  ERROR: could not determine Samsara group ID — skipping mileage backfill")
+        return
+
     total_days = (BACKFILL_END - BACKFILL_START).days + 1
     upserted   = 0
 
@@ -392,21 +425,21 @@ def backfill_mileage(driver_map: dict[str, int]):
         day_start = datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0, tzinfo=EASTERN)
         day_end   = day_start + timedelta(days=1)
 
-        trips = samsara_get("/v1/fleet/trips", {
-            "startMs": to_ms(day_start),
-            "endMs":   to_ms(day_end),
-            "limit":   512,
-        })
+        trips = samsara_get_v1_trips(group_id, to_ms(day_start), to_ms(day_end))
 
         # Aggregate miles per Samsara driver ID
+        # v1 trips use distanceMiles directly; fall back to distanceMeters conversion
         miles_by_driver: dict[str, dict] = {}
         for trip in trips:
             drv_info = trip.get("driver") or {}
             sam_id   = drv_info.get("id", "")
             if not sam_id:
                 continue
-            dist_m = trip.get("distanceMeters") or 0
-            miles  = float(dist_m) / 1609.344
+            if trip.get("distanceMiles") is not None:
+                miles = float(trip["distanceMiles"])
+            else:
+                dist_m = trip.get("distanceMeters") or 0
+                miles  = float(dist_m) / 1609.344
             if sam_id not in miles_by_driver:
                 miles_by_driver[sam_id] = {"sam_id": sam_id, "name": drv_info.get("name"), "miles": 0.0}
             miles_by_driver[sam_id]["miles"] += miles
