@@ -236,7 +236,7 @@ def sync_events():
 
     print(f"Fetching safety events {start.isoformat()} → {now.isoformat()} …")
 
-    events = samsara_get("/safety/events", {
+    events = samsara_get("/safety-events", {
         "startTime": start.isoformat(),
         "endTime":   now.isoformat(),
         "limit":     512,

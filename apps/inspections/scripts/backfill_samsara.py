@@ -218,7 +218,7 @@ def backfill_events(by_sam_id, by_name, by_unit, by_vin, sam_vehicles):
         end_ts   = datetime(chunk_end.year,   chunk_end.month,   chunk_end.day,   23, 59, 59, tzinfo=EASTERN)
 
         print(f"  Fetching {chunk_start} → {chunk_end} …", end=" ", flush=True)
-        events = samsara_get("/safety/events", {
+        events = samsara_get("/safety-events", {
             "startTime": start_ts.isoformat(),
             "endTime":   end_ts.isoformat(),
             "limit":     512,
@@ -295,7 +295,7 @@ def backfill_mileage(driver_map: dict[str, int]):
         day_start = datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0, tzinfo=EASTERN)
         day_end   = day_start + timedelta(days=1)
 
-        trips = samsara_get("/fleet/trips", {
+        trips = samsara_get("/v1/fleet/trips", {
             "startTime": day_start.isoformat(),
             "endTime":   day_end.isoformat(),
             "limit":     512,
@@ -345,29 +345,32 @@ def backfill_dvirs():
         print("  No linked Interstate drivers — skipping")
         return
 
-    sam_ids      = [d["samsara_driver_id"] for d in interstate]
     id_to_driver = {d["samsara_driver_id"]: d for d in interstate}
+    interstate_sam_ids = {d["samsara_driver_id"] for d in interstate}
 
-    # Fetch all DVIRs for the full range in one call
+    # /dvirs/stream filters by updatedAtTime, max 200/page, no driverIds filter
     start_ts = datetime(BACKFILL_START.year, BACKFILL_START.month, BACKFILL_START.day, 0, 0, 0, tzinfo=EASTERN)
     end_ts   = datetime(BACKFILL_END.year,   BACKFILL_END.month,   BACKFILL_END.day, 23, 59, 59, tzinfo=EASTERN)
 
-    print(f"  Fetching DVIRs for {len(interstate)} Interstate drivers …")
-    dvirs = samsara_get("/fleet/dvirs", {
-        "startTime":  start_ts.isoformat(),
-        "endTime":    end_ts.isoformat(),
-        "driverIds":  ",".join(sam_ids),
-        "limit":      512,
+    print(f"  Fetching all DVIRs {BACKFILL_START} → {BACKFILL_END} …")
+    all_dvirs = samsara_get("/dvirs/stream", {
+        "startTime": start_ts.isoformat(),
+        "endTime":   end_ts.isoformat(),
+        "limit":     200,
     })
-    print(f"  {len(dvirs)} DVIRs retrieved")
+    dvirs = [d for d in all_dvirs if (d.get("driver") or {}).get("id") in interstate_sam_ids]
+    print(f"  {len(all_dvirs)} total DVIRs, {len(dvirs)} from Interstate drivers")
 
-    # Build set of (sam_id, date) that submitted
+    # Build set of (sam_id, Eastern date str) that submitted
     submitted: set[tuple[str, str]] = set()
     for dvir in dvirs:
         drv = dvir.get("driver") or {}
         drv_id = drv.get("id")
-        if drv_id and dvir.get("time"):
-            d = datetime.fromisoformat(dvir["time"].replace("Z", "+00:00")).date()
+        # Use the DVIR's own time field; fall back to updatedAtTime
+        ts_raw = dvir.get("startTime") or dvir.get("inspectionStartedAtMs") or dvir.get("updatedAtTime") or dvir.get("time")
+        if drv_id and ts_raw:
+            ts = ts_raw if isinstance(ts_raw, str) else datetime.fromtimestamp(int(ts_raw) / 1000, tz=timezone.utc).isoformat()
+            d = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(EASTERN).date()
             submitted.add((drv_id, d.isoformat()))
 
     # Load mileage_logs for the period to know which days each driver drove
