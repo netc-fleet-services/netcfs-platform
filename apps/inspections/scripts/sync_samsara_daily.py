@@ -29,6 +29,10 @@ BASE_URL = "https://api.samsara.com"
 
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+def utc_fmt(dt: datetime) -> str:
+    """Convert any tz-aware datetime to UTC RFC3339 with Z suffix (Samsara requirement)."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 # ── API helper ─────────────────────────────────────────────────────────────────
 
 def samsara_get(path: str, params: dict) -> list[dict]:
@@ -104,8 +108,8 @@ def sync_mileage(target_date: date):
     day_end   = day_start + timedelta(days=1)
 
     trips = samsara_get("/v1/fleet/trips", {
-        "startTime": day_start.isoformat(),
-        "endTime":   day_end.isoformat(),
+        "startTime": utc_fmt(day_start),
+        "endTime":   utc_fmt(day_end),
         "limit":     512,
     })
     print(f"  {len(trips)} trips retrieved")
@@ -196,8 +200,8 @@ def sync_dvirs(target_date: date):
 
     # /dvirs/stream filters by updatedAtTime, max 200 per page, no driverIds filter
     all_dvirs = samsara_get("/dvirs/stream", {
-        "startTime": day_start.isoformat(),
-        "endTime":   day_end.isoformat(),
+        "startTime": utc_fmt(day_start),
+        "endTime":   utc_fmt(day_end),
         "limit":     200,
     })
     # Filter client-side to only Interstate drivers

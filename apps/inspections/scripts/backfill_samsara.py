@@ -36,6 +36,11 @@ BASE_URL = "https://api.samsara.com"
 
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+def utc_fmt(dt: datetime) -> str:
+    """Convert any tz-aware datetime to UTC and format as RFC3339 with Z suffix.
+    Samsara rejects localized offsets like -05:00; it requires the Z form."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 # ── Severity map (mirrors sync_samsara_events.py) ─────────────────────────────
 
 SEVERITY_MAP: dict[str, int] = {
@@ -219,8 +224,8 @@ def backfill_events(by_sam_id, by_name, by_unit, by_vin, sam_vehicles):
 
         print(f"  Fetching {chunk_start} → {chunk_end} …", end=" ", flush=True)
         events = samsara_get("/safety-events", {
-            "startTime": start_ts.isoformat(),
-            "endTime":   end_ts.isoformat(),
+            "startTime": utc_fmt(start_ts),
+            "endTime":   utc_fmt(end_ts),
             "limit":     512,
         })
         print(f"{len(events)} events")
@@ -296,8 +301,8 @@ def backfill_mileage(driver_map: dict[str, int]):
         day_end   = day_start + timedelta(days=1)
 
         trips = samsara_get("/v1/fleet/trips", {
-            "startTime": day_start.isoformat(),
-            "endTime":   day_end.isoformat(),
+            "startTime": utc_fmt(day_start),
+            "endTime":   utc_fmt(day_end),
             "limit":     512,
         })
 
@@ -354,8 +359,8 @@ def backfill_dvirs():
 
     print(f"  Fetching all DVIRs {BACKFILL_START} → {BACKFILL_END} …")
     all_dvirs = samsara_get("/dvirs/stream", {
-        "startTime": start_ts.isoformat(),
-        "endTime":   end_ts.isoformat(),
+        "startTime": utc_fmt(start_ts),
+        "endTime":   utc_fmt(end_ts),
         "limit":     200,
     })
     dvirs = [d for d in all_dvirs if (d.get("driver") or {}).get("id") in interstate_sam_ids]

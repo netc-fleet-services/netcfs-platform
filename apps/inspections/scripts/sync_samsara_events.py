@@ -35,6 +35,10 @@ BASE_URL = "https://api.samsara.com"
 
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+def utc_fmt(dt: datetime) -> str:
+    """Convert any tz-aware datetime to UTC RFC3339 with Z suffix (Samsara requirement)."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 # ── Severity point mapping ─────────────────────────────────────────────────────
 
 SEVERITY_MAP: dict[str, int] = {
@@ -234,11 +238,11 @@ def sync_events():
     now   = datetime.now(timezone.utc)
     start = now - timedelta(hours=72)
 
-    print(f"Fetching safety events {start.isoformat()} → {now.isoformat()} …")
+    print(f"Fetching safety events {utc_fmt(start)} → {utc_fmt(now)} …")
 
     events = samsara_get("/safety-events", {
-        "startTime": start.isoformat(),
-        "endTime":   now.isoformat(),
+        "startTime": utc_fmt(start),
+        "endTime":   utc_fmt(now),
         "limit":     512,
     })
     print(f"  Retrieved {len(events)} events from Samsara")
