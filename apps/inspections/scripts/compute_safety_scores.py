@@ -35,8 +35,8 @@ from datetime import date, datetime, timezone
 from collections import defaultdict
 from supabase import create_client
 
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
+SUPABASE_URL = os.environ["SUPABASE_URL"].strip()
+SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"].strip()
 
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 

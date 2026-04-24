@@ -26,9 +26,9 @@ from supabase import create_client
 
 EASTERN = ZoneInfo("America/New_York")
 
-SAMSARA_API_KEY = os.environ["SAMSARA_API_KEY"]
-SUPABASE_URL    = os.environ["SUPABASE_URL"]
-SUPABASE_KEY    = os.environ["SUPABASE_SERVICE_KEY"]
+SAMSARA_API_KEY = os.environ["SAMSARA_API_KEY"].strip()
+SUPABASE_URL    = os.environ["SUPABASE_URL"].strip()
+SUPABASE_KEY    = os.environ["SUPABASE_SERVICE_KEY"].strip()
 BACKFILL_START  = date.fromisoformat(os.environ["BACKFILL_START"])
 BACKFILL_END    = date.fromisoformat(os.environ["BACKFILL_END"])
 
