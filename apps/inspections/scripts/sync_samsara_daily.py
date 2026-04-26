@@ -13,7 +13,7 @@ Required env vars:
   SUPABASE_SERVICE_KEY — Service role key (bypasses RLS)
 """
 
-import os
+import os, re, math
 from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo
 import requests
@@ -37,6 +37,17 @@ def to_ms(dt: datetime) -> int:
     """Unix milliseconds — required by Samsara v1 endpoints (e.g. /v1/fleet/trips)."""
     return int(dt.astimezone(timezone.utc).timestamp() * 1000)
 
+def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Straight-line distance in miles between two lat/lon points."""
+    R = 3958.8
+    φ1, φ2 = math.radians(lat1), math.radians(lat2)
+    dφ = math.radians(lat2 - lat1)
+    dλ = math.radians(lon2 - lon1)
+    a = math.sin(dφ / 2) ** 2 + math.cos(φ1) * math.cos(φ2) * math.sin(dλ / 2) ** 2
+    return R * 2 * math.asin(math.sqrt(a))
+
+ROAD_FACTOR = 1.25
+
 # ── API helpers ────────────────────────────────────────────────────────────────
 
 def samsara_get(path: str, params: dict) -> list[dict]:
@@ -54,30 +65,17 @@ def samsara_get(path: str, params: dict) -> list[dict]:
         params = {**params, "after": pagination["endCursor"]}
     return results
 
-def samsara_get_v1_trips(group_id: int, start_ms: int, end_ms: int) -> list[dict]:
-    """v1 trips GET — response data is under 'trips' key, no cursor pagination."""
+def samsara_get_v1_trips_for_vehicle(vehicle_id: str, start_ms: int, end_ms: int) -> list[dict]:
+    """v1 trips for a single vehicle — response is under 'trips' key."""
     headers = {"Authorization": f"Bearer {SAMSARA_API_KEY}"}
     resp = requests.get(
         f"{BASE_URL}/v1/fleet/trips",
         headers=headers,
-        params={"groupId": group_id, "startMs": start_ms, "endMs": end_ms},
+        params={"vehicleId": vehicle_id, "startMs": start_ms, "endMs": end_ms},
         timeout=30,
     )
     resp.raise_for_status()
     return resp.json().get("trips", [])
-
-def load_samsara_group_id() -> int | None:
-    """Fetch the first fleet group ID from Samsara (required by v1 endpoints)."""
-    headers = {"Authorization": f"Bearer {SAMSARA_API_KEY}"}
-    try:
-        resp = requests.get(f"{BASE_URL}/v1/groups", headers=headers, timeout=30)
-        resp.raise_for_status()
-        groups = resp.json().get("groups", [])
-        if groups:
-            return groups[0]["id"]
-    except Exception as e:
-        print(f"  WARNING: could not fetch Samsara group ID: {e}")
-    return None
 
 # ── 1. Driver sync ─────────────────────────────────────────────────────────────
 
@@ -126,24 +124,80 @@ def sync_drivers():
 
 # ── 2. Mileage sync ────────────────────────────────────────────────────────────
 
-def sync_mileage(target_date: date):
+def mileage_from_jobs(target_date: date, by_name: dict[str, int], skip_pairs: set[tuple[int, str]]) -> int:
     """
-    Pull trips for target_date and aggregate miles per driver.
+    Estimate mileage for target_date from TowBook jobs using pickup/drop coordinates.
+    Fills any driver-days Samsara didn't cover (non-interstate, unlinked vehicles, etc.).
+    Returns number of driver-days upserted.
+    """
+    day_str = target_date.isoformat()
+    resp = (
+        sb.table("jobs")
+          .select("driver_id, tb_driver, pickup_lat, pickup_lon, drop_lat, drop_lon")
+          .gte("pickup_time", day_str + "T00:00:00")
+          .lte("pickup_time", day_str + "T23:59:59")
+          .not_.is_("pickup_lat", "null")
+          .not_.is_("drop_lat",   "null")
+          .execute()
+    )
+    jobs = resp.data or []
+    if not jobs:
+        return 0
+
+    miles_map: dict[int, float] = {}
+    for job in jobs:
+        driver_id = job.get("driver_id")
+        if not driver_id:
+            tb_name = (job.get("tb_driver") or "").strip().lower()
+            driver_id = by_name.get(tb_name) if tb_name else None
+        if not driver_id:
+            continue
+        key = (int(driver_id), day_str)
+        if key in skip_pairs:
+            continue
+        try:
+            dist = haversine_miles(
+                float(job["pickup_lat"]), float(job["pickup_lon"]),
+                float(job["drop_lat"]),   float(job["drop_lon"]),
+            ) * ROAD_FACTOR
+        except (TypeError, ValueError):
+            continue
+        miles_map[int(driver_id)] = miles_map.get(int(driver_id), 0.0) + dist
+
+    if not miles_map:
+        return 0
+
+    rows = [
+        {"driver_id": did, "driver_name": None, "log_date": day_str,
+         "miles": round(m, 2), "source": "towbook_estimate"}
+        for did, m in miles_map.items()
+    ]
+    sb.table("mileage_logs").upsert(rows, on_conflict="driver_id,log_date").execute()
+    return len(rows)
+
+
+def sync_mileage(target_date: date, by_name: dict[str, int]):
+    """
+    Pull trips for target_date per vehicle and aggregate miles per driver.
     Upserts into mileage_logs (one row per driver per day).
+    Falls back to TowBook job coordinates for driver-days Samsara missed.
     """
     print(f"\n── Mileage sync for {target_date} ──")
 
     day_start = datetime(target_date.year, target_date.month, target_date.day,
                          0, 0, 0, tzinfo=EASTERN)
     day_end   = day_start + timedelta(days=1)
+    start_ms  = to_ms(day_start)
+    end_ms    = to_ms(day_end)
 
-    group_id = load_samsara_group_id()
-    if not group_id:
-        print("  ERROR: could not determine Samsara group ID — skipping mileage sync")
+    # Load all Samsara vehicle IDs
+    try:
+        vehicles = samsara_get("/fleet/vehicles", {"limit": 512})
+    except Exception as e:
+        print(f"  WARNING: could not load vehicle list: {e} — skipping mileage sync")
         return
-
-    trips = samsara_get_v1_trips(group_id, to_ms(day_start), to_ms(day_end))
-    print(f"  {len(trips)} trips retrieved")
+    vehicle_ids = [v["id"] for v in vehicles]
+    print(f"  Querying trips for {len(vehicle_ids)} vehicles …")
 
     # Load driver map
     resp = sb.table("drivers") \
@@ -152,55 +206,60 @@ def sync_mileage(target_date: date):
              .execute()
     driver_map = {r["samsara_driver_id"]: r for r in (resp.data or [])}
 
-    # Aggregate miles per Samsara driver ID
-    # v1 trips use distanceMiles directly; fall back to distanceMeters conversion
     miles_by_driver: dict[str, dict] = {}
-    for trip in trips:
-        drv_info = trip.get("driver") or {}
-        sam_id   = drv_info.get("id", "")
-        if not sam_id:
+    failed = 0
+    for veh_id in vehicle_ids:
+        try:
+            trips = samsara_get_v1_trips_for_vehicle(veh_id, start_ms, end_ms)
+        except Exception:
+            failed += 1
             continue
-        if trip.get("distanceMiles") is not None:
-            miles = float(trip["distanceMiles"])
-        else:
-            dist_m = trip.get("distanceMeters") or 0
-            miles  = float(dist_m) / 1609.344
+        for trip in trips:
+            drv_info = trip.get("driver") or {}
+            sam_id   = drv_info.get("id", "")
+            if not sam_id:
+                continue
+            if trip.get("distanceMiles") is not None:
+                miles = float(trip["distanceMiles"])
+            else:
+                miles = float(trip.get("distanceMeters") or 0) / 1609.344
+            if sam_id not in miles_by_driver:
+                miles_by_driver[sam_id] = {"name": drv_info.get("name"), "miles": 0.0}
+            miles_by_driver[sam_id]["miles"] += miles
 
-        if sam_id not in miles_by_driver:
-            miles_by_driver[sam_id] = {
-                "sam_id":   sam_id,
-                "name":     drv_info.get("name"),
-                "miles":    0.0,
-            }
-        miles_by_driver[sam_id]["miles"] += miles
+    if failed:
+        print(f"  WARNING: {failed} vehicles failed to fetch trips")
 
     if not miles_by_driver:
-        print("  No trips with driver assignments — skipping mileage upsert")
-        return
+        print("  No trips with driver assignments — Samsara mileage skipped")
+        samsara_pairs: set[tuple[int, str]] = set()
+    else:
+        rows = []
+        for sam_id, info in miles_by_driver.items():
+            db_driver = driver_map.get(sam_id)
+            rows.append({
+                "driver_id":   db_driver["id"] if db_driver else None,
+                "driver_name": info["name"],
+                "log_date":    target_date.isoformat(),
+                "miles":       round(info["miles"], 2),
+                "source":      "samsara",
+            })
 
-    rows = []
-    for sam_id, info in miles_by_driver.items():
-        db_driver = driver_map.get(sam_id)
-        rows.append({
-            "driver_id":   db_driver["id"] if db_driver else None,
-            "driver_name": info["name"],
-            "log_date":    target_date.isoformat(),
-            "miles":       round(info["miles"], 2),
-            "source":      "samsara",
-        })
+        linkable = [r for r in rows if r["driver_id"] is not None]
+        orphaned  = [r for r in rows if r["driver_id"] is None]
 
-    # Upsert — on conflict (driver_id, log_date) update miles
-    # For rows with null driver_id we can't use the unique constraint,
-    # so filter those out and just log them as warnings
-    linkable = [r for r in rows if r["driver_id"] is not None]
-    orphaned = [r for r in rows if r["driver_id"] is None]
+        samsara_pairs: set[tuple[int, str]] = set()
+        if linkable:
+            sb.table("mileage_logs").upsert(linkable, on_conflict="driver_id,log_date").execute()
+            print(f"  Upserted mileage for {len(linkable)} drivers (Samsara)")
+            samsara_pairs = {(r["driver_id"], r["log_date"]) for r in linkable}
+        if orphaned:
+            print(f"  Skipped {len(orphaned)} drivers not yet in internal table: "
+                  f"{[r['driver_name'] for r in orphaned]}")
 
-    if linkable:
-        sb.table("mileage_logs").upsert(linkable, on_conflict="driver_id,log_date").execute()
-        print(f"  Upserted mileage for {len(linkable)} drivers")
-    if orphaned:
-        print(f"  Skipped {len(orphaned)} drivers not yet in internal table: "
-              f"{[r['driver_name'] for r in orphaned]}")
+    tb_count = mileage_from_jobs(target_date, by_name, samsara_pairs)
+    if tb_count:
+        print(f"  TowBook estimate upserted {tb_count} additional driver-days")
 
 # ── 3. DVIR sync ───────────────────────────────────────────────────────────────
 
@@ -292,7 +351,12 @@ def main():
     yesterday = (datetime.now(EASTERN) - timedelta(days=1)).date()
 
     sync_drivers()
-    sync_mileage(yesterday)
+
+    # Load name→id map for TowBook driver name resolution in mileage fallback
+    db_resp = sb.table("drivers").select("id, name").execute()
+    by_name = {r["name"].strip().lower(): r["id"] for r in (db_resp.data or []) if r.get("name")}
+
+    sync_mileage(yesterday, by_name)
     sync_dvirs(yesterday)
 
     print("\nDaily Samsara sync complete.")

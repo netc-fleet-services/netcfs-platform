@@ -215,42 +215,57 @@ def resolve_truck_id(
 
     return None
 
-def resolve_driver_from_job(
-    truck_uuid: str,
-    event_date: date,
-    by_name:    dict[str, int],
-) -> int | None:
-    """
-    Query the jobs table for a job on truck_uuid on event_date.
-    Returns internal driver_id if found, else None.
-    """
-    day_str = event_date.isoformat()
-    # Jobs use pickup_time as a timestamp; query the full day.
-    # pickup_time is stored in local (Eastern) time from TowBook, so we use
-    # a generous 48-hour window to avoid missing late-evening jobs at UTC boundaries.
-    resp = (
-        sb.table("jobs")
-          .select("driver_id, tb_driver")
-          .eq("truck_id", truck_uuid)
-          .gte("pickup_time", day_str + "T00:00:00")
-          .lte("pickup_time", day_str + "T23:59:59")
-          .limit(1)
-          .execute()
-    )
-    jobs = resp.data or []
-    if not jobs:
-        return None
-
-    job = jobs[0]
-
-    # Prefer the FK driver_id if it's already linked
+def _driver_id_from_job(job: dict, by_name: dict[str, int]) -> int | None:
     if job.get("driver_id"):
         return int(job["driver_id"])
-
-    # Fall back to matching tb_driver (TowBook name) against drivers.name
     tb_name = (job.get("tb_driver") or "").strip().lower()
-    if tb_name:
-        return by_name.get(tb_name)
+    return by_name.get(tb_name) if tb_name else None
+
+def resolve_driver_from_job(
+    truck_uuid:  str | None,
+    sam_unit:    str,
+    event_date:  date,
+    by_name:     dict[str, int],
+) -> int | None:
+    """
+    Look up the driver for a given truck + date from the jobs table.
+    Strategy 1: match by truck_id FK (fast, exact).
+    Strategy 2: match by truck_and_equipment ILIKE the unit leading number
+                (handles jobs where truck_id is not populated).
+    """
+    day_str = event_date.isoformat()
+    time_filter = {"gte": day_str + "T00:00:00", "lte": day_str + "T23:59:59"}
+
+    if truck_uuid:
+        resp = (
+            sb.table("jobs")
+              .select("driver_id, tb_driver")
+              .eq("truck_id", truck_uuid)
+              .gte("pickup_time", time_filter["gte"])
+              .lte("pickup_time", time_filter["lte"])
+              .limit(1)
+              .execute()
+        )
+        jobs = resp.data or []
+        if jobs:
+            result = _driver_id_from_job(jobs[0], by_name)
+            if result:
+                return result
+
+    num = leading_number(sam_unit)
+    if num:
+        resp = (
+            sb.table("jobs")
+              .select("driver_id, tb_driver")
+              .ilike("truck_and_equipment", f"%{num}%")
+              .gte("pickup_time", time_filter["gte"])
+              .lte("pickup_time", time_filter["lte"])
+              .limit(1)
+              .execute()
+        )
+        jobs = resp.data or []
+        if jobs:
+            return _driver_id_from_job(jobs[0], by_name)
 
     return None
 
@@ -310,16 +325,14 @@ def sync_events():
             internal_id = by_sam_id.get(sam_drv_id)
             if not internal_id:
                 unmatched_drivers.add(f"{driver_info.get('name', '?')} ({sam_drv_id})")
-        elif sam_veh_id:
+        elif sam_veh_id or sam_unit:
             # Non-interstate path: resolve via truck → job → driver
+            # truck_and_equipment fallback means we try even if truck_id FK is missing
             truck_uuid = resolve_truck_id(sam_veh_id, sam_unit, sam_vehicles, by_unit_raw, by_unit_num, by_vin)
-            if truck_uuid:
-                event_date = datetime.fromisoformat(occurred_at.replace("Z", "+00:00")).astimezone(EASTERN).date()
-                internal_id = resolve_driver_from_job(truck_uuid, event_date, by_name)
-                if internal_id:
-                    vehicle_resolved += 1
-                else:
-                    vehicle_unresolved += 1
+            event_date = datetime.fromisoformat(occurred_at.replace("Z", "+00:00")).astimezone(EASTERN).date()
+            internal_id = resolve_driver_from_job(truck_uuid, sam_unit, event_date, by_name)
+            if internal_id:
+                vehicle_resolved += 1
             else:
                 vehicle_unresolved += 1
                 if sam_unit:
