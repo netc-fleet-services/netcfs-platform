@@ -54,28 +54,44 @@ def normalize_name(name: str) -> str:
 
 # ── Severity map (mirrors sync_samsara_events.py) ─────────────────────────────
 
+# Speeding event types — all resolved via mph-over calculation in get_severity_points
+SPEEDING_TYPES = {
+    "speeding", "maxSpeed",
+    "severeSpeeding", "heavySpeeding", "moderateSpeeding", "lightSpeeding",
+}
+
 SEVERITY_MAP: dict[str, int] = {
-    "cellPhoneDistraction":       10,
-    "mobileUsage":                10,
-    "phoneDistraction":           10,
-    "seatbeltViolation":          5,
-    "distractedDriving":          5,
-    "drowsyDriving":              5,
-    "followingDistanceViolation": 5,
-    "rollingStopDetected":        2,
-    "stopSignViolation":          2,
-    "harshBraking":               1,
-    "harshAcceleration":          1,
-    "harshTurn":                  1,
-    "laneDeviation":              1,
-    "forwardCollisionWarning":    1,
+    # Mobile phone use — 10 pts
+    "cellPhoneDistraction":  10,
+    "mobileUsage":           10,
+    "phoneDistraction":      10,
+    # Seatbelt — 5 pts
+    "seatbeltViolation":      5,
+    "noSeatbelt":             5,
+    # Inattentive driving — 5 pts
+    "distractedDriving":      5,
+    "drowsyDriving":          5,
+    "edgeDistractedDriving":  5,
+    "genericDistraction":     5,
+    # Rolling stop — 2 pts
+    "rollingStop":            2,
+    "rollingStopDetected":    2,
+    # Everything else — 1 pt (minor violations)
 }
 
 def get_severity_points(event_type: str, max_speed, speed_limit) -> int:
-    if event_type == "speeding" and max_speed is not None and speed_limit is not None:
-        over = float(max_speed) - float(speed_limit)
-        if over >= 20: return 10
-        if over >= 15: return 5
+    # All speeding variants: score by mph over the applicable limit.
+    # maxSpeed = fleet-configured cap event; speeding = posted road limit.
+    # Both carry maxSpeedMph and speedLimitMph so the same calc applies.
+    if event_type in SPEEDING_TYPES:
+        if max_speed is not None and speed_limit is not None:
+            over = float(max_speed) - float(speed_limit)
+            if over >= 20: return 10
+            if over >= 15: return 5
+            return 1
+        # Speed data missing — fall back to Samsara's pre-classification
+        if event_type in ("severeSpeeding",):    return 10
+        if event_type in ("heavySpeeding",):     return 5
         return 1
     return SEVERITY_MAP.get(event_type, 1)
 
