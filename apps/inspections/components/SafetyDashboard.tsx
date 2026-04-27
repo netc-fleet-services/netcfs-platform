@@ -131,7 +131,9 @@ export function SafetyDashboard() {
       byGroup[g].sort((a, b) => {
         if (a.disqualified !== b.disqualified) return a.disqualified ? 1 : -1
         if (a.eligible !== b.eligible) return a.eligible ? -1 : 1
-        return b.safety_score - a.safety_score
+        if (b.safety_score !== a.safety_score) return b.safety_score - a.safety_score
+        if (a.total_event_points !== b.total_event_points) return a.total_event_points - b.total_event_points
+        return b.miles_driven - a.miles_driven
       })
     }
     return Object.entries(byGroup).sort(([a], [b]) => {
