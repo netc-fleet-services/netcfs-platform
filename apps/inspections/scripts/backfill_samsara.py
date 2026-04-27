@@ -388,6 +388,10 @@ def _parse_event_row(ev, by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, s
 
     if sam_drv_id:
         internal_id = by_sam_id.get(sam_drv_id)
+        if not internal_id:
+            # samsara_driver_id not yet linked — try matching by name
+            sam_name = (driver_info.get("name") or "").strip().lower()
+            internal_id = by_name.get(sam_name) if sam_name else None
     elif sam_veh_id or sam_unit:
         truck_uuid = resolve_truck_id(sam_veh_id, sam_unit, sam_vehicles, by_unit_raw, by_unit_num, by_vin)
         event_date = datetime.fromisoformat(occurred_at.replace("Z", "+00:00")).astimezone(EASTERN).date()
@@ -504,20 +508,23 @@ def backfill_mileage_from_jobs(
             break
         offset += page
 
+    print(f"  Found {len(all_jobs)} jobs with coordinates in range")
     if not all_jobs:
+        print("  → No jobs have lat/lon — run backfill_coords.py to geocode historical jobs")
         return 0
 
     # Aggregate estimated miles per (driver_id, date)
     miles_map:    dict[tuple[int, str], float] = {}
-    driver_names: dict[int, str] = {}
+    no_driver = 0
+    bad_coords = 0
 
     for job in all_jobs:
-        # Resolve driver
         driver_id = job.get("driver_id")
         if not driver_id:
             tb_name = (job.get("tb_driver") or "").strip().lower()
             driver_id = by_name.get(tb_name) if tb_name else None
         if not driver_id:
+            no_driver += 1
             continue
 
         job_date = (job.get("day") or "").strip()
@@ -526,7 +533,7 @@ def backfill_mileage_from_jobs(
 
         key = (int(driver_id), job_date)
         if key in skip_pairs:
-            continue  # Samsara already has accurate mileage for this driver-day
+            continue
 
         try:
             dist = haversine_miles(
@@ -534,17 +541,23 @@ def backfill_mileage_from_jobs(
                 float(job["drop_lat"]),   float(job["drop_lon"]),
             ) * ROAD_FACTOR
         except (TypeError, ValueError):
+            bad_coords += 1
             continue
 
         miles_map[key] = miles_map.get(key, 0.0) + dist
 
+    if no_driver:
+        print(f"  → {no_driver} jobs skipped — no resolvable driver (null driver_id and tb_driver not in drivers table)")
+    if bad_coords:
+        print(f"  → {bad_coords} jobs skipped — invalid coordinate values")
     if not miles_map:
+        print("  → 0 driver-days produced — check driver resolution above")
         return 0
 
     rows = [
         {
             "driver_id":   driver_id,
-            "driver_name": driver_names.get(driver_id),
+            "driver_name": None,
             "log_date":    date_str,
             "miles":       round(total, 2),
             "source":      "towbook_estimate",
@@ -552,10 +565,8 @@ def backfill_mileage_from_jobs(
         for (driver_id, date_str), total in miles_map.items()
     ]
 
-    linkable = [r for r in rows if r["driver_id"] is not None]
-    if linkable:
-        sb.table("mileage_logs").upsert(linkable, on_conflict="driver_id,log_date").execute()
-    return len(linkable)
+    sb.table("mileage_logs").upsert(rows, on_conflict="driver_id,log_date").execute()
+    return len(rows)
 
 
 def _month_ranges(start: date, end: date):
@@ -725,6 +736,37 @@ def backfill_dvirs():
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+def patch_unlinked_event_drivers(by_name: dict[str, int]) -> int:
+    """
+    Fill driver_id on events that were stored with driver_id=NULL but whose
+    driver_name now resolves to a known driver. Safe to re-run — only touches
+    rows that still have a null driver_id.
+    """
+    resp = (
+        sb.table("safety_events")
+          .select("id, driver_name")
+          .is_("driver_id", "null")
+          .not_.is_("driver_name", "null")
+          .execute()
+    )
+    events = resp.data or []
+    if not events:
+        return 0
+
+    by_driver: dict[int, list[str]] = {}
+    for ev in events:
+        name = (ev.get("driver_name") or "").strip().lower()
+        internal_id = by_name.get(name) if name else None
+        if internal_id:
+            by_driver.setdefault(internal_id, []).append(ev["id"])
+
+    patched = 0
+    for driver_id, event_ids in by_driver.items():
+        sb.table("safety_events").update({"driver_id": driver_id}).in_("id", event_ids).execute()
+        patched += len(event_ids)
+    return patched
+
+
 def main():
     print(f"\nSamsara backfill: {BACKFILL_START} → {BACKFILL_END}")
     print(f"  ({(BACKFILL_END - BACKFILL_START).days + 1} days)")
@@ -746,6 +788,11 @@ def main():
 
     # DVIRs (requires mileage to be populated first to know driving days)
     backfill_dvirs()
+
+    # Retroactively link driver_id on events stored before drivers were linked
+    patched = patch_unlinked_event_drivers(by_name)
+    if patched:
+        print(f"\nRetroactively linked driver_id on {patched} previously unmatched events")
 
     print(f"\nBackfill complete.")
     print(f"Next step: run the 'Compute Safety Scores' workflow with")
