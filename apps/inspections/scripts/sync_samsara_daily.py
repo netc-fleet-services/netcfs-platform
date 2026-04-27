@@ -179,8 +179,11 @@ def mileage_from_jobs(target_date: date, by_name: dict[str, int], skip_pairs: se
         return 0
 
     miles_map: dict[int, float] = {}
+    valid_driver_ids = set(by_name.values())
     for job in jobs:
         driver_id = job.get("driver_id")
+        if driver_id and int(driver_id) not in valid_driver_ids:
+            driver_id = None  # stale FK — driver removed from drivers table
         if not driver_id:
             tb_name = (job.get("tb_driver") or "").strip().lower()
             driver_id = by_name.get(tb_name) if tb_name else None
