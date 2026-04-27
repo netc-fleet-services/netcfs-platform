@@ -137,17 +137,19 @@ def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float
 # Road-distance factor: actual road miles ≈ straight-line × 1.25 for service/tow routes
 ROAD_FACTOR = 1.25
 
-def load_truck_maps() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+def load_truck_maps() -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
     """
     Returns:
-      by_unit_raw — {unit_number.strip().lower(): truck_uuid}  (raw string match)
-      by_unit_num — {leading_number(unit_number): truck_uuid}  (number-only fallback)
-      by_vin      — {vin_upper: truck_uuid}
+      by_unit_raw   — {unit_number.strip().lower(): truck_uuid}
+      by_unit_num   — {leading_number(unit_number): truck_uuid}
+      by_vin        — {vin_upper: truck_uuid}
+      by_id_towbook — {truck_uuid: towbook_name}  (only trucks with towbook_name set)
     """
-    resp = sb.table("trucks").select("id, unit_number, vin").execute()
-    by_unit_raw: dict[str, str] = {}
-    by_unit_num: dict[str, str] = {}
-    by_vin:      dict[str, str] = {}
+    resp = sb.table("trucks").select("id, unit_number, vin, towbook_name").execute()
+    by_unit_raw:   dict[str, str] = {}
+    by_unit_num:   dict[str, str] = {}
+    by_vin:        dict[str, str] = {}
+    by_id_towbook: dict[str, str] = {}
     for t in (resp.data or []):
         unit = (t.get("unit_number") or "").strip()
         if unit:
@@ -158,7 +160,10 @@ def load_truck_maps() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
         vin = (t.get("vin") or "").strip().upper()
         if len(vin) >= 10:
             by_vin[vin] = t["id"]
-    return by_unit_raw, by_unit_num, by_vin
+        tb = (t.get("towbook_name") or "").strip()
+        if tb:
+            by_id_towbook[t["id"]] = tb
+    return by_unit_raw, by_unit_num, by_vin, by_id_towbook
 
 def extract_vin_from_vehicle(v: dict) -> str:
     ext = v.get("externalIds") or {}
@@ -249,50 +254,82 @@ def _driver_id_from_job(job: dict, by_name: dict[str, int]) -> int | None:
     tb_name = (job.get("tb_driver") or "").strip().lower()
     return by_name.get(tb_name) if tb_name else None
 
+def _unique_driver(jobs: list[dict], by_name: dict[str, int]) -> int | None:
+    """Return driver_id only if all jobs resolve to exactly one distinct driver."""
+    ids = {_driver_id_from_job(j, by_name) for j in jobs}
+    ids.discard(None)
+    return ids.pop() if len(ids) == 1 else None
+
+def _desc_keywords(asset_name: str) -> list[str]:
+    """
+    Extract significant words from a Samsara asset name for keyword matching.
+    Strips the leading unit-number prefix (#1023, T85, #A-R21) then returns
+    words of 5+ chars sorted longest-first (longer = more distinctive).
+    Examples:
+      '#1524 Kenworth Rotator'       → ['Kenworth', 'Rotator']
+      '#3921 KW Quickswap'           → ['Quickswap']
+      '#2425 Peterbilt Sleeper Tractor' → ['Peterbilt', 'Sleeper', 'Tractor']
+    """
+    desc = re.sub(r'^[#\w-]*\d+\w*\s+', '', asset_name).strip()
+    words = [w for w in re.split(r'\W+', desc) if len(w) >= 5]
+    return sorted(words, key=len, reverse=True)
+
 def resolve_driver_from_job(
-    truck_uuid:  str | None,
-    sam_unit:    str,
-    event_date:  date,
-    by_name:     dict[str, int],
+    truck_uuid:    str | None,
+    sam_unit:      str,
+    event_date:    date,
+    by_name:       dict[str, int],
+    by_id_towbook: dict[str, str],
 ) -> int | None:
     """
-    Look up the driver for a given truck + date from the jobs table.
-    Strategy 1: match by truck_id FK (fast, exact).
-    Strategy 2: match by truck_and_equipment ILIKE the unit leading number
-                (handles jobs where truck_id is not populated).
+    Match a Samsara asset to a TowBook driver for a given date.
+
+    Samsara uses 4-digit fleet unit numbers (#1023) while TowBook uses different
+    identifiers (#41, T85). Numeric matching rarely works across systems, so the
+    primary path is keyword matching on the truck description.
+
+    Strategy 0 — towbook_name: if the trucks table has an explicit TowBook name
+                 for the matched truck UUID, use it directly as an ILIKE pattern.
+                 Most reliable when present (~1/3–1/2 of trucks have this set).
+    Strategy 1 — numeric ILIKE: useful if the same number happens to appear in
+                 truck_and_equipment (rare, but cheap to try).
+    Strategy 2 — keyword ILIKE: extracts significant words from the Samsara asset
+                 description (Quickswap, Rotator, Promaster, Kenworth, etc.) and
+                 searches truck_and_equipment. Only accepted if all matching jobs
+                 on that date resolve to a single unique driver (prevents false
+                 matches when multiple similar trucks are active simultaneously).
     """
     day_str = event_date.isoformat()
 
-    # Strategy 1 — truck_id FK
+    def _query(ilike_val: str, allow_null: bool = True) -> list[dict]:
+        q = (sb.table("jobs")
+               .select("driver_id, tb_driver")
+               .ilike("truck_and_equipment", ilike_val)
+               .eq("day", day_str))
+        if not allow_null:
+            q = q.not_.is_("truck_and_equipment", "null")
+        return q.execute().data or []
+
+    # Strategy 0: explicit towbook_name (most reliable when present)
     if truck_uuid:
-        resp = (
-            sb.table("jobs")
-              .select("driver_id, tb_driver")
-              .eq("truck_id", truck_uuid)
-              .eq("day", day_str)
-              .limit(1)
-              .execute()
-        )
-        jobs = resp.data or []
-        if jobs:
-            result = _driver_id_from_job(jobs[0], by_name)
+        towbook_name = by_id_towbook.get(truck_uuid, "")
+        if towbook_name:
+            result = _unique_driver(_query(f"%{towbook_name}%"), by_name)
             if result:
                 return result
 
-    # Strategy 2 — truck_and_equipment text match
+    # Strategy 1: numeric match
     num = leading_number(sam_unit)
     if num:
-        resp = (
-            sb.table("jobs")
-              .select("driver_id, tb_driver")
-              .ilike("truck_and_equipment", f"%{num}%")
-              .eq("day", day_str)
-              .limit(1)
-              .execute()
-        )
-        jobs = resp.data or []
-        if jobs:
-            return _driver_id_from_job(jobs[0], by_name)
+        result = _unique_driver(_query(f"%{num}%"), by_name)
+        if result:
+            return result
+
+    # Strategy 2: keyword match — try up to 3 longest/most distinctive words
+    for word in _desc_keywords(sam_unit)[:3]:
+        result = _unique_driver(_query(f"%{word}%", allow_null=False), by_name)
+        if result:
+            return result
 
     return None
 
@@ -325,7 +362,7 @@ def _get_event_type(ev: dict) -> str:
             return label[0].lower() + label[1:]
     return (ev.get("type") or ev.get("behaviorType") or ev.get("eventType") or "unknown")
 
-def _parse_event_row(ev, by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_vehicles):
+def _parse_event_row(ev, by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_vehicles, by_id_towbook):
     """Extract a DB row dict from a single /safety-events/stream response object.
     Returns (row_dict | None, resolved: bool | None, asset_name: str)
       row_dict=None   → event missing occurred_at; skip it
@@ -354,7 +391,7 @@ def _parse_event_row(ev, by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, s
     elif sam_veh_id or sam_unit:
         truck_uuid = resolve_truck_id(sam_veh_id, sam_unit, sam_vehicles, by_unit_raw, by_unit_num, by_vin)
         event_date = datetime.fromisoformat(occurred_at.replace("Z", "+00:00")).astimezone(EASTERN).date()
-        internal_id = resolve_driver_from_job(truck_uuid, sam_unit, event_date, by_name)
+        internal_id = resolve_driver_from_job(truck_uuid, sam_unit, event_date, by_name, by_id_towbook)
         resolved = internal_id is not None
         if not internal_id and not truck_uuid:
             resolved = False
@@ -377,7 +414,7 @@ def _parse_event_row(ev, by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, s
     return row, resolved, sam_unit
 
 
-def backfill_events(by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_vehicles):
+def backfill_events(by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_vehicles, by_id_towbook):
     print(f"\n── Safety events backfill {BACKFILL_START} → {BACKFILL_END} ──")
 
     start_ts = datetime(BACKFILL_START.year, BACKFILL_START.month, BACKFILL_START.day, 0, 0, 0, tzinfo=EASTERN)
@@ -409,7 +446,7 @@ def backfill_events(by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_ve
     unmatched_assets: set[str] = set()
 
     for ev in events:
-        row, resolved, asset_name = _parse_event_row(ev, by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_vehicles)
+        row, resolved, asset_name = _parse_event_row(ev, by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_vehicles, by_id_towbook)
         if row is None:
             skipped_no_time += 1
             continue
@@ -537,35 +574,25 @@ def _month_ranges(start: date, end: date):
 
 
 def backfill_mileage(
-    driver_map:   dict[str, int],
-    sam_vehicles: dict[str, dict],
+    driver_map:     dict[str, int],
+    sam_vehicles:   dict[str, dict],
     by_name_global: dict[str, int],
-    by_unit_raw:  dict[str, str],
-    by_unit_num:  dict[str, str],
-    by_vin:       dict[str, str],
 ):
     """
     Query trips per vehicle per month (v1 API has ~30-day window limit).
-
-    Driver resolution per trip:
-      1. Samsara driver assignment (interstate drivers using Samsara Driver app).
-      2. Vehicle + trip date → trucks table → jobs table → driver
-         (non-interstate drivers; same chain used for safety events).
-      3. TowBook haversine fallback for any driver-days still missing.
+    Interstate drivers are matched via their Samsara driver ID (GPS-accurate).
+    All other drivers get mileage from TowBook haversine job estimates.
     """
     print(f"\n── Mileage backfill {BACKFILL_START} → {BACKFILL_END} ──")
 
     ranges = list(_month_ranges(BACKFILL_START, BACKFILL_END))
 
-    # {(internal_driver_id, date_str): miles}
-    miles_map:    dict[tuple[int, str], float] = {}
-    failed = 0
-    samsara_matched   = 0
-    job_matched       = 0
-    unmatched_veh     = 0
+    miles_map: dict[tuple[int, str], float] = {}
+    failed  = 0
+    matched = 0
 
     print(f"  Querying trips for {len(sam_vehicles)} vehicles × {len(ranges)} month(s) …")
-    for veh_id, veh_info in sam_vehicles.items():
+    for veh_id in sam_vehicles:
         for start_ms, end_ms in ranges:
             try:
                 trips = samsara_get_v1_trips_for_vehicle(veh_id, start_ms, end_ms)
@@ -587,37 +614,17 @@ def backfill_mileage(
                 if miles <= 0:
                     continue
 
-                # Strategy 1: Samsara driver assignment (interstate)
                 drv_info    = trip.get("driver") or {}
-                sam_drv_id  = drv_info.get("id", "")
-                internal_id: int | None = driver_map.get(sam_drv_id) if sam_drv_id else None
-
-                if internal_id:
-                    samsara_matched += 1
-                else:
-                    # Strategy 2: vehicle → truck → jobs → driver
-                    truck_uuid  = resolve_truck_id(
-                        veh_id, veh_info.get("raw_name", ""),
-                        sam_vehicles, by_unit_raw, by_unit_num, by_vin,
-                    )
-                    internal_id = resolve_driver_from_job(
-                        truck_uuid, veh_info.get("raw_name", ""), trip_date, by_name_global,
-                    )
-                    if internal_id:
-                        job_matched += 1
-                    else:
-                        unmatched_veh += 1
-
+                internal_id = driver_map.get(drv_info.get("id", ""))
                 if not internal_id:
                     continue
-
+                matched += 1
                 key = (internal_id, day_str)
                 miles_map[key] = miles_map.get(key, 0.0) + miles
 
     if failed:
         print(f"  WARNING: {failed} vehicle-month fetches failed")
-    print(f"  Trip attribution: {samsara_matched} via Samsara driver, "
-          f"{job_matched} via jobs lookup, {unmatched_veh} unmatched")
+    print(f"  {matched} trips matched to {len(miles_map)} interstate driver-days")
 
     samsara_pairs: set[tuple[int, str]] = set()
     if not miles_map:
@@ -723,18 +730,19 @@ def main():
     print(f"  ({(BACKFILL_END - BACKFILL_START).days + 1} days)")
 
     # Load shared reference data once
-    by_sam_id, by_name           = load_driver_maps()
-    by_unit_raw, by_unit_num, by_vin = load_truck_maps()
-    sam_vehicles                 = load_samsara_vehicle_info()
+    by_sam_id, by_name                         = load_driver_maps()
+    by_unit_raw, by_unit_num, by_vin, by_id_towbook = load_truck_maps()
+    sam_vehicles                               = load_samsara_vehicle_info()
 
     print(f"\nReference data loaded:")
     print(f"  {len(by_sam_id)} drivers with Samsara ID, {len(by_name)} drivers by name")
     print(f"  {len(by_unit_raw)} trucks by unit (raw), {len(by_unit_num)} by leading number, {len(by_vin)} by VIN")
+    print(f"  {len(by_id_towbook)} trucks with explicit towbook_name")
     print(f"  {len(sam_vehicles)} Samsara vehicles")
 
-    backfill_events(by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_vehicles)
+    backfill_events(by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_vehicles, by_id_towbook)
 
-    backfill_mileage(by_sam_id, sam_vehicles, by_name, by_unit_raw, by_unit_num, by_vin)
+    backfill_mileage(by_sam_id, sam_vehicles, by_name)
 
     # DVIRs (requires mileage to be populated first to know driving days)
     backfill_dvirs()
