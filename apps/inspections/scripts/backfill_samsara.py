@@ -206,7 +206,7 @@ def load_interstate_drivers() -> list[dict]:
     resp = (
         sb.table("drivers")
           .select("id, name, samsara_driver_id")
-          .eq("yard", "interstate")
+          .ilike("yard", "interstate")
           .not_.is_("samsara_driver_id", "null")
           .execute()
     )
@@ -526,9 +526,12 @@ def backfill_mileage_from_jobs(
     miles_map:    dict[tuple[int, str], float] = {}
     no_driver = 0
     bad_coords = 0
+    valid_driver_ids = set(by_name.values())
 
     for job in all_jobs:
         driver_id = job.get("driver_id")
+        if driver_id and int(driver_id) not in valid_driver_ids:
+            driver_id = None  # stale FK — driver removed from drivers table
         if not driver_id:
             tb_name = (job.get("tb_driver") or "").strip().lower()
             driver_id = by_name.get(tb_name) if tb_name else None
