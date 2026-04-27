@@ -44,6 +44,14 @@ def to_ms(dt: datetime) -> int:
     """Unix milliseconds — required by Samsara v1 endpoints (e.g. /v1/fleet/trips)."""
     return int(dt.astimezone(timezone.utc).timestamp() * 1000)
 
+def normalize_name(name: str) -> str:
+    """Normalize a driver name for cross-system matching.
+    Strips parenthetical nicknames ('ALAN (AJ) MISISCHIA' → 'alan misischia'),
+    collapses whitespace, and lowercases.
+    """
+    name = re.sub(r'\s*\([^)]*\)', '', name)
+    return re.sub(r'\s+', ' ', name).strip().lower()
+
 # ── Severity map (mirrors sync_samsara_events.py) ─────────────────────────────
 
 SEVERITY_MAP: dict[str, int] = {
@@ -123,6 +131,7 @@ def load_driver_maps() -> tuple[dict[str, int], dict[str, int]]:
             by_sam_id[r["samsara_driver_id"]] = r["id"]
         if r.get("name"):
             by_name[r["name"].strip().lower()] = r["id"]
+            by_name.setdefault(normalize_name(r["name"]), r["id"])
     return by_sam_id, by_name
 
 def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -389,9 +398,9 @@ def _parse_event_row(ev, by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, s
     if sam_drv_id:
         internal_id = by_sam_id.get(sam_drv_id)
         if not internal_id:
-            # samsara_driver_id not yet linked — try matching by name
-            sam_name = (driver_info.get("name") or "").strip().lower()
-            internal_id = by_name.get(sam_name) if sam_name else None
+            # samsara_driver_id not yet linked — try exact then normalized name
+            raw = (driver_info.get("name") or "").strip()
+            internal_id = by_name.get(raw.lower()) or (by_name.get(normalize_name(raw)) if raw else None)
     elif sam_veh_id or sam_unit:
         truck_uuid = resolve_truck_id(sam_veh_id, sam_unit, sam_vehicles, by_unit_raw, by_unit_num, by_vin)
         event_date = datetime.fromisoformat(occurred_at.replace("Z", "+00:00")).astimezone(EASTERN).date()
@@ -755,8 +764,8 @@ def patch_unlinked_event_drivers(by_name: dict[str, int]) -> int:
 
     by_driver: dict[int, list[str]] = {}
     for ev in events:
-        name = (ev.get("driver_name") or "").strip().lower()
-        internal_id = by_name.get(name) if name else None
+        raw = (ev.get("driver_name") or "").strip()
+        internal_id = by_name.get(raw.lower()) or (by_name.get(normalize_name(raw)) if raw else None)
         if internal_id:
             by_driver.setdefault(internal_id, []).append(ev["id"])
 
