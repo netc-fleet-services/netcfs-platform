@@ -180,14 +180,19 @@ def mileage_from_jobs(target_date: date, by_name: dict[str, int], skip_pairs: se
 
     miles_map: dict[int, float] = {}
     valid_driver_ids = set(by_name.values())
+    unmatched_tb: dict[str, int] = {}
     for job in jobs:
         driver_id = job.get("driver_id")
         if driver_id and int(driver_id) not in valid_driver_ids:
             driver_id = None  # stale FK — driver removed from drivers table
         if not driver_id:
-            tb_name = (job.get("tb_driver") or "").strip().lower()
-            driver_id = by_name.get(tb_name) if tb_name else None
+            raw_tb = (job.get("tb_driver") or "").strip()
+            if raw_tb:
+                driver_id = by_name.get(raw_tb.lower()) or by_name.get(normalize_name(raw_tb))
         if not driver_id:
+            raw_tb = (job.get("tb_driver") or "").strip()
+            if raw_tb:
+                unmatched_tb[raw_tb] = unmatched_tb.get(raw_tb, 0) + 1
             continue
         key = (int(driver_id), day_str)
         if key in skip_pairs:
@@ -200,6 +205,11 @@ def mileage_from_jobs(target_date: date, by_name: dict[str, int], skip_pairs: se
         except (TypeError, ValueError):
             continue
         miles_map[int(driver_id)] = miles_map.get(int(driver_id), 0.0) + dist
+
+    if unmatched_tb:
+        print(f"  → {sum(unmatched_tb.values())} jobs skipped — unmatched tb_driver names ({len(unmatched_tb)} unique):")
+        for name, cnt in sorted(unmatched_tb.items(), key=lambda x: -x[1])[:10]:
+            print(f"      {name!r} ({cnt} jobs)")
 
     if not miles_map:
         return 0
