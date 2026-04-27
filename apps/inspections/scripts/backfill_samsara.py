@@ -536,22 +536,36 @@ def _month_ranges(start: date, end: date):
         current = next_month
 
 
-def backfill_mileage(driver_map: dict[str, int], sam_vehicles: dict[str, dict], by_name_global: dict[str, int]):
+def backfill_mileage(
+    driver_map:   dict[str, int],
+    sam_vehicles: dict[str, dict],
+    by_name_global: dict[str, int],
+    by_unit_raw:  dict[str, str],
+    by_unit_num:  dict[str, str],
+    by_vin:       dict[str, str],
+):
     """
     Query trips per vehicle per month (v1 API has ~30-day window limit).
-    Aggregate by (samsara_driver_id, Eastern date) and upsert into mileage_logs.
+
+    Driver resolution per trip:
+      1. Samsara driver assignment (interstate drivers using Samsara Driver app).
+      2. Vehicle + trip date → trucks table → jobs table → driver
+         (non-interstate drivers; same chain used for safety events).
+      3. TowBook haversine fallback for any driver-days still missing.
     """
     print(f"\n── Mileage backfill {BACKFILL_START} → {BACKFILL_END} ──")
 
     ranges = list(_month_ranges(BACKFILL_START, BACKFILL_END))
 
-    # {(sam_driver_id, date_str): miles}
-    miles_map:    dict[tuple[str, str], float] = {}
-    driver_names: dict[str, str] = {}
+    # {(internal_driver_id, date_str): miles}
+    miles_map:    dict[tuple[int, str], float] = {}
     failed = 0
+    samsara_matched   = 0
+    job_matched       = 0
+    unmatched_veh     = 0
 
     print(f"  Querying trips for {len(sam_vehicles)} vehicles × {len(ranges)} month(s) …")
-    for veh_id in sam_vehicles:
+    for veh_id, veh_info in sam_vehicles.items():
         for start_ms, end_ms in ranges:
             try:
                 trips = samsara_get_v1_trips_for_vehicle(veh_id, start_ms, end_ms)
@@ -560,55 +574,70 @@ def backfill_mileage(driver_map: dict[str, int], sam_vehicles: dict[str, dict], 
                 continue
 
             for trip in trips:
-                drv_info = trip.get("driver") or {}
-                sam_id   = drv_info.get("id", "")
-                if not sam_id:
-                    continue
                 trip_ms = trip.get("startMs") or 0
                 if not trip_ms:
                     continue
-                trip_date = datetime.fromtimestamp(trip_ms / 1000, tz=EASTERN).date().isoformat()
+                trip_date = datetime.fromtimestamp(trip_ms / 1000, tz=EASTERN).date()
+                day_str   = trip_date.isoformat()
 
                 if trip.get("distanceMiles") is not None:
                     miles = float(trip["distanceMiles"])
                 else:
                     miles = float(trip.get("distanceMeters") or 0) / 1609.344
+                if miles <= 0:
+                    continue
 
-                key = (sam_id, trip_date)
-                miles_map[key]   = miles_map.get(key, 0.0) + miles
-                driver_names.setdefault(sam_id, drv_info.get("name", ""))
+                # Strategy 1: Samsara driver assignment (interstate)
+                drv_info    = trip.get("driver") or {}
+                sam_drv_id  = drv_info.get("id", "")
+                internal_id: int | None = driver_map.get(sam_drv_id) if sam_drv_id else None
+
+                if internal_id:
+                    samsara_matched += 1
+                else:
+                    # Strategy 2: vehicle → truck → jobs → driver
+                    truck_uuid  = resolve_truck_id(
+                        veh_id, veh_info.get("raw_name", ""),
+                        sam_vehicles, by_unit_raw, by_unit_num, by_vin,
+                    )
+                    internal_id = resolve_driver_from_job(
+                        truck_uuid, veh_info.get("raw_name", ""), trip_date, by_name_global,
+                    )
+                    if internal_id:
+                        job_matched += 1
+                    else:
+                        unmatched_veh += 1
+
+                if not internal_id:
+                    continue
+
+                key = (internal_id, day_str)
+                miles_map[key] = miles_map.get(key, 0.0) + miles
 
     if failed:
-        print(f"  WARNING: {failed} vehicles failed to fetch trips")
-
-    if not miles_map:
-        print("  No trip data found — skipping mileage upsert")
-        return
-
-    rows = []
-    for (sam_id, date_str), total_miles in miles_map.items():
-        db_driver = driver_map.get(sam_id)
-        rows.append({
-            "driver_id":   db_driver,
-            "driver_name": driver_names.get(sam_id),
-            "log_date":    date_str,
-            "miles":       round(total_miles, 2),
-            "source":      "samsara",
-        })
-
-    linkable = [r for r in rows if r["driver_id"] is not None]
-    orphaned  = [r for r in rows if r["driver_id"] is None]
+        print(f"  WARNING: {failed} vehicle-month fetches failed")
+    print(f"  Trip attribution: {samsara_matched} via Samsara driver, "
+          f"{job_matched} via jobs lookup, {unmatched_veh} unmatched")
 
     samsara_pairs: set[tuple[int, str]] = set()
-    if linkable:
-        sb.table("mileage_logs").upsert(linkable, on_conflict="driver_id,log_date").execute()
-        print(f"  Upserted mileage for {len(linkable)} driver-days (Samsara)")
-        samsara_pairs = {(r["driver_id"], r["log_date"]) for r in linkable}
-    if orphaned:
-        print(f"  Skipped {len(orphaned)} driver-days not linked in drivers table: "
-              f"{sorted({r['driver_name'] for r in orphaned})[:5]}")
+    if not miles_map:
+        print("  No Samsara trip data resolved to drivers — going straight to TowBook fallback")
+    else:
+        rows = [
+            {
+                "driver_id":   driver_id,
+                "driver_name": None,
+                "log_date":    date_str,
+                "miles":       round(total_miles, 2),
+                "source":      "samsara",
+            }
+            for (driver_id, date_str), total_miles in miles_map.items()
+        ]
+        sb.table("mileage_logs").upsert(rows, on_conflict="driver_id,log_date").execute()
+        print(f"  Upserted mileage for {len(rows)} driver-days (Samsara GPS)")
+        samsara_pairs = {(r["driver_id"], r["log_date"]) for r in rows}
 
-    # TowBook fallback — fills any driver-days Samsara missed (including non-interstate)
+    # TowBook fallback — haversine estimate for any driver-days Samsara missed
     print(f"  Running TowBook jobs fallback …")
     tb_count = backfill_mileage_from_jobs(BACKFILL_START, BACKFILL_END, by_name_global, samsara_pairs)
     print(f"  TowBook estimate upserted {tb_count} additional driver-days")
@@ -705,8 +734,7 @@ def main():
 
     backfill_events(by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, sam_vehicles)
 
-    # Mileage (day-by-day, Interstate only since that's what Samsara trips track)
-    backfill_mileage(by_sam_id, sam_vehicles, by_name)
+    backfill_mileage(by_sam_id, sam_vehicles, by_name, by_unit_raw, by_unit_num, by_vin)
 
     # DVIRs (requires mileage to be populated first to know driving days)
     backfill_dvirs()
