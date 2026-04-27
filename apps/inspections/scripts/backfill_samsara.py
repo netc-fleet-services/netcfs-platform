@@ -235,7 +235,10 @@ def load_driver_vehicle_assignments(
         print(f"  WARNING: driver-vehicle assignments API failed ({e})")
         return {}
 
-    result: dict[str, list[tuple[str, int, int]]] = {}
+    # Group raw assignments by (driver_id, vehicle_id), then merge into a single
+    # time window per pair.  Samsara can return one record per trip — without this,
+    # we'd make one v1/fleet/trips API call per trip record rather than one per vehicle.
+    per_pair: dict[tuple[str, str], list[tuple[int, int]]] = {}
     for a in raw:
         drv_id = (a.get("driver") or {}).get("id", "")
         veh_id = (a.get("vehicle") or {}).get("id", "")
@@ -249,7 +252,13 @@ def load_driver_vehicle_assignments(
         a_end   = min(a_end,   end_dt)
         if a_start >= a_end:
             continue
-        result.setdefault(drv_id, []).append((veh_id, to_ms(a_start), to_ms(a_end)))
+        per_pair.setdefault((drv_id, veh_id), []).append((to_ms(a_start), to_ms(a_end)))
+
+    result: dict[str, list[tuple[str, int, int]]] = {}
+    for (drv_id, veh_id), windows in per_pair.items():
+        merged_start = min(w[0] for w in windows)
+        merged_end   = max(w[1] for w in windows)
+        result.setdefault(drv_id, []).append((veh_id, merged_start, merged_end))
     return result
 
 def _dt_month_ranges(start_dt: datetime, end_dt: datetime):
@@ -669,10 +678,15 @@ def backfill_mileage(by_name_global: dict[str, int]):
 
         print(f"  Fetching vehicle assignments for {len(sam_ids)} interstate drivers …")
         assignments = load_driver_vehicle_assignments(sam_ids, start_dt, end_dt)
-        print(f"  Assignments found for {len(assignments)} of {len(sam_ids)} drivers")
+        total_assignments = sum(len(v) for v in assignments.values())
+        print(f"  Assignments found for {len(assignments)} of {len(sam_ids)} drivers "
+              f"({total_assignments} total assignment records)")
 
-        for sam_id, drv_assignments in assignments.items():
+        for drv_idx, (sam_id, drv_assignments) in enumerate(assignments.items(), 1):
             internal_id = id_map[sam_id]
+            drv_trips = 0
+            print(f"  [{drv_idx}/{len(assignments)}] driver {sam_id}: "
+                  f"{len(drv_assignments)} assignment(s) …", flush=True)
             for veh_id, a_start_ms, a_end_ms in drv_assignments:
                 a_start_dt = datetime.fromtimestamp(a_start_ms / 1000, tz=EASTERN)
                 a_end_dt   = datetime.fromtimestamp(a_end_ms   / 1000, tz=EASTERN)
@@ -682,6 +696,7 @@ def backfill_mileage(by_name_global: dict[str, int]):
                     except Exception:
                         failed += 1
                         continue
+                    drv_trips += len(trips)
                     for trip in trips:
                         trip_ms = trip.get("startMs") or 0
                         if not trip_ms:
@@ -695,6 +710,7 @@ def backfill_mileage(by_name_global: dict[str, int]):
                         matched += 1
                         key = (internal_id, day_str)
                         miles_map[key] = miles_map.get(key, 0.0) + miles
+            print(f"    → {drv_trips} trips found", flush=True)
 
         if failed:
             print(f"  WARNING: {failed} trip fetches failed")

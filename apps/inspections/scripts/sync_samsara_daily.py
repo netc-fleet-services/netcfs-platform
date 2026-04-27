@@ -105,7 +105,7 @@ def load_driver_vehicle_assignments(
         print(f"  WARNING: driver-vehicle assignments API failed ({e})")
         return {}
 
-    result: dict[str, list[tuple[str, int, int]]] = {}
+    per_pair: dict[tuple[str, str], list[tuple[int, int]]] = {}
     for a in raw:
         drv_id = (a.get("driver") or {}).get("id", "")
         veh_id = (a.get("vehicle") or {}).get("id", "")
@@ -119,7 +119,13 @@ def load_driver_vehicle_assignments(
         a_end   = min(a_end,   end_dt)
         if a_start >= a_end:
             continue
-        result.setdefault(drv_id, []).append((veh_id, to_ms(a_start), to_ms(a_end)))
+        per_pair.setdefault((drv_id, veh_id), []).append((to_ms(a_start), to_ms(a_end)))
+
+    result: dict[str, list[tuple[str, int, int]]] = {}
+    for (drv_id, veh_id), windows in per_pair.items():
+        merged_start = min(w[0] for w in windows)
+        merged_end   = max(w[1] for w in windows)
+        result.setdefault(drv_id, []).append((veh_id, merged_start, merged_end))
     return result
 
 # ── 1. Driver sync ─────────────────────────────────────────────────────────────
