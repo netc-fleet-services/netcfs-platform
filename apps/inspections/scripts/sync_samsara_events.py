@@ -351,9 +351,9 @@ def sync_events():
                 internal_id = by_name.get(raw.lower()) or (by_name.get(normalize_name(raw)) if raw else None)
             if not internal_id:
                 unmatched_drivers.add(f"{driver_info.get('name', '?')} ({sam_drv_id})")
-        elif sam_veh_id or sam_unit:
-            # Non-interstate path: resolve via truck → job → driver
-            # truck_and_equipment fallback means we try even if truck_id FK is missing
+
+        # If driver path failed, fall through to vehicle→job resolution
+        if not internal_id and (sam_veh_id or sam_unit):
             truck_uuid = resolve_truck_id(sam_veh_id, sam_unit, sam_vehicles, by_unit_raw, by_unit_num, by_vin)
             event_date = datetime.fromisoformat(occurred_at.replace("Z", "+00:00")).astimezone(EASTERN).date()
             internal_id = resolve_driver_from_job(truck_uuid, sam_unit, event_date, by_name, by_id_towbook)
