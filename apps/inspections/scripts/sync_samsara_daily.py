@@ -30,11 +30,9 @@ BASE_URL = "https://api.samsara.com"
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def utc_fmt(dt: datetime) -> str:
-    """RFC3339 UTC string with Z suffix — required by Samsara v2 endpoints."""
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def to_ms(dt: datetime) -> int:
-    """Unix milliseconds — required by Samsara v1 endpoints (e.g. /v1/fleet/trips)."""
     return int(dt.astimezone(timezone.utc).timestamp() * 1000)
 
 def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -85,46 +83,26 @@ def samsara_get_v1_trips_for_vehicle(vehicle_id: str, start_ms: int, end_ms: int
     resp.raise_for_status()
     return resp.json().get("trips", [])
 
-# ── Vehicle list ───────────────────────────────────────────────────────────────
-
-def load_samsara_vehicle_info() -> dict[str, dict]:
-    try:
-        vehicles = samsara_get("/fleet/vehicles", {"limit": 512})
-    except Exception as e:
-        print(f"  WARNING: could not load Samsara vehicle list ({e})")
-        return {}
-    result: dict[str, dict] = {}
-    for v in vehicles:
-        ext = v.get("externalIds") or {}
-        vin = ""
-        if isinstance(ext, dict):
-            for key, val in ext.items():
-                if "vin" in key.lower() and val:
-                    vin = val.strip().upper()
-                    break
-        if not vin:
-            vin = (v.get("vin") or v.get("serial") or "").strip().upper()
-        result[v["id"]] = {"raw_name": (v.get("name") or "").strip(), "vin": vin}
-    return result
-
 def load_driver_vehicle_assignments(
     sam_driver_ids: set[str],
     start_dt:       datetime,
     end_dt:         datetime,
 ) -> dict[str, list[tuple[str, int, int]]]:
     """
-    Query Samsara for driver→vehicle assignments in [start_dt, end_dt].
     Returns {samsara_driver_id: [(vehicle_id, start_ms, end_ms), ...]}
-    Works even when drivers haven't authenticated via the Driver app.
+    Uses /fleet/driver-vehicle-assignments with filterBy=drivers.
+    Handles driver rotation — each assignment records which truck a driver used and when.
     """
     try:
-        raw = samsara_get("/fleet/drivers/assignments", {
+        raw = samsara_get("/fleet/driver-vehicle-assignments", {
+            "filterBy":  "drivers",
+            "driverIds": ",".join(sam_driver_ids),
             "startTime": utc_fmt(start_dt),
             "endTime":   utc_fmt(end_dt),
             "limit":     512,
         })
     except Exception as e:
-        print(f"  WARNING: driver assignments API failed ({e}) — Samsara GPS mileage skipped")
+        print(f"  WARNING: driver-vehicle assignments API failed ({e})")
         return {}
 
     result: dict[str, list[tuple[str, int, int]]] = {}
@@ -143,7 +121,6 @@ def load_driver_vehicle_assignments(
             continue
         result.setdefault(drv_id, []).append((veh_id, to_ms(a_start), to_ms(a_end)))
     return result
-
 
 # ── 1. Driver sync ─────────────────────────────────────────────────────────────
 
@@ -262,8 +239,8 @@ def mileage_from_jobs(target_date: date, by_name: dict[str, int], skip_pairs: se
 
 def sync_mileage(target_date: date, by_name: dict[str, int]):
     """
-    Pull GPS trips for target_date via driver→vehicle assignments (works without Driver app).
-    All other drivers get mileage estimated from TowBook job coordinates.
+    Pull GPS trips for linked drivers via driver-vehicle assignments (handles truck rotation).
+    TowBook haversine fills all remaining driver-days.
     """
     print(f"\n── Mileage sync for {target_date} ──")
 
@@ -272,7 +249,6 @@ def sync_mileage(target_date: date, by_name: dict[str, int]):
     day_end   = day_start + timedelta(days=1)
     day_str   = target_date.isoformat()
 
-    # Drivers linked to Samsara
     resp = sb.table("drivers") \
              .select("id, samsara_driver_id") \
              .not_.is_("samsara_driver_id", "null") \
@@ -285,8 +261,8 @@ def sync_mileage(target_date: date, by_name: dict[str, int]):
 
     if id_map:
         assignments = load_driver_vehicle_assignments(set(id_map.keys()), day_start, day_end)
-        print(f"  Driver assignments found for {len(assignments)} of {len(id_map)} linked drivers")
-
+        if assignments:
+            print(f"  Assignments found for {len(assignments)} of {len(id_map)} linked drivers")
         for sam_id, drv_assignments in assignments.items():
             internal_id = id_map[sam_id]
             for veh_id, a_start_ms, a_end_ms in drv_assignments:
@@ -295,10 +271,8 @@ def sync_mileage(target_date: date, by_name: dict[str, int]):
                 except Exception:
                     continue
                 for trip in trips:
-                    if trip.get("distanceMiles") is not None:
-                        miles = float(trip["distanceMiles"])
-                    else:
-                        miles = float(trip.get("distanceMeters") or 0) / 1609.344
+                    miles = (float(trip["distanceMiles"]) if trip.get("distanceMiles") is not None
+                             else float(trip.get("distanceMeters") or 0) / 1609.344)
                     if miles <= 0:
                         continue
                     matched += 1
@@ -306,17 +280,14 @@ def sync_mileage(target_date: date, by_name: dict[str, int]):
                     miles_map[key] = miles_map.get(key, 0.0) + miles
 
     samsara_pairs: set[tuple[int, str]] = set()
-    if not miles_map:
-        print("  No Samsara GPS trips found via driver assignments")
-    else:
-        print(f"  {matched} trips → {len(miles_map)} interstate driver-days")
+    if miles_map:
+        print(f"  {matched} trips → {len(miles_map)} driver-days from Samsara GPS")
         rows = [
             {"driver_id": did, "driver_name": None, "log_date": ds,
              "miles": round(m, 2), "source": "samsara"}
             for (did, ds), m in miles_map.items()
         ]
         sb.table("mileage_logs").upsert(rows, on_conflict="driver_id,log_date").execute()
-        print(f"  Upserted Samsara GPS mileage for {len(rows)} interstate driver-days")
         samsara_pairs = {(r["driver_id"], r["log_date"]) for r in rows}
 
     tb_count = mileage_from_jobs(target_date, by_name, samsara_pairs)
