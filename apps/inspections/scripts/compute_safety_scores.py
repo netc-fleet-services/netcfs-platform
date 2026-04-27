@@ -173,7 +173,10 @@ def assign_ranks(snapshots: list[dict]) -> list[dict]:
             by_group[s["rank_group"]].append(s)
 
     for group, members in by_group.items():
-        members.sort(key=lambda s: s["safety_score"], reverse=True)
+        members.sort(
+            key=lambda s: (s["safety_score"], -s["total_event_points"], s["miles_driven"]),
+            reverse=True,
+        )
         for i, s in enumerate(members, start=1):
             s["rank"] = i
 
@@ -293,7 +296,11 @@ def main():
         by_group[s["rank_group"]].append(s)
 
     for group in sorted(by_group):
-        members = sorted(by_group[group], key=lambda s: s["safety_score"], reverse=True)
+        members = sorted(
+            by_group[group],
+            key=lambda s: (s["safety_score"], -s["total_event_points"], s["miles_driven"]),
+            reverse=True,
+        )
         print(f"\n  [{group.upper()}]")
         for s in members[:5]:
             rank_str  = f"#{s['rank']}" if s["rank"] else "—"

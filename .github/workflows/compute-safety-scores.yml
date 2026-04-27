@@ -1,31 +1,36 @@
 # ═══════════════════════════════════════════════
-# Quarterly Safety Score Engine
+# Safety Score Engine
 #
-# Runs automatically on the 1st of Jan, Apr, Jul, Oct to score
-# the quarter that just ended. Also triggerable manually.
+# Runs on two schedules:
+#   Daily at 07:00 UTC (3 AM ET) — scores current quarter YTD so dashboards
+#   stay current as new events and mileage come in each day.
+#
+#   1st of Jan, Apr, Jul, Oct at 08:00 UTC — scores the quarter that just
+#   ended (PERIOD_START/END left blank so the script auto-detects).
 #
 # To score a specific period, use "Run workflow" and supply:
-#   PERIOD_START — e.g. 2026-01-01
-#   PERIOD_END   — e.g. 2026-03-31
+#   PERIOD_START — e.g. 2026-04-01
+#   PERIOD_END   — e.g. 2026-04-27
 #
-# Required repository secrets (Settings → Secrets → Actions):
+# Required repository secrets:
 #   SUPABASE_URL         — from Supabase Dashboard → Settings → API
-#   SUPABASE_SERVICE_KEY — service role key (bypasses RLS) — NOT the anon key
+#   SUPABASE_SERVICE_KEY — service role key (bypasses RLS)
 # ═══════════════════════════════════════════════
 
 name: Compute Safety Scores
 
 on:
   schedule:
-    - cron: '0 8 1 1,4,7,10 *'   # 08:00 UTC on the 1st of each quarter-start month
+    - cron: '0 7 * * *'           # daily at 07:00 UTC — current quarter YTD
+    - cron: '0 8 1 1,4,7,10 *'   # quarterly at 08:00 UTC — finalise last quarter
   workflow_dispatch:
     inputs:
       period_start:
-        description: 'Period start date (YYYY-MM-DD). Leave blank to auto-detect last quarter.'
+        description: 'Period start (YYYY-MM-DD). Leave blank to auto-detect.'
         required: false
         default: ''
       period_end:
-        description: 'Period end date (YYYY-MM-DD). Leave blank to auto-detect last quarter.'
+        description: 'Period end (YYYY-MM-DD). Leave blank to auto-detect.'
         required: false
         default: ''
 
@@ -48,10 +53,34 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r apps/inspections/requirements.txt
 
+      - name: Resolve scoring period
+        id: period
+        run: |
+          if [ -n "${{ github.event.inputs.period_start }}" ]; then
+            # Manual run with explicit dates — use them as-is
+            echo "start=${{ github.event.inputs.period_start }}" >> $GITHUB_OUTPUT
+            echo "end=${{ github.event.inputs.period_end }}"     >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.schedule }}" = "0 7 * * *" ]; then
+            # Daily run — current quarter start through today
+            M=$(date +%-m)
+            Y=$(date +%Y)
+            if   [ $M -le 3 ]; then QS="${Y}-01-01"
+            elif [ $M -le 6 ]; then QS="${Y}-04-01"
+            elif [ $M -le 9 ]; then QS="${Y}-07-01"
+            else                     QS="${Y}-10-01"
+            fi
+            echo "start=${QS}"              >> $GITHUB_OUTPUT
+            echo "end=$(date +%Y-%m-%d)"   >> $GITHUB_OUTPUT
+          else
+            # Quarterly run or manual with no dates — let script auto-detect last quarter
+            echo "start=" >> $GITHUB_OUTPUT
+            echo "end="   >> $GITHUB_OUTPUT
+          fi
+
       - name: Run scoring engine
         env:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          PERIOD_START:         ${{ github.event.inputs.period_start }}
-          PERIOD_END:           ${{ github.event.inputs.period_end }}
+          PERIOD_START:         ${{ steps.period.outputs.start }}
+          PERIOD_END:           ${{ steps.period.outputs.end }}
         run: python apps/inspections/scripts/compute_safety_scores.py
