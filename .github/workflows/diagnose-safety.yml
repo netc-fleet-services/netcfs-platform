@@ -1,0 +1,40 @@
+name: Diagnose Safety Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      period_start:
+        description: 'Start date (YYYY-MM-DD). Leave blank for 90 days ago.'
+        required: false
+        default: ''
+      period_end:
+        description: 'End date (YYYY-MM-DD). Leave blank for today.'
+        required: false
+        default: ''
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/inspections/requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r apps/inspections/requirements.txt
+
+      - name: Run diagnostic
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PERIOD_START:         ${{ github.event.inputs.period_start }}
+          PERIOD_END:           ${{ github.event.inputs.period_end }}
+        run: python apps/inspections/scripts/diagnose_safety.py

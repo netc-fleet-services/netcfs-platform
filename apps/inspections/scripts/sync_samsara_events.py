@@ -337,6 +337,10 @@ def sync_events():
             # Interstate path: Samsara assigned a driver to the vehicle
             internal_id = by_sam_id.get(sam_drv_id)
             if not internal_id:
+                # samsara_driver_id not yet linked — try matching by name
+                sam_name = (driver_info.get("name") or "").strip().lower()
+                internal_id = by_name.get(sam_name) if sam_name else None
+            if not internal_id:
                 unmatched_drivers.add(f"{driver_info.get('name', '?')} ({sam_drv_id})")
         elif sam_veh_id or sam_unit:
             # Non-interstate path: resolve via truck → job → driver
@@ -381,6 +385,41 @@ def sync_events():
         print(f"  WARNING — {len(unmatched_drivers)} Samsara drivers not linked to internal drivers table:")
         for d in sorted(unmatched_drivers):
             print(f"    {d}")
+
+    patched = patch_unlinked_event_drivers(by_name)
+    if patched:
+        print(f"  Retroactively linked driver_id on {patched} previously unmatched events")
+
+
+def patch_unlinked_event_drivers(by_name: dict[str, int]) -> int:
+    """
+    Fill driver_id on events that were stored with driver_id=NULL but whose
+    driver_name now resolves to a known driver. Runs after every sync so that
+    events ingested before a driver was linked get credited on re-sync.
+    """
+    resp = (
+        sb.table("safety_events")
+          .select("id, driver_name")
+          .is_("driver_id", "null")
+          .not_.is_("driver_name", "null")
+          .execute()
+    )
+    events = resp.data or []
+    if not events:
+        return 0
+
+    by_driver: dict[int, list[str]] = {}
+    for ev in events:
+        name = (ev.get("driver_name") or "").strip().lower()
+        internal_id = by_name.get(name) if name else None
+        if internal_id:
+            by_driver.setdefault(internal_id, []).append(ev["id"])
+
+    patched = 0
+    for driver_id, event_ids in by_driver.items():
+        sb.table("safety_events").update({"driver_id": driver_id}).in_("id", event_ids).execute()
+        patched += len(event_ids)
+    return patched
 
 
 if __name__ == "__main__":

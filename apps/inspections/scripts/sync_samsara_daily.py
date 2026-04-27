@@ -350,6 +350,39 @@ def sync_dvirs(target_date: date):
         print("  No Interstate drivers drove today — nothing to log")
 
 
+# ── Retroactive event patch ────────────────────────────────────────────────────
+
+def patch_unlinked_event_drivers(by_name: dict[str, int]) -> int:
+    """
+    Fill driver_id on events that were stored with driver_id=NULL but whose
+    driver_name now resolves to a known driver. Called after sync_drivers() so
+    newly linked Samsara accounts immediately credit their historical events.
+    """
+    resp = (
+        sb.table("safety_events")
+          .select("id, driver_name")
+          .is_("driver_id", "null")
+          .not_.is_("driver_name", "null")
+          .execute()
+    )
+    events = resp.data or []
+    if not events:
+        return 0
+
+    by_driver: dict[int, list[str]] = {}
+    for ev in events:
+        name = (ev.get("driver_name") or "").strip().lower()
+        internal_id = by_name.get(name) if name else None
+        if internal_id:
+            by_driver.setdefault(internal_id, []).append(ev["id"])
+
+    patched = 0
+    for driver_id, event_ids in by_driver.items():
+        sb.table("safety_events").update({"driver_id": driver_id}).in_("id", event_ids).execute()
+        patched += len(event_ids)
+    return patched
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -359,6 +392,10 @@ def main():
 
     db_resp = sb.table("drivers").select("id, name").execute()
     by_name = {r["name"].strip().lower(): r["id"] for r in (db_resp.data or []) if r.get("name")}
+
+    patched = patch_unlinked_event_drivers(by_name)
+    if patched:
+        print(f"\nRetroactively linked driver_id on {patched} previously unmatched events")
 
     sam_vehicles = load_samsara_vehicle_info()
 
