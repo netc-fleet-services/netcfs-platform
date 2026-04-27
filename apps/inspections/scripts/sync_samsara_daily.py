@@ -107,6 +107,43 @@ def load_samsara_vehicle_info() -> dict[str, dict]:
         result[v["id"]] = {"raw_name": (v.get("name") or "").strip(), "vin": vin}
     return result
 
+def load_driver_vehicle_assignments(
+    sam_driver_ids: set[str],
+    start_dt:       datetime,
+    end_dt:         datetime,
+) -> dict[str, list[tuple[str, int, int]]]:
+    """
+    Query Samsara for driver→vehicle assignments in [start_dt, end_dt].
+    Returns {samsara_driver_id: [(vehicle_id, start_ms, end_ms), ...]}
+    Works even when drivers haven't authenticated via the Driver app.
+    """
+    try:
+        raw = samsara_get("/fleet/drivers/assignments", {
+            "startTime": utc_fmt(start_dt),
+            "endTime":   utc_fmt(end_dt),
+            "limit":     512,
+        })
+    except Exception as e:
+        print(f"  WARNING: driver assignments API failed ({e}) — Samsara GPS mileage skipped")
+        return {}
+
+    result: dict[str, list[tuple[str, int, int]]] = {}
+    for a in raw:
+        drv_id = (a.get("driver") or {}).get("id", "")
+        veh_id = (a.get("vehicle") or {}).get("id", "")
+        if not drv_id or not veh_id or drv_id not in sam_driver_ids:
+            continue
+        start_raw = a.get("startTime")
+        end_raw   = a.get("endTime")
+        a_start = datetime.fromisoformat(start_raw.replace("Z", "+00:00")) if start_raw else start_dt
+        a_end   = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))   if end_raw   else end_dt
+        a_start = max(a_start, start_dt)
+        a_end   = min(a_end,   end_dt)
+        if a_start >= a_end:
+            continue
+        result.setdefault(drv_id, []).append((veh_id, to_ms(a_start), to_ms(a_end)))
+    return result
+
 
 # ── 1. Driver sync ─────────────────────────────────────────────────────────────
 
@@ -223,9 +260,9 @@ def mileage_from_jobs(target_date: date, by_name: dict[str, int], skip_pairs: se
     return len(rows)
 
 
-def sync_mileage(target_date: date, by_name: dict[str, int], sam_vehicles: dict[str, dict]):
+def sync_mileage(target_date: date, by_name: dict[str, int]):
     """
-    Pull GPS trips for target_date and record miles for interstate drivers.
+    Pull GPS trips for target_date via driver→vehicle assignments (works without Driver app).
     All other drivers get mileage estimated from TowBook job coordinates.
     """
     print(f"\n── Mileage sync for {target_date} ──")
@@ -233,51 +270,46 @@ def sync_mileage(target_date: date, by_name: dict[str, int], sam_vehicles: dict[
     day_start = datetime(target_date.year, target_date.month, target_date.day,
                          0, 0, 0, tzinfo=EASTERN)
     day_end   = day_start + timedelta(days=1)
-    start_ms  = to_ms(day_start)
-    end_ms    = to_ms(day_end)
+    day_str   = target_date.isoformat()
 
-    # Interstate drivers linked to Samsara
+    # Drivers linked to Samsara
     resp = sb.table("drivers") \
              .select("id, samsara_driver_id") \
              .not_.is_("samsara_driver_id", "null") \
              .execute()
-    driver_map = {r["samsara_driver_id"]: r["id"] for r in (resp.data or [])}
+    linked = resp.data or []
+    id_map = {r["samsara_driver_id"]: r["id"] for r in linked}
 
     miles_map: dict[tuple[int, str], float] = {}
-    day_str = target_date.isoformat()
-    failed = 0
     matched = 0
 
-    print(f"  Querying trips for {len(sam_vehicles)} vehicles …")
-    for veh_id in sam_vehicles:
-        try:
-            trips = samsara_get_v1_trips_for_vehicle(veh_id, start_ms, end_ms)
-        except Exception:
-            failed += 1
-            continue
-        for trip in trips:
-            if trip.get("distanceMiles") is not None:
-                miles = float(trip["distanceMiles"])
-            else:
-                miles = float(trip.get("distanceMeters") or 0) / 1609.344
-            if miles <= 0:
-                continue
-            drv_info    = trip.get("driver") or {}
-            internal_id = driver_map.get(drv_info.get("id", ""))
-            if not internal_id:
-                continue
-            matched += 1
-            key = (internal_id, day_str)
-            miles_map[key] = miles_map.get(key, 0.0) + miles
+    if id_map:
+        assignments = load_driver_vehicle_assignments(set(id_map.keys()), day_start, day_end)
+        print(f"  Driver assignments found for {len(assignments)} of {len(id_map)} linked drivers")
 
-    if failed:
-        print(f"  WARNING: {failed} vehicles failed to fetch trips")
+        for sam_id, drv_assignments in assignments.items():
+            internal_id = id_map[sam_id]
+            for veh_id, a_start_ms, a_end_ms in drv_assignments:
+                try:
+                    trips = samsara_get_v1_trips_for_vehicle(veh_id, a_start_ms, a_end_ms)
+                except Exception:
+                    continue
+                for trip in trips:
+                    if trip.get("distanceMiles") is not None:
+                        miles = float(trip["distanceMiles"])
+                    else:
+                        miles = float(trip.get("distanceMeters") or 0) / 1609.344
+                    if miles <= 0:
+                        continue
+                    matched += 1
+                    key = (internal_id, day_str)
+                    miles_map[key] = miles_map.get(key, 0.0) + miles
 
     samsara_pairs: set[tuple[int, str]] = set()
     if not miles_map:
-        print("  No Samsara trips matched to interstate drivers")
+        print("  No Samsara GPS trips found via driver assignments")
     else:
-        print(f"  {matched} trips matched to {len(miles_map)} interstate driver-days")
+        print(f"  {matched} trips → {len(miles_map)} interstate driver-days")
         rows = [
             {"driver_id": did, "driver_name": None, "log_date": ds,
              "miles": round(m, 2), "source": "samsara"}
@@ -426,9 +458,7 @@ def main():
     if patched:
         print(f"\nRetroactively linked driver_id on {patched} previously unmatched events")
 
-    sam_vehicles = load_samsara_vehicle_info()
-
-    sync_mileage(yesterday, by_name, sam_vehicles)
+    sync_mileage(yesterday, by_name)
     sync_dvirs(yesterday)
 
     print("\nDaily Samsara sync complete.")
