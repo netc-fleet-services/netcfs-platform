@@ -13,7 +13,7 @@ Required env vars:
   SUPABASE_SERVICE_KEY — Service role key (bypasses RLS)
 """
 
-import os, math
+import os, re, math
 from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo
 import requests
@@ -47,6 +47,14 @@ def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float
     return R * 2 * math.asin(math.sqrt(a))
 
 ROAD_FACTOR = 1.25
+
+def normalize_name(name: str) -> str:
+    """Normalize a driver name for cross-system matching.
+    Strips parenthetical nicknames ('ALAN (AJ) MISISCHIA' → 'alan misischia'),
+    collapses whitespace, and lowercases.
+    """
+    name = re.sub(r'\s*\([^)]*\)', '', name)
+    return re.sub(r'\s+', ' ', name).strip().lower()
 
 # ── API helpers ────────────────────────────────────────────────────────────────
 
@@ -112,9 +120,13 @@ def sync_drivers():
     samsara_drivers = samsara_get("/fleet/drivers", {"limit": 512})
     print(f"  {len(samsara_drivers)} drivers in Samsara")
 
-    # Load all internal drivers (name → id mapping, lowercased for fuzzy match)
+    # Load all internal drivers — indexed by exact lowercase AND normalized name
     db_resp = sb.table("drivers").select("id, name, samsara_driver_id").execute()
-    db_by_name = {r["name"].strip().lower(): r for r in (db_resp.data or [])}
+    db_by_name: dict[str, dict] = {}
+    for r in (db_resp.data or []):
+        if r.get("name"):
+            db_by_name[r["name"].strip().lower()] = r
+            db_by_name.setdefault(normalize_name(r["name"]), r)
     db_by_sam_id = {r["samsara_driver_id"]: r for r in (db_resp.data or []) if r.get("samsara_driver_id")}
 
     linked = 0
@@ -129,8 +141,8 @@ def sync_drivers():
             linked += 1
             continue
 
-        # Try name match to auto-link
-        match = db_by_name.get(sam_name.lower())
+        # Try exact then normalized name match to auto-link
+        match = db_by_name.get(sam_name.lower()) or db_by_name.get(normalize_name(sam_name))
         if match:
             sb.table("drivers").update({"samsara_driver_id": sam_id}).eq("id", match["id"]).execute()
             db_by_sam_id[sam_id] = match
@@ -371,8 +383,8 @@ def patch_unlinked_event_drivers(by_name: dict[str, int]) -> int:
 
     by_driver: dict[int, list[str]] = {}
     for ev in events:
-        name = (ev.get("driver_name") or "").strip().lower()
-        internal_id = by_name.get(name) if name else None
+        raw = (ev.get("driver_name") or "").strip()
+        internal_id = by_name.get(raw.lower()) or (by_name.get(normalize_name(raw)) if raw else None)
         if internal_id:
             by_driver.setdefault(internal_id, []).append(ev["id"])
 
@@ -391,7 +403,11 @@ def main():
     sync_drivers()
 
     db_resp = sb.table("drivers").select("id, name").execute()
-    by_name = {r["name"].strip().lower(): r["id"] for r in (db_resp.data or []) if r.get("name")}
+    by_name: dict[str, int] = {}
+    for r in (db_resp.data or []):
+        if r.get("name"):
+            by_name[r["name"].strip().lower()] = r["id"]
+            by_name.setdefault(normalize_name(r["name"]), r["id"])
 
     patched = patch_unlinked_event_drivers(by_name)
     if patched:
