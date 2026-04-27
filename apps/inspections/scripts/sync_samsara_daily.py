@@ -134,8 +134,7 @@ def mileage_from_jobs(target_date: date, by_name: dict[str, int], skip_pairs: se
     resp = (
         sb.table("jobs")
           .select("driver_id, tb_driver, pickup_lat, pickup_lon, drop_lat, drop_lon")
-          .gte("pickup_time", day_str + "T00:00:00")
-          .lte("pickup_time", day_str + "T23:59:59")
+          .eq("day", day_str)
           .not_.is_("pickup_lat", "null")
           .not_.is_("drop_lat",   "null")
           .execute()

@@ -234,15 +234,13 @@ def resolve_driver_from_job(
                 (handles jobs where truck_id is not populated).
     """
     day_str = event_date.isoformat()
-    time_filter = {"gte": day_str + "T00:00:00", "lte": day_str + "T23:59:59"}
 
     if truck_uuid:
         resp = (
             sb.table("jobs")
               .select("driver_id, tb_driver")
               .eq("truck_id", truck_uuid)
-              .gte("pickup_time", time_filter["gte"])
-              .lte("pickup_time", time_filter["lte"])
+              .eq("day", day_str)
               .limit(1)
               .execute()
         )
@@ -258,8 +256,7 @@ def resolve_driver_from_job(
             sb.table("jobs")
               .select("driver_id, tb_driver")
               .ilike("truck_and_equipment", f"%{num}%")
-              .gte("pickup_time", time_filter["gte"])
-              .lte("pickup_time", time_filter["lte"])
+              .eq("day", day_str)
               .limit(1)
               .execute()
         )

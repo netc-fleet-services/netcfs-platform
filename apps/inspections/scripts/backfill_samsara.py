@@ -262,7 +262,6 @@ def resolve_driver_from_job(
                 (handles jobs where truck_id is not populated).
     """
     day_str = event_date.isoformat()
-    time_filter = {"gte": day_str + "T00:00:00", "lte": day_str + "T23:59:59"}
 
     # Strategy 1 — truck_id FK
     if truck_uuid:
@@ -270,8 +269,7 @@ def resolve_driver_from_job(
             sb.table("jobs")
               .select("driver_id, tb_driver")
               .eq("truck_id", truck_uuid)
-              .gte("pickup_time", time_filter["gte"])
-              .lte("pickup_time", time_filter["lte"])
+              .eq("day", day_str)
               .limit(1)
               .execute()
         )
@@ -288,8 +286,7 @@ def resolve_driver_from_job(
             sb.table("jobs")
               .select("driver_id, tb_driver")
               .ilike("truck_and_equipment", f"%{num}%")
-              .gte("pickup_time", time_filter["gte"])
-              .lte("pickup_time", time_filter["lte"])
+              .eq("day", day_str)
               .limit(1)
               .execute()
         )
@@ -456,9 +453,9 @@ def backfill_mileage_from_jobs(
     while True:
         resp = (
             sb.table("jobs")
-              .select("driver_id, tb_driver, pickup_time, pickup_lat, pickup_lon, drop_lat, drop_lon")
-              .gte("pickup_time", start_date.isoformat() + "T00:00:00")
-              .lte("pickup_time", end_date.isoformat()   + "T23:59:59")
+              .select("driver_id, tb_driver, day, pickup_lat, pickup_lon, drop_lat, drop_lon")
+              .gte("day", start_date.isoformat())
+              .lte("day", end_date.isoformat())
               .not_.is_("pickup_lat", "null")
               .not_.is_("drop_lat",   "null")
               .range(offset, offset + page - 1)
@@ -486,14 +483,8 @@ def backfill_mileage_from_jobs(
         if not driver_id:
             continue
 
-        # Determine date from pickup_time (Eastern)
-        pt = job.get("pickup_time") or ""
-        if not pt:
-            continue
-        try:
-            ts = datetime.fromisoformat(pt.replace("Z", "+00:00"))
-            job_date = ts.astimezone(EASTERN).date().isoformat()
-        except ValueError:
+        job_date = (job.get("day") or "").strip()
+        if not job_date:
             continue
 
         key = (int(driver_id), job_date)
