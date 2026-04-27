@@ -218,18 +218,21 @@ def load_driver_vehicle_assignments(
     end_dt:         datetime,
 ) -> dict[str, list[tuple[str, int, int]]]:
     """
-    Query Samsara for driver→vehicle assignments in [start_dt, end_dt].
     Returns {samsara_driver_id: [(vehicle_id, start_ms, end_ms), ...]}
-    Windows are clamped to the requested range; open-ended assignments use end_dt.
+    Uses /fleet/driver-vehicle-assignments with filterBy=drivers.
+    Handles driver rotation — each assignment records which truck a driver used
+    and when, so mileage is attributed to the right driver even across truck swaps.
     """
     try:
-        raw = samsara_get("/fleet/drivers/assignments", {
+        raw = samsara_get("/fleet/driver-vehicle-assignments", {
+            "filterBy":  "drivers",
+            "driverIds": ",".join(sam_driver_ids),
             "startTime": utc_fmt(start_dt),
             "endTime":   utc_fmt(end_dt),
             "limit":     512,
         })
     except Exception as e:
-        print(f"  WARNING: driver assignments API failed ({e}) — Samsara GPS mileage skipped")
+        print(f"  WARNING: driver-vehicle assignments API failed ({e})")
         return {}
 
     result: dict[str, list[tuple[str, int, int]]] = {}
@@ -248,6 +251,20 @@ def load_driver_vehicle_assignments(
             continue
         result.setdefault(drv_id, []).append((veh_id, to_ms(a_start), to_ms(a_end)))
     return result
+
+def _dt_month_ranges(start_dt: datetime, end_dt: datetime):
+    """Yield (start_ms, end_ms) in ~30-day chunks (v1 API limit)."""
+    current = start_dt
+    while current <= end_dt:
+        if current.month == 12:
+            next_month = current.replace(year=current.year + 1, month=1, day=1,
+                                         hour=0, minute=0, second=0, microsecond=0)
+        else:
+            next_month = current.replace(month=current.month + 1, day=1,
+                                         hour=0, minute=0, second=0, microsecond=0)
+        chunk_end = min(next_month - timedelta(seconds=1), end_dt)
+        yield to_ms(current), to_ms(chunk_end)
+        current = next_month
 
 # ── Vehicle → driver resolution ────────────────────────────────────────────────
 
@@ -629,27 +646,10 @@ def backfill_mileage_from_jobs(
     return len(rows)
 
 
-def _dt_month_ranges(start_dt: datetime, end_dt: datetime):
-    """Yield (start_ms, end_ms) in ~30-day chunks (v1 API limit), from datetime objects."""
-    current = start_dt
-    while current <= end_dt:
-        if current.month == 12:
-            next_month = current.replace(year=current.year + 1, month=1, day=1,
-                                         hour=0, minute=0, second=0, microsecond=0)
-        else:
-            next_month = current.replace(month=current.month + 1, day=1,
-                                         hour=0, minute=0, second=0, microsecond=0)
-        chunk_end = min(next_month - timedelta(seconds=1), end_dt)
-        yield to_ms(current), to_ms(chunk_end)
-        current = next_month
-
-
 def backfill_mileage(by_name_global: dict[str, int]):
     """
-    Pull GPS trips for interstate drivers via Samsara driver→vehicle assignments.
-    Uses the assignments API so driver IDs are resolved even when drivers haven't
-    authenticated via the Driver app (which would be needed for trip.driver.id).
-    All other drivers get mileage from TowBook haversine job estimates.
+    Pull GPS trips for interstate drivers via driver-vehicle assignments (handles truck rotation).
+    TowBook haversine fills all remaining driver-days (including gaps Samsara misses).
     """
     print(f"\n── Mileage backfill {BACKFILL_START} → {BACKFILL_END} ──")
 
@@ -663,9 +663,7 @@ def backfill_mileage(by_name_global: dict[str, int]):
     failed  = 0
     matched = 0
 
-    if not interstate:
-        print("  No linked Interstate drivers — Samsara GPS mileage skipped")
-    else:
+    if interstate:
         id_map  = {d["samsara_driver_id"]: d["id"] for d in interstate}
         sam_ids = set(id_map.keys())
 
@@ -690,10 +688,8 @@ def backfill_mileage(by_name_global: dict[str, int]):
                             continue
                         trip_date = datetime.fromtimestamp(trip_ms / 1000, tz=EASTERN).date()
                         day_str   = trip_date.isoformat()
-                        if trip.get("distanceMiles") is not None:
-                            miles = float(trip["distanceMiles"])
-                        else:
-                            miles = float(trip.get("distanceMeters") or 0) / 1609.344
+                        miles = (float(trip["distanceMiles"]) if trip.get("distanceMiles") is not None
+                                 else float(trip.get("distanceMeters") or 0) / 1609.344)
                         if miles <= 0:
                             continue
                         matched += 1
@@ -702,30 +698,21 @@ def backfill_mileage(by_name_global: dict[str, int]):
 
         if failed:
             print(f"  WARNING: {failed} trip fetches failed")
-        print(f"  {matched} trips → {len(miles_map)} interstate driver-days")
+        print(f"  {matched} trips → {len(miles_map)} interstate driver-days from Samsara GPS")
 
     samsara_pairs: set[tuple[int, str]] = set()
-    if not miles_map:
-        print("  No Samsara GPS mileage found — going straight to TowBook fallback")
-    else:
+    if miles_map:
         rows = [
-            {
-                "driver_id":   driver_id,
-                "driver_name": None,
-                "log_date":    date_str,
-                "miles":       round(total_miles, 2),
-                "source":      "samsara",
-            }
-            for (driver_id, date_str), total_miles in miles_map.items()
+            {"driver_id": did, "driver_name": None, "log_date": ds,
+             "miles": round(m, 2), "source": "samsara"}
+            for (did, ds), m in miles_map.items()
         ]
         sb.table("mileage_logs").upsert(rows, on_conflict="driver_id,log_date").execute()
-        print(f"  Upserted mileage for {len(rows)} driver-days (Samsara GPS)")
+        print(f"  Upserted {len(rows)} interstate driver-days (Samsara GPS)")
         samsara_pairs = {(r["driver_id"], r["log_date"]) for r in rows}
 
-    # TowBook fallback — haversine estimate for any driver-days Samsara missed
-    print(f"  Running TowBook jobs fallback …")
     tb_count = backfill_mileage_from_jobs(BACKFILL_START, BACKFILL_END, by_name_global, samsara_pairs)
-    print(f"  TowBook estimate upserted {tb_count} additional driver-days")
+    print(f"  TowBook haversine upserted {tb_count} additional driver-days")
 
 # ── 3. DVIR backfill ───────────────────────────────────────────────────────────
 
