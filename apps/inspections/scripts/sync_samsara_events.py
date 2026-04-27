@@ -122,17 +122,19 @@ def load_driver_maps() -> tuple[dict[str, int], dict[str, int]]:
 
 # ── Truck maps ─────────────────────────────────────────────────────────────────
 
-def load_truck_maps() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+def load_truck_maps() -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
     """
     Returns:
-      by_unit_raw — {unit_number.strip().lower(): truck_uuid}  (raw string match)
-      by_unit_num — {leading_number(unit_number): truck_uuid}  (number-only fallback)
-      by_vin      — {vin_upper: truck_uuid}
+      by_unit_raw   — {unit_number.strip().lower(): truck_uuid}  (raw string match)
+      by_unit_num   — {leading_number(unit_number): truck_uuid}  (number-only fallback)
+      by_vin        — {vin_upper: truck_uuid}
+      by_id_towbook — {truck_uuid: towbook_name}  (only trucks with towbook_name set)
     """
-    resp = sb.table("trucks").select("id, unit_number, vin").execute()
-    by_unit_raw: dict[str, str] = {}
-    by_unit_num: dict[str, str] = {}
-    by_vin:      dict[str, str] = {}
+    resp = sb.table("trucks").select("id, unit_number, vin, towbook_name").execute()
+    by_unit_raw:   dict[str, str] = {}
+    by_unit_num:   dict[str, str] = {}
+    by_vin:        dict[str, str] = {}
+    by_id_towbook: dict[str, str] = {}
     for t in (resp.data or []):
         unit = (t.get("unit_number") or "").strip()
         if unit:
@@ -143,7 +145,10 @@ def load_truck_maps() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
         vin = (t.get("vin") or "").strip().upper()
         if len(vin) >= 10:
             by_vin[vin] = t["id"]
-    return by_unit_raw, by_unit_num, by_vin
+        tb = (t.get("towbook_name") or "").strip()
+        if tb:
+            by_id_towbook[t["id"]] = tb
+    return by_unit_raw, by_unit_num, by_vin, by_id_towbook
 
 # ── Samsara vehicle info ───────────────────────────────────────────────────────
 
@@ -221,48 +226,59 @@ def _driver_id_from_job(job: dict, by_name: dict[str, int]) -> int | None:
     tb_name = (job.get("tb_driver") or "").strip().lower()
     return by_name.get(tb_name) if tb_name else None
 
+def _unique_driver(jobs: list[dict], by_name: dict[str, int]) -> int | None:
+    ids = {_driver_id_from_job(j, by_name) for j in jobs}
+    ids.discard(None)
+    return ids.pop() if len(ids) == 1 else None
+
+def _desc_keywords(asset_name: str) -> list[str]:
+    desc = re.sub(r'^[#\w-]*\d+\w*\s+', '', asset_name).strip()
+    words = [w for w in re.split(r'\W+', desc) if len(w) >= 5]
+    return sorted(words, key=len, reverse=True)
+
 def resolve_driver_from_job(
-    truck_uuid:  str | None,
-    sam_unit:    str,
-    event_date:  date,
-    by_name:     dict[str, int],
+    truck_uuid:    str | None,
+    sam_unit:      str,
+    event_date:    date,
+    by_name:       dict[str, int],
+    by_id_towbook: dict[str, str],
 ) -> int | None:
     """
-    Look up the driver for a given truck + date from the jobs table.
-    Strategy 1: match by truck_id FK (fast, exact).
-    Strategy 2: match by truck_and_equipment ILIKE the unit leading number
-                (handles jobs where truck_id is not populated).
+    Match a Samsara asset to a TowBook driver for a given date.
+    Strategy 0 — explicit towbook_name from trucks table (most reliable when present).
+    Strategy 1 — numeric ILIKE on truck_and_equipment (accepted only if unambiguous).
+    Strategy 2 — keyword ILIKE on truck description words (longest/most distinctive
+                 first, accepted only if all matching jobs resolve to one driver).
     """
     day_str = event_date.isoformat()
 
+    def _query(ilike_val: str, allow_null: bool = True) -> list[dict]:
+        q = (sb.table("jobs")
+               .select("driver_id, tb_driver")
+               .ilike("truck_and_equipment", ilike_val)
+               .eq("day", day_str))
+        if not allow_null:
+            q = q.not_.is_("truck_and_equipment", "null")
+        return q.execute().data or []
+
+    # Strategy 0: explicit towbook_name (most reliable when present)
     if truck_uuid:
-        resp = (
-            sb.table("jobs")
-              .select("driver_id, tb_driver")
-              .eq("truck_id", truck_uuid)
-              .eq("day", day_str)
-              .limit(1)
-              .execute()
-        )
-        jobs = resp.data or []
-        if jobs:
-            result = _driver_id_from_job(jobs[0], by_name)
+        towbook_name = by_id_towbook.get(truck_uuid, "")
+        if towbook_name:
+            result = _unique_driver(_query(f"%{towbook_name}%"), by_name)
             if result:
                 return result
 
     num = leading_number(sam_unit)
     if num:
-        resp = (
-            sb.table("jobs")
-              .select("driver_id, tb_driver")
-              .ilike("truck_and_equipment", f"%{num}%")
-              .eq("day", day_str)
-              .limit(1)
-              .execute()
-        )
-        jobs = resp.data or []
-        if jobs:
-            return _driver_id_from_job(jobs[0], by_name)
+        result = _unique_driver(_query(f"%{num}%"), by_name)
+        if result:
+            return result
+
+    for word in _desc_keywords(sam_unit)[:3]:
+        result = _unique_driver(_query(f"%{word}%", allow_null=False), by_name)
+        if result:
+            return result
 
     return None
 
@@ -288,10 +304,10 @@ def sync_events():
         print("Nothing to upsert.")
         return
 
-    by_sam_id, by_name               = load_driver_maps()
-    by_unit_raw, by_unit_num, by_vin = load_truck_maps()
-    sam_vehicles                     = load_samsara_vehicle_info()
-    print(f"  Loaded {len(by_sam_id)} linked drivers, {len(by_unit_raw)} trucks by unit, {len(by_vin)} trucks by VIN, {len(sam_vehicles)} Samsara vehicles")
+    by_sam_id, by_name                              = load_driver_maps()
+    by_unit_raw, by_unit_num, by_vin, by_id_towbook = load_truck_maps()
+    sam_vehicles                                    = load_samsara_vehicle_info()
+    print(f"  Loaded {len(by_sam_id)} linked drivers, {len(by_unit_raw)} trucks by unit, {len(by_vin)} trucks by VIN, {len(by_id_towbook)} trucks with towbook_name, {len(sam_vehicles)} Samsara vehicles")
 
     unmatched_drivers:  set[str] = set()
     unmatched_assets:   set[str] = set()
@@ -327,7 +343,7 @@ def sync_events():
             # truck_and_equipment fallback means we try even if truck_id FK is missing
             truck_uuid = resolve_truck_id(sam_veh_id, sam_unit, sam_vehicles, by_unit_raw, by_unit_num, by_vin)
             event_date = datetime.fromisoformat(occurred_at.replace("Z", "+00:00")).astimezone(EASTERN).date()
-            internal_id = resolve_driver_from_job(truck_uuid, sam_unit, event_date, by_name)
+            internal_id = resolve_driver_from_job(truck_uuid, sam_unit, event_date, by_name, by_id_towbook)
             if internal_id:
                 vehicle_resolved += 1
             else:
