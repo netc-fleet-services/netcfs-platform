@@ -293,7 +293,7 @@ def sync_dvirs(target_date: date):
     # Load Interstate drivers that are linked to Samsara
     resp = sb.table("drivers") \
              .select("id, name, samsara_driver_id") \
-             .eq("yard", "interstate") \
+             .ilike("yard", "interstate") \
              .not_.is_("samsara_driver_id", "null") \
              .execute()
     interstate = resp.data or []
