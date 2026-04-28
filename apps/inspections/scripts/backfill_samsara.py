@@ -826,6 +826,21 @@ def backfill_dvirs():
         (r["driver_id"], r["log_date"]) for r in (ml_resp.data or [])
     }
 
+    # Never overwrite rows a safety manager has manually verified.
+    overridden_resp = (
+        sb.table("dvir_logs")
+          .select("driver_id, log_date")
+          .gte("log_date", BACKFILL_START.isoformat())
+          .lte("log_date", BACKFILL_END.isoformat())
+          .eq("manually_overridden", True)
+          .execute()
+    )
+    overridden: set[tuple[int, str]] = {
+        (r["driver_id"], r["log_date"]) for r in (overridden_resp.data or [])
+    }
+    if overridden:
+        print(f"  Skipping {len(overridden)} manually-overridden rows")
+
     rows = []
     for drv in interstate:
         sam_id      = drv["samsara_driver_id"]
@@ -834,12 +849,15 @@ def backfill_dvirs():
             day_str = target_date.isoformat()
             if (internal_id, day_str) not in drove_on:
                 continue
+            if (internal_id, day_str) in overridden:
+                continue
             rows.append({
-                "driver_id":   internal_id,
-                "driver_name": drv["name"],
-                "log_date":    day_str,
-                "completed":   (sam_id, day_str) in submitted,
-                "source":      "samsara",
+                "driver_id":          internal_id,
+                "driver_name":        drv["name"],
+                "log_date":           day_str,
+                "completed":          (sam_id, day_str) in submitted,
+                "manually_overridden": False,
+                "source":             "samsara",
             })
 
     if rows:

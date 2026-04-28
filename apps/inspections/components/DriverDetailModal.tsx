@@ -21,6 +21,7 @@ type DvirLog = {
   id: string
   log_date: string
   completed: boolean
+  manually_overridden: boolean
   source: string
   notes: string | null
 }
@@ -80,6 +81,7 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
   const [dvirLogs, setDvirLogs]       = useState<DvirLog[]>([])
   const [compliance, setCompliance]   = useState<ComplianceEvent[]>([])
   const [loading, setLoading]         = useState(true)
+  const [overriding, setOverriding]   = useState<string | null>(null) // log id being saved
 
   useEffect(() => {
     Promise.all([
@@ -92,7 +94,7 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
         .order('occurred_at', { ascending: false }),
       supabase
         .from('dvir_logs')
-        .select('id, log_date, completed, source, notes')
+        .select('id, log_date, completed, manually_overridden, source, notes')
         .eq('driver_id', s.driver_id)
         .gte('log_date', period.start)
         .lte('log_date', period.end)
@@ -111,6 +113,18 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
       setLoading(false)
     })
   }, [s.driver_id, period]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function markDvirCompleted(log: DvirLog) {
+    setOverriding(log.id)
+    await supabase
+      .from('dvir_logs')
+      .update({ completed: true, manually_overridden: true })
+      .eq('id', log.id)
+    setDvirLogs(prev => prev.map(d =>
+      d.id === log.id ? { ...d, completed: true, manually_overridden: true } : d
+    ))
+    setOverriding(null)
+  }
 
   return (
     <>
@@ -259,20 +273,36 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
           {/* DVIR logs */}
           {!loading && dvirLogs.length > 0 && (
             <Section title={`DVIR Log (${dvirLogs.filter(d => !d.completed).length} missed)`}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '0.375rem' }}>
-                {dvirLogs.map(d => (
-                  <div key={d.id} style={{
-                    display: 'flex', alignItems: 'center', gap: '0.4rem',
-                    padding: '0.35rem 0.5rem', borderRadius: '0.4rem',
-                    background: d.completed ? '#4ade8022' : '#f59e0b22',
-                    fontSize: '0.78rem',
-                  }}>
-                    <span style={{ fontSize: '0.75rem' }}>{d.completed ? '✓' : '✗'}</span>
-                    <span style={{ color: d.completed ? '#4ade80' : '#f59e0b', fontWeight: 600 }}>
-                      {fmtDate(d.log_date)}
-                    </span>
-                  </div>
-                ))}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '0.375rem' }}>
+                {dvirLogs.map(d => {
+                  const isSaving = overriding === d.id
+                  return (
+                    <div
+                      key={d.id}
+                      onClick={!d.completed && !isSaving ? () => markDvirCompleted(d) : undefined}
+                      title={!d.completed ? 'Click to mark as verified completed' : d.manually_overridden ? 'Manually verified by safety manager' : undefined}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '0.4rem',
+                        padding: '0.35rem 0.5rem', borderRadius: '0.4rem',
+                        background: d.completed ? '#4ade8022' : '#f59e0b22',
+                        fontSize: '0.78rem',
+                        cursor: !d.completed ? 'pointer' : 'default',
+                        opacity: isSaving ? 0.5 : 1,
+                        transition: 'opacity 0.15s',
+                      }}
+                    >
+                      <span style={{ fontSize: '0.75rem' }}>
+                        {isSaving ? '…' : d.completed ? '✓' : '✗'}
+                      </span>
+                      <span style={{ color: d.completed ? '#4ade80' : '#f59e0b', fontWeight: 600, flex: 1 }}>
+                        {fmtDate(d.log_date)}
+                      </span>
+                      {d.manually_overridden && (
+                        <span title="Manually verified" style={{ fontSize: '0.65rem', color: '#4ade80', opacity: 0.7 }}>M</span>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </Section>
           )}
