@@ -108,18 +108,24 @@ def download_export(page) -> Path:
     page.screenshot(path="impounds_view.png")
     print(f"Page title: {page.title()}  URL: {page.url}")
 
-    # Wait for the w2ui toolbar to appear
+    # Wait for the Export button to be in the DOM.
+    # w2ui toolbar items exist in the DOM but fail Playwright's visibility check
+    # in headless mode, so use state="attached" rather than the default "visible".
     try:
-        page.wait_for_selector("td.w2ui-tb-caption", timeout=30_000)
+        page.wait_for_selector(
+            "td.w2ui-tb-caption a:has-text('Export')",
+            state="attached",
+            timeout=45_000,
+        )
     except PlaywrightTimeout:
-        print("w2ui toolbar not found — page may not have loaded correctly")
-        page.screenshot(path="no_toolbar.png")
+        print("Export button not found after 45s — saving screenshot")
+        page.screenshot(path="no_export_btn.png")
         raise
 
     dest = Path(tempfile.mkdtemp()) / "impounds_export.csv"
     print("Clicking Export button…")
     with page.expect_download(timeout=30_000) as dl_info:
-        page.locator("td.w2ui-tb-caption a:has-text('Export')").click()
+        page.locator("td.w2ui-tb-caption a:has-text('Export')").click(force=True)
     dl_info.value.save_as(str(dest))
     print(f"Downloaded export → {dest}")
     return dest
