@@ -253,17 +253,118 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
           borderRadius: '0.875rem',
           overflow: 'hidden',
         }}>
-          <div style={{ overflowX: 'auto' }}>
+          <style>{`
+            .col-vin, .col-notes { display: table-cell; }
+            @media (max-width: 1379px) { .col-notes { display: none; } }
+            @media (max-width: 1179px) { .col-vin   { display: none; } }
+            @media (max-width: 639px)  { .impound-table-view { display: none; } }
+            @media (min-width: 640px)  { .impound-cards-view { display: none; } }
+          `}</style>
+
+          {/* Mobile card grid */}
+          <div className="impound-cards-view" style={{ padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+            {filtered.length === 0 && (
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'rgb(var(--on-surface-muted))', fontStyle: 'italic' }}>
+                No vehicles found
+              </div>
+            )}
+            {filtered.map(imp => {
+              const { label: lotLabel, color: lotColor } = timeOnLot(imp.date_of_impound)
+              const statusBg = imp.status === 'Owned' ? '#1d4ed8'
+                : imp.status === 'Police Hold' ? '#b45309'
+                : imp.status === 'Current Impound' ? '#dc2626'
+                : '#64748b'
+              return (
+                <div
+                  key={imp.id}
+                  onClick={() => setSelected(imp)}
+                  style={{
+                    background: 'rgb(var(--surface))',
+                    border: '1px solid rgb(var(--outline))',
+                    borderRadius: '0.625rem',
+                    padding: '0.875rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {/* Card header row */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.375rem' }}>
+                    <span style={{ fontWeight: 700, color: 'rgb(var(--primary))', fontSize: '0.875rem' }}>
+                      #{imp.call_number}
+                    </span>
+                    <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center' }}>
+                      <span style={{ padding: '0.1rem 0.45rem', borderRadius: 9999, fontSize: '0.65rem', fontWeight: 700, background: `${lotColor}22`, color: lotColor }}>
+                        {lotLabel}
+                      </span>
+                      <span style={{ padding: '0.1rem 0.45rem', borderRadius: 9999, fontSize: '0.65rem', fontWeight: 600, background: statusBg, color: '#fff' }}>
+                        {imp.status ?? '—'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Vehicle */}
+                  <div style={{ fontWeight: 600, fontSize: '0.9375rem', color: 'rgb(var(--on-surface))', marginBottom: '0.25rem' }}>
+                    {[imp.year, imp.make_model].filter(Boolean).join(' ') || '—'}
+                  </div>
+
+                  {/* Secondary info */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem 1rem', fontSize: '0.775rem', color: 'rgb(var(--on-surface-muted))', marginBottom: '0.375rem' }}>
+                    {imp.date_of_impound && <span>{formatDate(imp.date_of_impound)}</span>}
+                    {imp.location && <span>{imp.location}</span>}
+                    {imp.vin && <span style={{ fontFamily: 'monospace', fontSize: '0.72rem' }}>{imp.vin}</span>}
+                  </div>
+
+                  {/* Notes */}
+                  {imp.notes && (
+                    <div style={{ fontSize: '0.775rem', color: 'rgb(var(--on-surface-muted))', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.375rem' }}>
+                      {imp.notes}
+                    </div>
+                  )}
+
+                  {/* Footer row */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.375rem' }}>
+                    <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.75rem', color: 'rgb(var(--on-surface-muted))' }}>
+                      <span>Keys: <span style={{ fontWeight: 600, color: imp.keys === true ? '#22c55e' : imp.keys === false ? '#ef4444' : 'inherit' }}>{imp.keys === true ? 'Yes' : imp.keys === false ? 'No' : '—'}</span></span>
+                      <span>Drives: <span style={{ fontWeight: 600, color: imp.drives === true ? '#22c55e' : imp.drives === false ? '#ef4444' : 'inherit' }}>{imp.drives === true ? 'Yes' : imp.drives === false ? 'No' : '—'}</span></span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ padding: '0.1rem 0.45rem', borderRadius: 9999, fontSize: '0.65rem', fontWeight: 600, background: imp.sell ? '#16a34a22' : '#64748b22', color: imp.sell ? '#16a34a' : 'rgb(var(--on-surface-muted))' }}>
+                        {imp.sell ? 'Resale' : 'Scrap'}
+                      </span>
+                      <span style={{ fontWeight: 700, fontSize: '0.875rem', color: 'rgb(var(--on-surface))' }}>
+                        {currency(vehicleValue(imp))}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="impound-table-view" style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid rgb(var(--outline))', background: 'rgb(var(--surface-high))' }}>
-                  {['Call #', 'Date', 'Time on Lot', 'Vehicle', 'VIN', 'Location', 'Status', 'Reason', 'Notes', 'Keys', 'Drives', 'Type', 'Value'].map(h => (
-                    <th key={h} style={{
+                  {[
+                    { label: 'Call #' },
+                    { label: 'Date' },
+                    { label: 'Time on Lot' },
+                    { label: 'Vehicle' },
+                    { label: 'VIN',      className: 'col-vin' },
+                    { label: 'Location' },
+                    { label: 'Status' },
+                    { label: 'Reason' },
+                    { label: 'Notes',    className: 'col-notes' },
+                    { label: 'Keys' },
+                    { label: 'Drives' },
+                    { label: 'Type' },
+                    { label: 'Value' },
+                  ].map(({ label, className }) => (
+                    <th key={label} className={className} style={{
                       padding: '0.625rem 0.875rem', textAlign: 'left',
                       fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase',
                       letterSpacing: '0.06em', color: 'rgb(var(--on-surface-muted))',
                       whiteSpace: 'nowrap',
-                    }}>{h}</th>
+                    }}>{label}</th>
                   ))}
                 </tr>
               </thead>
@@ -303,7 +404,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
                     <td style={{ padding: '0.625rem 0.875rem' }}>
                       {[imp.year, imp.make_model].filter(Boolean).join(' ') || '—'}
                     </td>
-                    <td style={{ padding: '0.625rem 0.875rem', fontFamily: 'monospace', fontSize: '0.75rem', color: 'rgb(var(--on-surface-muted))', whiteSpace: 'nowrap' }}>
+                    <td className="col-vin" style={{ padding: '0.625rem 0.875rem', fontFamily: 'monospace', fontSize: '0.75rem', color: 'rgb(var(--on-surface-muted))', whiteSpace: 'nowrap' }}>
                       {imp.vin || '—'}
                     </td>
                     <td style={{ padding: '0.625rem 0.875rem' }}>{imp.location || '—'}</td>
@@ -329,7 +430,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
                         {imp.reason_for_impound || '—'}
                       </span>
                     </td>
-                    <td style={{ padding: '0.625rem 0.875rem', maxWidth: 220 }}>
+                    <td className="col-notes" style={{ padding: '0.625rem 0.875rem', maxWidth: 220 }}>
                       <span style={{
                         display: 'block', overflow: 'hidden', textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap', color: 'rgb(var(--on-surface-muted))',
