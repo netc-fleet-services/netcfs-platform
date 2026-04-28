@@ -324,17 +324,22 @@ def sync_dvirs(target_date: date):
         print("  No linked Interstate drivers found — skipping")
         return
 
-    id_to_driver = {d["samsara_driver_id"]: d for d in interstate}
     interstate_sam_ids = {d["samsara_driver_id"] for d in interstate}
 
     day_start = datetime(target_date.year, target_date.month, target_date.day,
                          0, 0, 0, tzinfo=EASTERN)
     day_end   = day_start + timedelta(days=1)
 
-    # /dvirs/stream filters by updatedAtTime, not createdAtTime.  A DVIR submitted
-    # yesterday but resolved by a manager today would have updatedAtTime=today and
-    # be missed if we cap the query at day_end.  Fix: query through now and use
-    # each DVIR's startTime to confirm it belongs to target_date.
+    # DVIRs have vehicle.id but no driver.id — resolve via vehicle assignments.
+    assignments = load_driver_vehicle_assignments(interstate_sam_ids, day_start, day_end)
+
+    # Build reverse mapping: vehicle_id → [(driver_sam_id, start_ms, end_ms)]
+    veh_to_driver: dict[str, list[tuple[str, int, int]]] = {}
+    for drv_sam_id, drv_assignments in assignments.items():
+        for (veh_id, a_start_ms, a_end_ms) in drv_assignments:
+            veh_to_driver.setdefault(veh_id, []).append((drv_sam_id, a_start_ms, a_end_ms))
+
+    # Query through now so DVIRs submitted yesterday but resolved today are captured.
     now_utc = datetime.now(tz=timezone.utc)
     all_dvirs = samsara_get("/dvirs/stream", {
         "startTime": utc_fmt(day_start),
@@ -342,21 +347,30 @@ def sync_dvirs(target_date: date):
         "limit":     200,
     })
 
-    # Credit a DVIR to target_date only if its startTime falls on that date.
-    submitted: set[str] = set()
-    matched = 0
+    # Resolve each DVIR to a driver via vehicle assignment at the DVIR's startTime.
+    submitted: set[str] = set()  # driver_sam_ids that submitted on target_date
+    unmatched_veh = 0
     for dvir in all_dvirs:
-        drv_id = (dvir.get("driver") or {}).get("id")
-        if drv_id not in interstate_sam_ids:
-            continue
+        veh_id = (dvir.get("vehicle") or {}).get("id")
         ts_raw = dvir.get("startTime") or dvir.get("updatedAtTime")
-        if not ts_raw:
+        if not veh_id or not ts_raw:
             continue
-        d = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).astimezone(EASTERN).date()
-        if d == target_date:
-            submitted.add(drv_id)
-            matched += 1
-    print(f"  {len(all_dvirs)} total DVIRs fetched, {matched} from Interstate drivers on {target_date}")
+        dvir_dt   = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+        dvir_ms   = int(dvir_dt.timestamp() * 1000)
+        dvir_date = dvir_dt.astimezone(EASTERN).date()
+        if dvir_date != target_date:
+            continue
+        driver_sam_id = None
+        for (drv_id, a_start_ms, a_end_ms) in veh_to_driver.get(veh_id, []):
+            if a_start_ms <= dvir_ms <= a_end_ms:
+                driver_sam_id = drv_id
+                break
+        if driver_sam_id:
+            submitted.add(driver_sam_id)
+        else:
+            unmatched_veh += 1
+    print(f"  {len(all_dvirs)} total DVIRs fetched, {len(submitted)} Interstate drivers confirmed "
+          f"on {target_date}, {unmatched_veh} DVIRs with no assignment match")
 
     # Load mileage_logs to determine who actually drove today
     # (don't penalise drivers who were off)
