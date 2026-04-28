@@ -44,12 +44,14 @@ KNOWN_LOCATIONS = {"Pembroke", "Exeter", "Bow", "Lee", "Saco"}
 def parse_date(raw: str) -> str | None:
     if not raw or not raw.strip():
         return None
-    raw = raw.strip()
-    for fmt in ["%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d"]:
+    # Take only the date portion in case TowBook appends a time component
+    date_part = raw.strip().split()[0]
+    for fmt in ["%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d", "%m-%d-%Y", "%m-%d-%y"]:
         try:
-            return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
+            return datetime.strptime(date_part, fmt).strftime("%Y-%m-%d")
         except ValueError:
             continue
+    print(f"  WARNING: could not parse date '{raw}'")
     return None
 
 
@@ -156,6 +158,14 @@ def parse_export(csv_path: Path) -> list[dict]:
 
     headers = [h.strip().lower() for h in rows[header_idx]]
     print(f"CSV headers (row {header_idx}): {headers}")
+    # Print raw date sample so format issues are visible in logs
+    if len(rows) > header_idx + 1:
+        sample = rows[header_idx + 1]
+        try:
+            date_idx = headers.index("impound date")
+            print(f"  Raw date sample: '{sample[date_idx] if date_idx < len(sample) else '(out of range)'}'")
+        except ValueError:
+            print("  WARNING: 'impound date' column not found in headers")
 
     def col(vals, *names) -> str:
         for name in names:
