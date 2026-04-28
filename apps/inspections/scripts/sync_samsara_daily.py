@@ -331,22 +331,32 @@ def sync_dvirs(target_date: date):
                          0, 0, 0, tzinfo=EASTERN)
     day_end   = day_start + timedelta(days=1)
 
-    # /dvirs/stream filters by updatedAtTime, max 200 per page, no driverIds filter
+    # /dvirs/stream filters by updatedAtTime, not createdAtTime.  A DVIR submitted
+    # yesterday but resolved by a manager today would have updatedAtTime=today and
+    # be missed if we cap the query at day_end.  Fix: query through now and use
+    # each DVIR's startTime to confirm it belongs to target_date.
+    now_utc = datetime.now(tz=timezone.utc)
     all_dvirs = samsara_get("/dvirs/stream", {
         "startTime": utc_fmt(day_start),
-        "endTime":   utc_fmt(day_end),
+        "endTime":   utc_fmt(now_utc),
         "limit":     200,
     })
-    # Filter client-side to only Interstate drivers
-    dvirs = [d for d in all_dvirs if (d.get("driver") or {}).get("id") in interstate_sam_ids]
-    print(f"  {len(all_dvirs)} total DVIRs, {len(dvirs)} from Interstate drivers")
 
-    # Determine which drivers submitted at least one DVIR
+    # Credit a DVIR to target_date only if its startTime falls on that date.
     submitted: set[str] = set()
-    for dvir in dvirs:
-        drv = dvir.get("driver") or {}
-        if drv.get("id"):
-            submitted.add(drv["id"])
+    matched = 0
+    for dvir in all_dvirs:
+        drv_id = (dvir.get("driver") or {}).get("id")
+        if drv_id not in interstate_sam_ids:
+            continue
+        ts_raw = dvir.get("startTime") or dvir.get("updatedAtTime")
+        if not ts_raw:
+            continue
+        d = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).astimezone(EASTERN).date()
+        if d == target_date:
+            submitted.add(drv_id)
+            matched += 1
+    print(f"  {len(all_dvirs)} total DVIRs fetched, {matched} from Interstate drivers on {target_date}")
 
     # Load mileage_logs to determine who actually drove today
     # (don't penalise drivers who were off)

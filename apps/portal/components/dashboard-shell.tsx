@@ -28,7 +28,7 @@ const BASE_NAV: BaseItem[] = [
     ),
   },
   {
-    label: 'Fleet Tracker',
+    label: 'Maintenance Tracker',
     baseUrl: FLEET_URL,
     requiredModule: 'fleet',
     icon: (

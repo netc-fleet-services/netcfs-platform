@@ -759,30 +759,37 @@ def backfill_dvirs():
     id_to_driver = {d["samsara_driver_id"]: d for d in interstate}
     interstate_sam_ids = {d["samsara_driver_id"] for d in interstate}
 
-    # /dvirs/stream filters by updatedAtTime, max 200/page, no driverIds filter
+    # /dvirs/stream filters by updatedAtTime, not createdAtTime.  A DVIR submitted
+    # during the backfill period but later resolved by a manager would have an
+    # updatedAtTime after BACKFILL_END and would be missed if we cap the query
+    # there.  Fix: query from BACKFILL_START through now, then use each DVIR's
+    # startTime (when the driver created it) to credit the correct date.
     start_ts = datetime(BACKFILL_START.year, BACKFILL_START.month, BACKFILL_START.day, 0, 0, 0, tzinfo=EASTERN)
-    end_ts   = datetime(BACKFILL_END.year,   BACKFILL_END.month,   BACKFILL_END.day, 23, 59, 59, tzinfo=EASTERN)
+    now_utc  = datetime.now(tz=timezone.utc)
 
-    print(f"  Fetching all DVIRs {BACKFILL_START} → {BACKFILL_END} …")
+    print(f"  Fetching DVIRs {BACKFILL_START} → today (filtering by startTime to {BACKFILL_END}) …")
     all_dvirs = samsara_get("/dvirs/stream", {
         "startTime": utc_fmt(start_ts),
-        "endTime":   utc_fmt(end_ts),
+        "endTime":   utc_fmt(now_utc),
         "limit":     200,
     })
-    dvirs = [d for d in all_dvirs if (d.get("driver") or {}).get("id") in interstate_sam_ids]
-    print(f"  {len(all_dvirs)} total DVIRs, {len(dvirs)} from Interstate drivers")
 
-    # Build set of (sam_id, Eastern date str) that submitted
+    # Build set of (sam_id, Eastern date str) that submitted within the backfill period,
+    # using each DVIR's startTime so resolved-later DVIRs are correctly attributed.
     submitted: set[tuple[str, str]] = set()
-    for dvir in dvirs:
-        drv = dvir.get("driver") or {}
-        drv_id = drv.get("id")
-        # Use the DVIR's own time field; fall back to updatedAtTime
-        ts_raw = dvir.get("startTime") or dvir.get("inspectionStartedAtMs") or dvir.get("updatedAtTime") or dvir.get("time")
-        if drv_id and ts_raw:
-            ts = ts_raw if isinstance(ts_raw, str) else datetime.fromtimestamp(int(ts_raw) / 1000, tz=timezone.utc).isoformat()
-            d = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(EASTERN).date()
+    matched = 0
+    for dvir in all_dvirs:
+        drv_id = (dvir.get("driver") or {}).get("id")
+        if drv_id not in interstate_sam_ids:
+            continue
+        ts_raw = dvir.get("startTime") or dvir.get("updatedAtTime")
+        if not ts_raw:
+            continue
+        d = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).astimezone(EASTERN).date()
+        if BACKFILL_START <= d <= BACKFILL_END:
             submitted.add((drv_id, d.isoformat()))
+            matched += 1
+    print(f"  {len(all_dvirs)} total DVIRs fetched, {matched} from Interstate drivers within period")
 
     # Load mileage_logs for the period to know which days each driver drove
     ml_resp = (
