@@ -381,22 +381,31 @@ def sync_dvirs(target_date: date):
                 .execute()
     drove_ids = {r["driver_id"] for r in (ml_resp.data or [])}
 
+    # Never overwrite rows a safety manager has manually verified.
+    overridden_resp = sb.table("dvir_logs") \
+                       .select("driver_id") \
+                       .eq("log_date", target_date.isoformat()) \
+                       .eq("manually_overridden", True) \
+                       .execute()
+    overridden_ids = {r["driver_id"] for r in (overridden_resp.data or [])}
+
     rows = []
     for drv in interstate:
         sam_id      = drv["samsara_driver_id"]
         internal_id = drv["id"]
 
-        # Only log compliance for days the driver actually drove
         if internal_id not in drove_ids:
             continue
+        if internal_id in overridden_ids:
+            continue
 
-        completed = sam_id in submitted
         rows.append({
-            "driver_id":   internal_id,
-            "driver_name": drv["name"],
-            "log_date":    target_date.isoformat(),
-            "completed":   completed,
-            "source":      "samsara",
+            "driver_id":           internal_id,
+            "driver_name":         drv["name"],
+            "log_date":            target_date.isoformat(),
+            "completed":           sam_id in submitted,
+            "manually_overridden": False,
+            "source":              "samsara",
         })
 
     if rows:
