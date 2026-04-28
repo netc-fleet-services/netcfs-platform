@@ -756,49 +756,62 @@ def backfill_dvirs():
         print("  No linked Interstate drivers — skipping")
         return
 
-    id_to_driver = {d["samsara_driver_id"]: d for d in interstate}
     interstate_sam_ids = {d["samsara_driver_id"] for d in interstate}
 
-    # /dvirs/stream filters by updatedAtTime, not createdAtTime.  A DVIR submitted
-    # during the backfill period but later resolved by a manager would have an
-    # updatedAtTime after BACKFILL_END and would be missed if we cap the query
-    # there.  Fix: query from BACKFILL_START through now, then use each DVIR's
-    # startTime (when the driver created it) to credit the correct date.
-    start_ts = datetime(BACKFILL_START.year, BACKFILL_START.month, BACKFILL_START.day, 0, 0, 0, tzinfo=EASTERN)
-    now_utc  = datetime.now(tz=timezone.utc)
+    # DVIRs have vehicle.id but no driver.id (drivers don't use the Samsara app).
+    # Resolve driver by matching each DVIR's vehicle + startTime against the
+    # same driver-vehicle assignment windows used for mileage.
+    start_dt = datetime(BACKFILL_START.year, BACKFILL_START.month, BACKFILL_START.day, 0, 0, 0, tzinfo=EASTERN)
+    end_dt   = datetime(BACKFILL_END.year,   BACKFILL_END.month,   BACKFILL_END.day, 23, 59, 59, tzinfo=EASTERN)
 
-    print(f"  Fetching DVIRs {BACKFILL_START} → today (filtering by startTime to {BACKFILL_END}) …")
+    assignments = load_driver_vehicle_assignments(interstate_sam_ids, start_dt, end_dt)
+
+    # Build reverse mapping: vehicle_id → [(driver_sam_id, start_ms, end_ms)]
+    veh_to_driver: dict[str, list[tuple[str, int, int]]] = {}
+    for drv_sam_id, drv_assignments in assignments.items():
+        for (veh_id, a_start_ms, a_end_ms) in drv_assignments:
+            veh_to_driver.setdefault(veh_id, []).append((drv_sam_id, a_start_ms, a_end_ms))
+
+    # Fetch DVIRs from BACKFILL_START through now so DVIRs resolved after
+    # BACKFILL_END (updatedAtTime > BACKFILL_END) are still captured.
+    now_utc = datetime.now(tz=timezone.utc)
+    print(f"  Fetching DVIRs {BACKFILL_START} → today …")
     all_dvirs = samsara_get("/dvirs/stream", {
-        "startTime": utc_fmt(start_ts),
+        "startTime": utc_fmt(start_dt),
         "endTime":   utc_fmt(now_utc),
         "limit":     200,
     })
+    print(f"  {len(all_dvirs)} total DVIRs fetched")
 
-    # Diagnostic: show what driver ID format the DVIR response uses
-    dvir_drv_ids = {(dvir.get("driver") or {}).get("id") for dvir in all_dvirs if (dvir.get("driver") or {}).get("id")}
-    no_driver    = sum(1 for dvir in all_dvirs if not (dvir.get("driver") or {}).get("id"))
-    print(f"  DVIRs with no driver field: {no_driver}")
-    print(f"  Sample DVIR driver IDs (first 5): {sorted(dvir_drv_ids)[:5]}")
-    print(f"  Sample interstate_sam_ids (first 5): {sorted(interstate_sam_ids)[:5]}")
-    overlap = dvir_drv_ids & interstate_sam_ids
-    print(f"  Overlapping IDs: {len(overlap)}")
-
-    # Build set of (sam_id, Eastern date str) that submitted within the backfill period,
-    # using each DVIR's startTime so resolved-later DVIRs are correctly attributed.
-    submitted: set[tuple[str, str]] = set()
-    matched = 0
+    # For each DVIR, resolve driver via vehicle assignment at the DVIR's startTime
+    submitted: set[tuple[str, str]] = set()  # (driver_sam_id, date_str)
+    no_vehicle = 0
+    unmatched_veh = 0
     for dvir in all_dvirs:
-        drv_id = (dvir.get("driver") or {}).get("id")
-        if drv_id not in interstate_sam_ids:
-            continue
+        veh_id = (dvir.get("vehicle") or {}).get("id")
         ts_raw = dvir.get("startTime") or dvir.get("updatedAtTime")
-        if not ts_raw:
+        if not veh_id or not ts_raw:
+            no_vehicle += 1
             continue
-        d = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).astimezone(EASTERN).date()
-        if BACKFILL_START <= d <= BACKFILL_END:
-            submitted.add((drv_id, d.isoformat()))
-            matched += 1
-    print(f"  {len(all_dvirs)} total DVIRs fetched, {matched} from Interstate drivers within period")
+        dvir_dt   = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+        dvir_ms   = int(dvir_dt.timestamp() * 1000)
+        dvir_date = dvir_dt.astimezone(EASTERN).date()
+        if not (BACKFILL_START <= dvir_date <= BACKFILL_END):
+            continue
+        # Find which driver had this vehicle at the time of the DVIR
+        driver_sam_id = None
+        for (drv_id, a_start_ms, a_end_ms) in veh_to_driver.get(veh_id, []):
+            if a_start_ms <= dvir_ms <= a_end_ms:
+                driver_sam_id = drv_id
+                break
+        if driver_sam_id:
+            submitted.add((driver_sam_id, dvir_date.isoformat()))
+        else:
+            unmatched_veh += 1
+
+    print(f"  {len(submitted)} driver-day DVIRs resolved via vehicle assignment")
+    print(f"  {no_vehicle} DVIRs skipped (no vehicle/timestamp), "
+          f"{unmatched_veh} with vehicle but no assignment match")
 
     # Load mileage_logs for the period to know which days each driver drove
     ml_resp = (
