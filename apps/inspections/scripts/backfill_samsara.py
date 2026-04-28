@@ -774,6 +774,15 @@ def backfill_dvirs():
         "limit":     200,
     })
 
+    # Diagnostic: show what driver ID format the DVIR response uses
+    dvir_drv_ids = {(dvir.get("driver") or {}).get("id") for dvir in all_dvirs if (dvir.get("driver") or {}).get("id")}
+    no_driver    = sum(1 for dvir in all_dvirs if not (dvir.get("driver") or {}).get("id"))
+    print(f"  DVIRs with no driver field: {no_driver}")
+    print(f"  Sample DVIR driver IDs (first 5): {sorted(dvir_drv_ids)[:5]}")
+    print(f"  Sample interstate_sam_ids (first 5): {sorted(interstate_sam_ids)[:5]}")
+    overlap = dvir_drv_ids & interstate_sam_ids
+    print(f"  Overlapping IDs: {len(overlap)}")
+
     # Build set of (sam_id, Eastern date str) that submitted within the backfill period,
     # using each DVIR's startTime so resolved-later DVIRs are correctly attributed.
     submitted: set[tuple[str, str]] = set()
