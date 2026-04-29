@@ -56,6 +56,10 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
   const [locations, setLocations] = useState<Location[]>([])
   const [notifSettings, setNotifSettings] = useState<NotifSetting[]>([])
   const [tempCounter, setTempCounter] = useState(0)
+  const [inspNotifSettings, setInspNotifSettings] = useState<NotifSetting[]>([])
+  const [inspTempCounter,   setInspTempCounter]   = useState(0)
+  const [inspSaving,        setInspSaving]         = useState(false)
+  const [inspMsg,           setInspMsg]            = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
@@ -128,22 +132,18 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
   }
 
   async function fetchAll() {
-    const [{ data: t }, { data: l }, { data: n }] = await Promise.all([
+    const [{ data: t }, { data: l }, { data: n }, { data: ni }] = await Promise.all([
       supabase.from('trucks').select('*, locations(name)').order('unit_number'),
       supabase.from('locations').select('*').order('name'),
       supabase.from('notification_settings').select('*'),
+      supabase.from('inspection_notification_settings').select('*'),
     ])
+    const mapRules = (rows: { id: string; category: string | null; location_id: string | null; emails: string[] }[]) =>
+      rows.map(r => ({ id: r.id, category: r.category, location_id: r.location_id, emails: r.emails ?? [], rawEmailText: (r.emails ?? []).join(', ') }))
     setTrucks(t || [])
     setLocations(l || [])
-    setNotifSettings(
-      (n || []).map((r: { id: string; category: string | null; location_id: string | null; emails: string[] }) => ({
-        id:           r.id,
-        category:     r.category,
-        location_id:  r.location_id,
-        emails:       r.emails ?? [],
-        rawEmailText: (r.emails ?? []).join(', '),
-      }))
-    )
+    setNotifSettings(mapRules(n || []))
+    setInspNotifSettings(mapRules(ni || []))
   }
 
   function openNewTruck() {
@@ -239,6 +239,45 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
     setSaving(false)
   }
 
+  function addInspNotifRule() {
+    setInspTempCounter(n => {
+      setInspNotifSettings(prev => [...prev, { id: `__insp_${n}`, category: null, location_id: null, emails: [], rawEmailText: '' }])
+      return n + 1
+    })
+  }
+
+  function removeInspNotifRule(id: string) {
+    setInspNotifSettings(prev => prev.filter(s => s.id !== id))
+  }
+
+  function updateInspNotifRule(id: string, patch: Partial<Omit<NotifSetting, 'id'>>) {
+    setInspNotifSettings(prev => prev.map(s => s.id === id ? { ...s, ...patch } : s))
+  }
+
+  async function saveAllInspNotifSettings(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    setInspSaving(true)
+    setInspMsg('')
+    const { error: delErr } = await supabase.from('inspection_notification_settings').delete().not('id', 'is', null)
+    if (delErr) { setInspMsg('Error: ' + delErr.message); setInspSaving(false); return }
+    const rows = inspNotifSettings
+      .map(s => {
+        const emails = s.rawEmailText
+          ? s.rawEmailText.split(',').map(x => x.trim()).filter(Boolean)
+          : s.emails
+        return { category: s.category || null, location_id: s.location_id || null, emails }
+      })
+      .filter(s => s.emails.length > 0)
+    if (rows.length > 0) {
+      const { error: insErr } = await supabase.from('inspection_notification_settings').insert(rows)
+      if (insErr) { setInspMsg('Error: ' + insErr.message); setInspSaving(false); return }
+    }
+    setInspMsg('Inspection notification settings saved.')
+    fetchAll()
+    setInspSaving(false)
+    setTimeout(() => setInspMsg(''), 3000)
+  }
+
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--surface)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -265,7 +304,7 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
           {([
             ['trucks', 'Manage Trucks'],
             ['equipment_requests', 'Equipment Requests'],
-            ...(profile.role === 'admin' ? [['notifications', 'Notifications']] : []),
+            ...(profile.role === 'admin' ? [['notifications', 'Notifications'], ['insp_notifications', 'Inspection Notifications']] : []),
           ] as [string, string][]).map(([id, label]) => (
             <button key={id} className={tab === id ? 'btn-primary' : 'btn-secondary'} style={{ fontSize: '0.8125rem' }} onClick={() => setTab(id)}>
               {label}
@@ -631,6 +670,94 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
                 </button>
                 <button type="submit" className="btn-primary" style={{ fontSize: '0.8125rem' }} disabled={saving}>
                   {saving ? 'Saving…' : 'Save Notification Settings'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {tab === 'insp_notifications' && (
+          <div>
+            <p style={{ color: 'var(--on-surface-muted)', fontSize: '0.875rem', marginBottom: '1.5rem', marginTop: 0 }}>
+              Emails are sent when a monthly vehicle inspection is submitted, regardless of pass or fail status.
+              Each rule targets a specific category and/or location — use &ldquo;All&rdquo; to match any.
+              A truck must match every filter on a rule for those recipients to be notified.
+            </p>
+
+            {inspMsg && (
+              <div style={{ marginBottom: '1rem', padding: '0.75rem 1rem', background: 'var(--primary-container)', border: '1px solid var(--primary)', borderRadius: '0.5rem', color: 'var(--on-primary-container)', fontSize: '0.875rem' }}>
+                {inspMsg}
+              </div>
+            )}
+
+            <form onSubmit={saveAllInspNotifSettings}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1rem' }}>
+                {inspNotifSettings.length === 0 && (
+                  <p style={{ color: 'var(--on-surface-muted)', fontSize: '0.8125rem', fontStyle: 'italic', margin: 0 }}>
+                    No rules yet — add one below.
+                  </p>
+                )}
+
+                {inspNotifSettings.map(rule => (
+                  <div key={rule.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr auto', gap: '0.625rem', alignItems: 'center', background: 'var(--surface-container)', border: '1px solid var(--outline)', borderRadius: '0.625rem', padding: '0.75rem 1rem' }}>
+                    <div>
+                      <label className="form-label" style={{ marginBottom: '0.25rem' }}>Category</label>
+                      <select
+                        className="form-select"
+                        value={rule.category ?? ''}
+                        onChange={e => updateInspNotifRule(rule.id, { category: e.target.value || null })}
+                      >
+                        <option value="">All Categories</option>
+                        {Object.entries(CATEGORY_LABELS).map(([val, label]) => (
+                          <option key={val} value={val}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="form-label" style={{ marginBottom: '0.25rem' }}>Location</label>
+                      <select
+                        className="form-select"
+                        value={rule.location_id ?? ''}
+                        onChange={e => updateInspNotifRule(rule.id, { location_id: e.target.value || null })}
+                      >
+                        <option value="">All Locations</option>
+                        {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="form-label" style={{ marginBottom: '0.25rem' }}>Recipients (comma-separated)</label>
+                      <input
+                        className="form-input"
+                        type="text"
+                        placeholder="user@example.com, manager@example.com"
+                        value={rule.rawEmailText}
+                        onChange={e => updateInspNotifRule(rule.id, { rawEmailText: e.target.value })}
+                        onBlur={e => updateInspNotifRule(rule.id, {
+                          emails: e.target.value.split(',').map(x => x.trim()).filter(Boolean),
+                        })}
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ color: 'var(--error)', alignSelf: 'flex-end', padding: '0.5rem 0.625rem' }}
+                      onClick={() => removeInspNotifRule(rule.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                <button type="button" className="btn-secondary" style={{ fontSize: '0.8125rem' }} onClick={addInspNotifRule}>
+                  + Add Rule
+                </button>
+                <button type="submit" className="btn-primary" style={{ fontSize: '0.8125rem' }} disabled={inspSaving}>
+                  {inspSaving ? 'Saving…' : 'Save Inspection Notification Settings'}
                 </button>
               </div>
             </form>

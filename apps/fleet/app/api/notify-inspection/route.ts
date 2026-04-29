@@ -187,7 +187,7 @@ export async function POST(req: NextRequest) {
     console.log('[notify-inspection] Truck:', { category: truck.category, location_id: truck.location_id })
 
     const { data: rules, error: rulesErr } = await supabase
-      .from('notification_settings')
+      .from('inspection_notification_settings')
       .select('category, location_id, emails')
 
     if (rulesErr) console.error('[notify-inspection] Rules lookup error:', rulesErr.message)
