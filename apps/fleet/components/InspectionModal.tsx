@@ -143,7 +143,10 @@ export function InspectionModal({ truck, onClose, onSaved }: Props) {
         failItems:  failItems.map(i => ({ label: i.label, comment: i.comment })),
         allItems,
       }),
-    }).catch(() => {})
+    }).then(r => r.json()).then(d => {
+      if (d.error) console.error('[notify-inspection] API error:', d.error)
+      else console.log('[notify-inspection] Result:', d)
+    }).catch(e => console.error('[notify-inspection] Fetch failed:', e))
 
     setSaving(false)
     onSaved()
