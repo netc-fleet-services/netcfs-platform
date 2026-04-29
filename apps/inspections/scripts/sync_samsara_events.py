@@ -19,7 +19,7 @@ Required env vars:
   SUPABASE_SERVICE_KEY — Service role key (bypasses RLS)
 """
 
-import os, re
+import os, re, time
 from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo
 import requests
@@ -109,8 +109,14 @@ def samsara_get(path: str, params: dict) -> list[dict]:
     headers = {"Authorization": f"Bearer {SAMSARA_API_KEY}"}
     results = []
     while True:
-        resp = requests.get(f"{BASE_URL}{path}", headers=headers, params=params, timeout=30)
-        resp.raise_for_status()
+        for attempt in range(2):
+            resp = requests.get(f"{BASE_URL}{path}", headers=headers, params=params, timeout=30)
+            if resp.status_code in (403, 429, 500, 502, 503, 504) and attempt == 0:
+                print(f"  Samsara API {resp.status_code} — retrying in 15s…")
+                time.sleep(15)
+                continue
+            resp.raise_for_status()
+            break
         body = resp.json()
         results.extend(body.get("data", []))
         pagination = body.get("pagination", {})
