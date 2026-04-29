@@ -1,0 +1,3 @@
+{
+  "ignoreCommand": "git diff --name-only HEAD^ HEAD | grep -qE '^(apps/impounds|packages)/'"
+}
