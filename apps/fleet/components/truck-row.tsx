@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { STATUS, STATUS_LABELS, CAN_CHANGE_STATUS, ROLE, CATEGORY_LABELS } from '@/lib/constants'
+import { STATUS, STATUS_LABELS, CAN_CHANGE_STATUS, CAN_REPORT_ISSUES, ROLE, CATEGORY_LABELS } from '@/lib/constants'
 import { MaintenanceBadge } from './maintenance-badge'
 import type { Truck, FleetProfile } from '@/lib/types'
 
@@ -99,12 +99,15 @@ interface TruckRowProps {
 export function TruckRow({ truck, currentStatus, profile, onStatusChange, onViewHistory, onInspect, onUpdateWaitingOn }: TruckRowProps) {
   const [changing, setChanging] = useState(false)
   const role = profile?.role
+  const isDriver = role === ROLE.DRIVER
   const canChangeStatus = CAN_CHANGE_STATUS.includes(role as any)
-  const canEditWaitingOn = role !== ROLE.DRIVER
+  const canReportStatus = CAN_REPORT_ISSUES.includes(role as any)
+  const canEditWaitingOn = canReportStatus
 
   async function handleStatusSelect(e: React.ChangeEvent<HTMLSelectElement>) {
     const newStatus = e.target.value
     if (newStatus === currentStatus || changing) return
+    if (isDriver && newStatus === STATUS.READY) return
     setChanging(true)
     const email = profile?.email || 'Unknown'
     const name = email.includes('@') ? email.split('@')[0] : email
@@ -123,7 +126,7 @@ export function TruckRow({ truck, currentStatus, profile, onStatusChange, onView
     fontSize: '0.78rem',
     fontWeight: 600,
     fontFamily: 'inherit',
-    cursor: canChangeStatus && !changing ? 'pointer' : 'default',
+    cursor: canReportStatus && !changing ? 'pointer' : 'default',
     opacity: changing ? 0.6 : 1,
     border: '1px solid',
     outline: 'none',
@@ -161,11 +164,13 @@ export function TruckRow({ truck, currentStatus, profile, onStatusChange, onView
       </td>
 
       <td data-label="Status">
-        {canChangeStatus ? (
+        {canReportStatus ? (
           <select value={currentStatus} onChange={handleStatusSelect} disabled={changing} style={selectStyle}>
-            {Object.entries(STATUS_LABELS).map(([val, label]) => (
-              <option key={val} value={val}>{label}</option>
-            ))}
+            {Object.entries(STATUS_LABELS)
+              .filter(([val]) => !isDriver || val !== STATUS.READY)
+              .map(([val, label]) => (
+                <option key={val} value={val}>{label}</option>
+              ))}
           </select>
         ) : (
           <span className={`status-badge status-badge-${currentStatus}`}>{STATUS_LABELS[currentStatus]}</span>

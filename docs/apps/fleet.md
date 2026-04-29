@@ -97,9 +97,13 @@ Permissions are enforced both in the UI (buttons hidden/disabled) and via Supaba
 
 | Capability | Roles |
 |-----------|-------|
-| Change truck status | `admin`, `shop_manager`, `dispatcher`, `mechanic` |
-| Add mechanic notes | `admin`, `shop_manager`, `dispatcher`, `mechanic` |
-| Add/manage trucks | `admin`, `shop_manager`, `dispatcher` |
-| Admin settings | `admin` only |
-| Manage notification settings | `admin` only |
-| View fleet (read-only) | `driver` |
+| Set status to Known Issues or Out of Service | `admin`, `shop_manager`, `dispatcher`, `mechanic`, `driver` |
+| Set status to Ready for Use | `admin`, `shop_manager`, `dispatcher`, `mechanic` |
+| Add mechanic / work done notes | `admin`, `shop_manager`, `dispatcher`, `mechanic` |
+| Add driver notes | all roles with fleet access |
+| Edit "Waiting On" field | `admin`, `shop_manager`, `dispatcher`, `mechanic` |
+| Add / manage trucks | `admin`, `shop_manager`, `dispatcher` |
+| Access admin settings page | `admin`, `shop_manager`, `dispatcher` |
+| Manage status-change notification rules | `admin` only |
+| Manage inspection notification rules | `admin` only |
+| View history report (XLSX export) | `admin`, `shop_manager`, `dispatcher` |
