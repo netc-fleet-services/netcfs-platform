@@ -99,7 +99,7 @@ function LoginForm() {
 
       <a
         href="/forgot-password"
-        style={{ textAlign: 'center', fontSize: '0.8125rem', color: 'var(--on-surface-muted)', textDecoration: 'none' }}
+        style={{ textAlign: 'center', fontSize: '0.8125rem', color: '#64748b', textDecoration: 'underline' }}
       >
         Forgot password?
       </a>
