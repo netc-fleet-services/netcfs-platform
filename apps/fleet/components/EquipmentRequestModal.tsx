@@ -12,12 +12,12 @@ interface Props {
 export function EquipmentRequestModal({ profile, onClose }: Props) {
   const supabase = getSupabaseBrowserClient()
 
-  const [urgent,          setUrgent]         = useState(false)
-  const [requestType,     setRequestType]     = useState<'replacement' | 'new' | ''>('')
-  const [description,     setDescription]     = useState('')
-  const [purpose,         setPurpose]         = useState('')
-  const [ifNotPurchased,  setIfNotPurchased]  = useState('')
-  const [requesterName,   setRequesterName]   = useState(
+  const [urgent,         setUrgent]        = useState(false)
+  const [requestType,    setRequestType]   = useState<'replacement' | 'new' | ''>('')
+  const [description,    setDescription]   = useState('')
+  const [purpose,        setPurpose]       = useState('')
+  const [ifNotPurchased, setIfNotPurchased] = useState('')
+  const [requesterName,  setRequesterName] = useState(
     profile.email?.includes('@') ? profile.email.split('@')[0].replace(/[._]/g, ' ') : (profile.email ?? '')
   )
   const [saving, setSaving] = useState(false)
@@ -30,11 +30,11 @@ export function EquipmentRequestModal({ profile, onClose }: Props) {
 
     setSaving(true)
     const { error: dbErr } = await supabase.from('equipment_requests').insert({
-      submitted_by:    requesterName.trim(),
+      submitted_by:     requesterName.trim(),
       urgent,
-      request_type:    requestType,
-      description:     description.trim(),
-      purpose:         purpose.trim(),
+      request_type:     requestType,
+      description:      description.trim(),
+      purpose:          purpose.trim(),
       if_not_purchased: ifNotPurchased.trim(),
     })
 
@@ -44,12 +44,12 @@ export function EquipmentRequestModal({ profile, onClose }: Props) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        submittedBy:     requesterName.trim(),
+        submittedBy:    requesterName.trim(),
         urgent,
         requestType,
-        description:     description.trim(),
-        purpose:         purpose.trim(),
-        ifNotPurchased:  ifNotPurchased.trim(),
+        description:    description.trim(),
+        purpose:        purpose.trim(),
+        ifNotPurchased: ifNotPurchased.trim(),
       }),
     }).catch(() => {})
 
@@ -58,9 +58,12 @@ export function EquipmentRequestModal({ profile, onClose }: Props) {
   }
 
   const fieldStyle: React.CSSProperties = {
-    width: '100%', padding: '0.5rem 0.75rem', background: 'var(--surface-high)',
-    border: '1px solid var(--outline)', borderRadius: '0.375rem',
-    color: 'var(--on-surface)', fontSize: '0.875rem', fontFamily: 'inherit',
+    width: '100%', padding: '0.5rem 0.75rem',
+    background: 'rgb(var(--surface-high))',
+    border: '1px solid rgb(var(--outline))',
+    borderRadius: '0.375rem',
+    color: 'rgb(var(--on-surface))',
+    fontSize: '0.875rem', fontFamily: 'inherit',
     resize: 'vertical' as const, boxSizing: 'border-box' as const,
   }
 
@@ -70,19 +73,21 @@ export function EquipmentRequestModal({ profile, onClose }: Props) {
       <div style={{
         position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
         width: 'min(600px, 97vw)', maxHeight: '92vh', overflowY: 'auto',
-        background: 'var(--surface-container)', border: '1px solid var(--outline)',
+        background: 'rgb(var(--surface-container))',
+        border: '1px solid rgb(var(--outline))',
         borderRadius: '0.875rem', padding: '1.5rem', zIndex: 50,
+        boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
       }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
           <div>
-            <h3 style={{ margin: 0, fontWeight: 800, fontSize: '1rem', color: 'var(--on-surface)' }}>
+            <h3 style={{ margin: 0, fontWeight: 800, fontSize: '1rem', color: 'rgb(var(--on-surface))' }}>
               Request for Tools or Equipment
             </h3>
-            <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: 'var(--on-surface-muted)' }}>
+            <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: 'rgb(var(--on-surface-muted))' }}>
               Complete form and submit — your manager will be notified
             </p>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.5rem', color: 'var(--on-surface-muted)', lineHeight: 1 }}>×</button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.5rem', color: 'rgb(var(--on-surface-muted))', lineHeight: 1 }}>×</button>
         </div>
 
         <form onSubmit={handleSubmit}>
@@ -90,17 +95,17 @@ export function EquipmentRequestModal({ profile, onClose }: Props) {
           <label style={{
             display: 'flex', alignItems: 'center', gap: '0.625rem', cursor: 'pointer',
             padding: '0.625rem 0.875rem', marginBottom: '1rem',
-            background: urgent ? 'rgba(239,68,68,0.1)' : 'var(--surface)',
-            border: `1px solid ${urgent ? 'var(--error)' : 'var(--outline)'}`,
+            background: urgent ? 'rgba(239,68,68,0.1)' : 'rgb(var(--surface))',
+            border: `1px solid ${urgent ? 'rgb(var(--error))' : 'rgb(var(--outline))'}`,
             borderRadius: '0.5rem',
           }}>
             <input
               type="checkbox"
               checked={urgent}
               onChange={e => setUrgent(e.target.checked)}
-              style={{ width: 16, height: 16, accentColor: 'var(--error)', cursor: 'pointer' }}
+              style={{ width: 16, height: 16, accentColor: 'rgb(var(--error))', cursor: 'pointer' }}
             />
-            <span style={{ fontWeight: 700, fontSize: '0.875rem', color: urgent ? 'var(--error)' : 'var(--on-surface)' }}>
+            <span style={{ fontWeight: 700, fontSize: '0.875rem', color: urgent ? 'rgb(var(--error))' : 'rgb(var(--on-surface))' }}>
               This is an urgent need — bring to manager immediately
             </span>
           </label>
@@ -125,12 +130,19 @@ export function EquipmentRequestModal({ profile, onClose }: Props) {
                 <label key={val} style={{
                   display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer',
                   padding: '0.5rem 0.875rem', flex: 1,
-                  background: requestType === val ? 'var(--primary-container)' : 'var(--surface)',
-                  border: `1px solid ${requestType === val ? 'var(--primary)' : 'var(--outline)'}`,
+                  background: requestType === val ? 'rgb(var(--primary-container))' : 'rgb(var(--surface))',
+                  border: `1px solid ${requestType === val ? 'rgb(var(--primary))' : 'rgb(var(--outline))'}`,
                   borderRadius: '0.5rem',
                 }}>
-                  <input type="radio" name="request_type" value={val} checked={requestType === val} onChange={() => setRequestType(val)} style={{ accentColor: 'var(--primary)' }} />
-                  <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--on-surface)' }}>
+                  <input
+                    type="radio"
+                    name="request_type"
+                    value={val}
+                    checked={requestType === val}
+                    onChange={() => setRequestType(val)}
+                    style={{ accentColor: 'rgb(var(--primary))' }}
+                  />
+                  <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'rgb(var(--on-surface))' }}>
                     {val === 'replacement' ? 'Broken / Damage Replacement' : 'New Equipment / Tool Request'}
                   </span>
                 </label>
@@ -178,7 +190,7 @@ export function EquipmentRequestModal({ profile, onClose }: Props) {
           </div>
 
           {error && (
-            <div style={{ marginBottom: '0.75rem', padding: '0.5rem 0.75rem', background: 'var(--error-container)', border: '1px solid var(--error)', borderRadius: '0.375rem', color: 'var(--error)', fontSize: '0.8rem' }}>
+            <div style={{ marginBottom: '0.75rem', padding: '0.5rem 0.75rem', background: 'rgb(var(--error-container))', border: '1px solid rgb(var(--error))', borderRadius: '0.375rem', color: 'rgb(var(--error))', fontSize: '0.8rem' }}>
               {error}
             </div>
           )}
