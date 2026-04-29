@@ -19,82 +19,139 @@ async function buildInspectionPdf(opts: {
   allItems:      AllItem[]
 }): Promise<Buffer | null> {
   try {
-    // Dynamic import so a missing pdfkit package cannot crash the entire route
-    const PDFDocument = (await import('pdfkit')).default
+    const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib')
     const { unitNumber, inspector, formattedDate, locationName, allItems } = opts
 
-    return new Promise<Buffer>((resolve, reject) => {
-      const doc    = new PDFDocument({ margin: 40, size: 'LETTER' })
-      const chunks: Buffer[] = []
-      doc.on('data',  (c: Buffer) => chunks.push(c))
-      doc.on('end',   () => resolve(Buffer.concat(chunks)))
-      doc.on('error', reject)
+    const pdfDoc  = await PDFDocument.create()
+    const bold    = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
+    const regular = await pdfDoc.embedFont(StandardFonts.Helvetica)
+    const italic  = await pdfDoc.embedFont(StandardFonts.HelveticaOblique)
 
-      // ── Title ──────────────────────────────────────────────────────
-      doc.fontSize(16).font('Helvetica-Bold')
-        .text('Monthly Vehicle Inspection', { align: 'center' })
-      doc.fontSize(10).font('Helvetica')
-        .text('NETC Fleet Services  ·  Towing / Road Service / Transportation', { align: 'center' })
-      doc.moveDown(0.75)
+    const PW = 612, PH = 792, M = 40
+    const LABEL_X = M + 46          // rating badge is 46pt wide
+    const LABEL_W = PW - M - LABEL_X // remaining width for item text
 
-      // ── Info block ─────────────────────────────────────────────────
-      const top = doc.y
-      doc.fontSize(10).font('Helvetica-Bold').text('Unit:',      40,  top)
-      doc.font('Helvetica').text(unitNumber,                     90,  top)
-      doc.font('Helvetica-Bold').text('Inspector:',              300, top)
-      doc.font('Helvetica').text(inspector,                      365, top)
-      doc.font('Helvetica-Bold').text('Location:',               40,  top + 18)
-      doc.font('Helvetica').text(locationName,                   100, top + 18)
-      doc.font('Helvetica-Bold').text('Date:',                   300, top + 18)
-      doc.font('Helvetica').text(formattedDate,                  335, top + 18)
-      doc.moveDown(2.25)
+    let page = pdfDoc.addPage([PW, PH])
+    let y    = PH - M
 
-      // ── Divider ────────────────────────────────────────────────────
-      doc.moveTo(40, doc.y).lineTo(571, doc.y).strokeColor('#cccccc').stroke()
-      doc.moveDown(0.75)
-
-      // ── Sections ───────────────────────────────────────────────────
-      const bySection = new Map<string, AllItem[]>()
-      for (const item of allItems) {
-        if (!bySection.has(item.section)) bySection.set(item.section, [])
-        bySection.get(item.section)!.push(item)
+    function ensureSpace(pts: number) {
+      if (y - pts < M + 20) {
+        page = pdfDoc.addPage([PW, PH])
+        y    = PH - M
       }
+    }
 
-      for (const [sectionTitle, items] of bySection) {
-        doc.fontSize(8).font('Helvetica-Bold').fillColor('#1d4ed8')
-          .text(sectionTitle.toUpperCase(), { characterSpacing: 0.5 })
-        doc.fillColor('#000000').moveDown(0.2)
-
-        for (const item of items) {
-          const ratingLabel =
-            item.rating === 'ok'  ? '[OK]'   :
-            item.rating === 'na'  ? '[N/A]'  :
-            item.rating === 'bad' ? '[FAIL]' : '[--]'
-          const ratingColor =
-            item.rating === 'ok'  ? '#16a34a' :
-            item.rating === 'na'  ? '#6b7280' :
-            item.rating === 'bad' ? '#dc2626' : '#94a3b8'
-
-          const rowY = doc.y
-          doc.fontSize(9).font('Helvetica-Bold').fillColor(ratingColor)
-            .text(ratingLabel, 40, rowY, { width: 46 })
-          doc.fontSize(9).font('Helvetica').fillColor('#000000')
-            .text(item.label, 92, rowY, { width: 479 })
-
-          if (item.rating === 'bad' && item.comment) {
-            doc.fontSize(8).font('Helvetica-Oblique').fillColor('#dc2626')
-              .text('Comment: ' + item.comment, 92, doc.y, { width: 479 })
-            doc.fillColor('#000000')
-          }
-          doc.moveDown(0.2)
+    function splitLines(text: string, font: typeof bold, size: number, maxW: number): string[] {
+      const words = text.split(' ')
+      const lines: string[] = []
+      let line = ''
+      for (const word of words) {
+        const test = line ? `${line} ${word}` : word
+        if (font.widthOfTextAtSize(test, size) <= maxW) {
+          line = test
+        } else {
+          if (line) lines.push(line)
+          line = word
         }
-        doc.moveDown(0.5)
       }
+      if (line) lines.push(line)
+      return lines.length ? lines : [text]
+    }
 
-      doc.fontSize(8).font('Helvetica').fillColor('#94a3b8')
-        .text('Generated automatically by NETC Fleet Tracker', { align: 'center' })
-      doc.end()
+    const BLACK = rgb(0, 0, 0)
+    const GRAY  = rgb(0.39, 0.45, 0.55)
+    const BLUE  = rgb(0.114, 0.306, 0.851)
+    const GREEN = rgb(0.086, 0.639, 0.290)
+    const MID   = rgb(0.420, 0.447, 0.502)
+    const RED   = rgb(0.863, 0.149, 0.149)
+    const LIGHT = rgb(0.580, 0.631, 0.682)
+
+    // ── Title ───────────────────────────────────────────────────────────
+    y -= 16
+    const titleText = 'Monthly Vehicle Inspection'
+    page.drawText(titleText, {
+      x: (PW - bold.widthOfTextAtSize(titleText, 16)) / 2,
+      y, font: bold, size: 16, color: BLACK,
     })
+    y -= 18
+    const subText = 'NETC Fleet Services  ·  Towing / Road Service / Transportation'
+    page.drawText(subText, {
+      x: (PW - regular.widthOfTextAtSize(subText, 10)) / 2,
+      y, font: regular, size: 10, color: GRAY,
+    })
+    y -= 24
+
+    // ── Info block ──────────────────────────────────────────────────────
+    page.drawText('Unit:',      { x: M,   y, font: bold,    size: 10, color: BLACK })
+    page.drawText(unitNumber,   { x: M+30, y, font: regular, size: 10, color: BLACK })
+    page.drawText('Inspector:', { x: 300, y, font: bold,    size: 10, color: BLACK })
+    page.drawText(inspector,    { x: 362, y, font: regular, size: 10, color: BLACK })
+    y -= 16
+    page.drawText('Location:',  { x: M,   y, font: bold,    size: 10, color: BLACK })
+    page.drawText(locationName, { x: M+54, y, font: regular, size: 10, color: BLACK })
+    page.drawText('Date:',      { x: 300, y, font: bold,    size: 10, color: BLACK })
+    page.drawText(formattedDate,{ x: 330, y, font: regular, size: 10, color: BLACK })
+    y -= 20
+
+    // ── Divider ─────────────────────────────────────────────────────────
+    page.drawLine({ start: { x: M, y }, end: { x: PW - M, y }, thickness: 0.5, color: LIGHT })
+    y -= 14
+
+    // ── Sections ────────────────────────────────────────────────────────
+    const bySection = new Map<string, AllItem[]>()
+    for (const item of allItems) {
+      if (!bySection.has(item.section)) bySection.set(item.section, [])
+      bySection.get(item.section)!.push(item)
+    }
+
+    for (const [sectionTitle, items] of bySection) {
+      ensureSpace(28)
+      page.drawText(sectionTitle.toUpperCase(), {
+        x: M, y, font: bold, size: 8, color: BLUE, characterSpacing: 0.5,
+      })
+      y -= 13
+
+      for (const item of items) {
+        const ratingLabel =
+          item.rating === 'ok'  ? '[OK]'   :
+          item.rating === 'na'  ? '[N/A]'  :
+          item.rating === 'bad' ? '[FAIL]' : '[--]'
+        const ratingColor =
+          item.rating === 'ok'  ? GREEN :
+          item.rating === 'na'  ? MID   :
+          item.rating === 'bad' ? RED   : LIGHT
+
+        const labelLines   = splitLines(item.label, regular, 9, LABEL_W)
+        const commentLines = (item.rating === 'bad' && item.comment)
+          ? splitLines('Comment: ' + item.comment, italic, 8, LABEL_W)
+          : []
+        const rowH = labelLines.length * 12 + commentLines.length * 11 + 5
+        ensureSpace(rowH)
+
+        // Rating badge aligned with first label line
+        page.drawText(ratingLabel, { x: M, y, font: bold, size: 9, color: ratingColor })
+
+        for (const line of labelLines) {
+          page.drawText(line, { x: LABEL_X, y, font: regular, size: 9, color: BLACK })
+          y -= 12
+        }
+        for (const line of commentLines) {
+          page.drawText(line, { x: LABEL_X, y, font: italic, size: 8, color: RED })
+          y -= 11
+        }
+        y -= 4
+      }
+      y -= 8
+    }
+
+    // ── Footer ──────────────────────────────────────────────────────────
+    const footerText = 'Generated automatically by NETC Fleet Tracker'
+    page.drawText(footerText, {
+      x: (PW - regular.widthOfTextAtSize(footerText, 8)) / 2,
+      y: M, font: regular, size: 8, color: LIGHT,
+    })
+
+    return Buffer.from(await pdfDoc.save())
   } catch (e) {
     console.error('[notify-inspection] PDF generation failed:', e)
     return null
@@ -113,9 +170,9 @@ export async function POST(req: NextRequest) {
     const resendApiKey = process.env.RESEND_API_KEY
     const fromEmail    = process.env.NOTIFY_FROM_EMAIL ?? 'noreply@netruckcenter.com'
 
-    if (!supabaseUrl)  { console.error('[notify-inspection] Missing NEXT_PUBLIC_SUPABASE_URL'); return NextResponse.json({ skipped: true }) }
+    if (!supabaseUrl)  { console.error('[notify-inspection] Missing NEXT_PUBLIC_SUPABASE_URL');  return NextResponse.json({ skipped: true }) }
     if (!serviceKey)   { console.error('[notify-inspection] Missing SUPABASE_SERVICE_ROLE_KEY'); return NextResponse.json({ skipped: true }) }
-    if (!resendApiKey) { console.error('[notify-inspection] Missing RESEND_API_KEY'); return NextResponse.json({ skipped: true }) }
+    if (!resendApiKey) { console.error('[notify-inspection] Missing RESEND_API_KEY');            return NextResponse.json({ skipped: true }) }
 
     const supabase = createClient(supabaseUrl, serviceKey)
 
@@ -198,41 +255,33 @@ export async function POST(req: NextRequest) {
       </div>
     `
 
-    const emailBody: Record<string, unknown> = {
-      from:    fromEmail,
-      to:      [...recipients],
-      subject,
-      html,
-    }
+    const emailBody: Record<string, unknown> = { from: fromEmail, to: [...recipients], subject, html }
 
     if (Array.isArray(allItems) && allItems.length > 0) {
       console.log('[notify-inspection] Generating PDF...')
       const pdfBuffer = await buildInspectionPdf({ unitNumber, inspector, formattedDate, locationName, allItems })
       if (pdfBuffer) {
-        emailBody.attachments = [{
-          filename: `inspection-${unitNumber}-${date}.pdf`,
-          content:  pdfBuffer.toString('base64'),
-        }]
-        console.log('[notify-inspection] PDF generated, size:', pdfBuffer.length)
+        emailBody.attachments = [{ filename: `inspection-${unitNumber}-${date}.pdf`, content: pdfBuffer.toString('base64') }]
+        console.log('[notify-inspection] PDF generated, bytes:', pdfBuffer.length)
       } else {
-        console.warn('[notify-inspection] PDF skipped — sending email without attachment')
+        console.warn('[notify-inspection] PDF skipped — sending without attachment')
       }
     }
 
-    console.log('[notify-inspection] Sending email via Resend to:', [...recipients])
-    const res = await fetch('https://api.resend.com/emails', {
+    console.log('[notify-inspection] Sending to Resend:', [...recipients])
+    const res     = await fetch('https://api.resend.com/emails', {
       method:  'POST',
       headers: { 'Authorization': `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
       body:    JSON.stringify(emailBody),
     })
-
     const resBody = await res.text()
+
     if (!res.ok) {
       console.error('[notify-inspection] Resend error:', res.status, resBody)
       return NextResponse.json({ error: resBody }, { status: 500 })
     }
 
-    console.log('[notify-inspection] Email sent successfully:', resBody)
+    console.log('[notify-inspection] Sent successfully:', resBody)
     return NextResponse.json({ sent: recipients.size })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
