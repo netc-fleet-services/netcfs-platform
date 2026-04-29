@@ -107,7 +107,7 @@ async function buildInspectionPdf(opts: {
     for (const [sectionTitle, items] of bySection) {
       ensureSpace(28)
       page.drawText(sectionTitle.toUpperCase(), {
-        x: M, y, font: bold, size: 8, color: BLUE, characterSpacing: 0.5,
+        x: M, y, font: bold, size: 8, color: BLUE,
       })
       y -= 13
 
