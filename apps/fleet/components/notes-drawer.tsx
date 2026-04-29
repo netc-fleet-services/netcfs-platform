@@ -323,16 +323,18 @@ export function NotesDrawer({ truck, profile, onAddNote, onClose }: Props) {
                               {sectionTitle}
                             </div>
                             {sectionItems.map(item => (
-                              <div key={item.key} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem', marginBottom: '0.2rem' }}>
-                                <span style={{ flexShrink: 0, fontWeight: 700, fontSize: '0.67rem', padding: '1px 5px', borderRadius: 3, minWidth: 28, textAlign: 'center', color: RATING_COLOR[item.rating] || 'var(--on-surface-muted)', background: (RATING_COLOR[item.rating] || 'var(--on-surface-muted)') + '22' }}>
-                                  {RATING_LABEL[item.rating] || item.rating}
-                                </span>
-                                <span style={{ fontSize: '0.775rem', color: 'var(--on-surface)', lineHeight: 1.4 }}>{item.label}</span>
-                              </div>
-                            ))}
-                            {sectionItems.filter(i => i.rating === 'bad' && i.comment).map(item => (
-                              <div key={item.key + '_c'} style={{ marginLeft: '2.25rem', marginBottom: '0.2rem', padding: '0.2rem 0.5rem', background: 'var(--error-container)', borderRadius: '0.25rem', fontSize: '0.72rem', color: 'var(--error)' }}>
-                                {item.comment}
+                              <div key={item.key} style={{ marginBottom: '0.35rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem' }}>
+                                  <span style={{ flexShrink: 0, fontWeight: 700, fontSize: '0.67rem', padding: '1px 5px', borderRadius: 3, minWidth: 28, textAlign: 'center', color: RATING_COLOR[item.rating] || 'var(--on-surface-muted)', background: (RATING_COLOR[item.rating] || 'var(--on-surface-muted)') + '22' }}>
+                                    {RATING_LABEL[item.rating] || item.rating}
+                                  </span>
+                                  <span style={{ fontSize: '0.775rem', color: 'var(--on-surface)', lineHeight: 1.4 }}>{item.label}</span>
+                                </div>
+                                {item.rating === 'bad' && item.comment && (
+                                  <div style={{ marginLeft: '2.25rem', marginTop: '0.15rem', padding: '0.2rem 0.5rem', background: 'var(--error-container)', borderRadius: '0.25rem', fontSize: '0.72rem', color: 'var(--error)' }}>
+                                    {item.comment}
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
