@@ -109,7 +109,7 @@ async function buildInspectionPdf(opts: {
 
 export async function POST(req: NextRequest) {
   try {
-    const { truckId, unitNumber, inspector, date, failItems, allItems } = await req.json()
+    const { truckId, unitNumber, inspector, date, hasFails, failItems, allItems } = await req.json()
 
     const supabaseUrl  = process.env.NEXT_PUBLIC_SUPABASE_URL
     const serviceKey   = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -154,26 +154,36 @@ export async function POST(req: NextRequest) {
     })
 
     // ── Build HTML email body ─────────────────────────────────────────
-    const failRows = (failItems as { label: string; comment: string }[])
-      .map(f => `
-        <tr>
-          <td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #f1f5f9">${f.label}</td>
-          <td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #f1f5f9;color:#ef4444">${f.comment || '—'}</td>
-        </tr>`)
-      .join('')
+    const failList  = failItems as { label: string; comment: string }[]
+    const hasFailsB = Boolean(hasFails) || failList.length > 0
 
-    const html = `
-      <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px">
-        <h2 style="margin:0 0 4px;color:#1e293b">Inspection Failed Items — ${unitNumber}</h2>
-        <p style="margin:0 0 20px;color:#64748b;font-size:14px">NETC Fleet Services · ${formattedDate}</p>
-
-        <table style="width:100%;border-collapse:collapse;margin-bottom:20px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
-          <tr style="background:#f8fafc">
+    const failSection = hasFailsB ? `
+        <p style="margin:0 0 8px;font-size:13px;font-weight:700;color:#dc2626">Failed Items (${failList.length})</p>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:20px;background:#fff;border:1px solid #fecaca;border-radius:8px;overflow:hidden">
+          <tr style="background:#fef2f2">
             <td style="padding:8px 12px;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Item</td>
             <td style="padding:8px 12px;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Comment / Corrective Action</td>
           </tr>
-          ${failRows}
-        </table>
+          ${failList.map(f => `
+            <tr>
+              <td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #fef2f2">${f.label}</td>
+              <td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #fef2f2;color:#dc2626">${f.comment || '—'}</td>
+            </tr>`).join('')}
+        </table>` : `
+        <p style="margin:0 0 20px;padding:10px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;font-size:13px;color:#16a34a;font-weight:600">
+          ✓ All items passed — no failures recorded
+        </p>`
+
+    const subject = hasFailsB
+      ? `Inspection — ${unitNumber} · ${failList.length} failed item${failList.length !== 1 ? 's' : ''}`
+      : `Inspection Complete — ${unitNumber} · All passed`
+
+    const html = `
+      <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px">
+        <h2 style="margin:0 0 4px;color:#1e293b">Vehicle Inspection — ${unitNumber}</h2>
+        <p style="margin:0 0 20px;color:#64748b;font-size:14px">NETC Fleet Services · ${formattedDate}</p>
+
+        ${failSection}
 
         <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
           <tr><td style="padding:6px 0;color:#64748b;font-size:13px;width:130px">Unit</td><td style="padding:6px 0;font-weight:600;font-size:13px">${unitNumber}</td></tr>
@@ -190,7 +200,7 @@ export async function POST(req: NextRequest) {
     const emailBody: Record<string, unknown> = {
       from:    fromEmail,
       to:      [...recipients],
-      subject: `Inspection Fails — ${unitNumber} (${(failItems as unknown[]).length} item${(failItems as unknown[]).length !== 1 ? 's' : ''})`,
+      subject,
       html,
     }
 

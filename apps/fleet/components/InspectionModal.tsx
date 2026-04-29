@@ -123,28 +123,27 @@ export function InspectionModal({ truck, onClose, onSaved }: Props) {
 
     if (dbErr) { setError(dbErr.message); setSaving(false); return }
 
-    if (has_fails) {
-      const failItems = items.filter(i => i.rating === 'bad')
-      const allItems  = items.map(i => ({
-        key:     i.key,
-        label:   i.label,
-        section: ALL_ITEMS.find(a => a.key === i.key)?.section ?? '',
-        rating:  i.rating,
-        comment: i.comment,
-      }))
-      fetch('/api/notify-inspection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          truckId:    truck.id,
-          unitNumber: truck.unit_number,
-          inspector:  inspector.trim(),
-          date,
-          failItems:  failItems.map(i => ({ label: i.label, comment: i.comment })),
-          allItems,
-        }),
-      }).catch(() => {})
-    }
+    const failItems = items.filter(i => i.rating === 'bad')
+    const allItems  = items.map(i => ({
+      key:     i.key,
+      label:   i.label,
+      section: ALL_ITEMS.find(a => a.key === i.key)?.section ?? '',
+      rating:  i.rating,
+      comment: i.comment,
+    }))
+    fetch('/api/notify-inspection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        truckId:    truck.id,
+        unitNumber: truck.unit_number,
+        inspector:  inspector.trim(),
+        date,
+        hasFails:   has_fails,
+        failItems:  failItems.map(i => ({ label: i.label, comment: i.comment })),
+        allItems,
+      }),
+    }).catch(() => {})
 
     setSaving(false)
     onSaved()
