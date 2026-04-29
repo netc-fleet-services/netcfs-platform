@@ -18,6 +18,8 @@ Access is controlled by role. Each role sees only the apps relevant to their job
 | `impound_manager` | Impounds |
 | `viewer` | Fleet, Transport, Inspections, Swaps, Reports (read-only) |
 
+See [docs/roles.md](roles.md) for a full breakdown of what each role can do within each app.
+
 ## The Six Apps
 
 ### Portal
