@@ -254,6 +254,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
           overflow: 'hidden',
         }}>
           <style>{`
+            .impound-cards-view { display: flex; flex-direction: column; gap: 0.625rem; }
             .col-vin, .col-notes { display: table-cell; }
             @media (max-width: 1349px) { .col-notes { display: none; } }
             @media (max-width: 1099px) { .col-vin   { display: none; } }
@@ -262,7 +263,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
           `}</style>
 
           {/* Mobile card grid */}
-          <div className="impound-cards-view" style={{ padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+          <div className="impound-cards-view" style={{ padding: '0.75rem' }}>
             {filtered.length === 0 && (
               <div style={{ padding: '2rem', textAlign: 'center', color: 'rgb(var(--on-surface-muted))', fontStyle: 'italic' }}>
                 No vehicles found
