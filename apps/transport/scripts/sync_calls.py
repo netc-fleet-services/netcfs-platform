@@ -414,18 +414,24 @@ def scrape_calls():
 def sync_to_supabase(tb_calls):
     now = datetime.now(timezone.utc).isoformat()
 
-    # Load only active/scheduled jobs — completed calls won't reappear in TowBook dispatch,
-    # and filtering avoids hitting Supabase's default 1000-row page limit on large tables.
-    resp = sb.from_("jobs") \
-             .select("id, tb_call_num, tb_desc, tb_account, pickup_addr, drop_addr, "
-                     "pickup_zip, drop_zip, pickup_lat, pickup_lon, drop_lat, drop_lon, "
-                     "tb_scheduled, tb_reason, tb_driver, tb_driver_2, truck_and_equipment, day, "
-                     "yard_id, driver_id, driver_id_2, status, priority, notes, stops, added_at") \
-             .in_("status", ["active", "scheduled"]) \
-             .limit(5000) \
-             .execute()
+    # Paginate through ALL jobs so existing is always complete — Supabase's default page
+    # limit is 1000 rows; skipping a page causes older records to be re-inserted and crash.
+    _SELECT = ("id, tb_call_num, tb_desc, tb_account, pickup_addr, drop_addr, "
+               "pickup_zip, drop_zip, pickup_lat, pickup_lon, drop_lat, drop_lon, "
+               "tb_scheduled, tb_reason, tb_driver, tb_driver_2, truck_and_equipment, day, "
+               "yard_id, driver_id, driver_id_2, status, priority, notes, stops, added_at")
+    _PAGE = 1000
+    all_jobs: list = []
+    _offset = 0
+    while True:
+        batch = (sb.from_("jobs").select(_SELECT)
+                 .range(_offset, _offset + _PAGE - 1).execute().data or [])
+        all_jobs.extend(batch)
+        if len(batch) < _PAGE:
+            break
+        _offset += _PAGE
 
-    existing = {r["tb_call_num"]: r for r in (resp.data or []) if r.get("tb_call_num")}
+    existing = {r["tb_call_num"]: r for r in all_jobs if r.get("tb_call_num")}
 
     inserts = []
     updates = []
