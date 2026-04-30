@@ -255,10 +255,10 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
         }}>
           <style>{`
             .col-vin, .col-notes { display: table-cell; }
-            @media (max-width: 1379px) { .col-notes { display: none; } }
-            @media (max-width: 1179px) { .col-vin   { display: none; } }
-            @media (max-width: 639px)  { .impound-table-view { display: none; } }
-            @media (min-width: 640px)  { .impound-cards-view { display: none; } }
+            @media (max-width: 1349px) { .col-notes { display: none; } }
+            @media (max-width: 1099px) { .col-vin   { display: none; } }
+            @media (max-width: 899px)  { .impound-table-view { display: none; } }
+            @media (min-width: 900px)  { .impound-cards-view { display: none; } }
           `}</style>
 
           {/* Mobile card grid */}
@@ -341,7 +341,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
           </div>
 
           <div className="impound-table-view" style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.775rem' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid rgb(var(--outline))', background: 'rgb(var(--surface-high))' }}>
                   {[
@@ -360,7 +360,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
                     { label: 'Value' },
                   ].map(({ label, className }) => (
                     <th key={label} className={className} style={{
-                      padding: '0.625rem 0.875rem', textAlign: 'left',
+                      padding: '0.4rem 0.5rem', textAlign: 'left',
                       fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase',
                       letterSpacing: '0.06em', color: 'rgb(var(--on-surface-muted))',
                       whiteSpace: 'nowrap',
@@ -383,13 +383,13 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
                     onClick={() => setSelected(imp)}
                     style={{ borderBottom: '1px solid rgb(var(--outline))' }}
                   >
-                    <td style={{ padding: '0.625rem 0.875rem', fontWeight: 600, color: 'rgb(var(--primary))' }}>
+                    <td style={{ padding: '0.4rem 0.5rem', fontWeight: 600, color: 'rgb(var(--primary))' }}>
                       {imp.call_number}
                     </td>
-                    <td style={{ padding: '0.625rem 0.875rem', whiteSpace: 'nowrap' }}>
+                    <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>
                       {formatDate(imp.date_of_impound)}
                     </td>
-                    <td style={{ padding: '0.625rem 0.875rem' }}>
+                    <td style={{ padding: '0.4rem 0.5rem' }}>
                       {(() => {
                         const { label, color } = timeOnLot(imp.date_of_impound)
                         return (
@@ -401,14 +401,16 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
                         )
                       })()}
                     </td>
-                    <td style={{ padding: '0.625rem 0.875rem' }}>
-                      {[imp.year, imp.make_model].filter(Boolean).join(' ') || '—'}
+                    <td style={{ padding: '0.4rem 0.5rem', maxWidth: 160 }}>
+                      <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {[imp.year, imp.make_model].filter(Boolean).join(' ') || '—'}
+                      </span>
                     </td>
-                    <td className="col-vin" style={{ padding: '0.625rem 0.875rem', fontFamily: 'monospace', fontSize: '0.75rem', color: 'rgb(var(--on-surface-muted))', whiteSpace: 'nowrap' }}>
+                    <td className="col-vin" style={{ padding: '0.4rem 0.5rem', fontFamily: 'monospace', fontSize: '0.75rem', color: 'rgb(var(--on-surface-muted))', whiteSpace: 'nowrap' }}>
                       {imp.vin || '—'}
                     </td>
-                    <td style={{ padding: '0.625rem 0.875rem' }}>{imp.location || '—'}</td>
-                    <td style={{ padding: '0.625rem 0.875rem' }}>
+                    <td style={{ padding: '0.4rem 0.5rem' }}>{imp.location || '—'}</td>
+                    <td style={{ padding: '0.4rem 0.5rem' }}>
                       <span style={{
                         display: 'inline-block', padding: '0.15rem 0.5rem', borderRadius: 9999,
                         fontSize: '0.7rem', fontWeight: 600, whiteSpace: 'nowrap',
@@ -421,7 +423,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
                         {imp.status ?? '—'}
                       </span>
                     </td>
-                    <td style={{ padding: '0.625rem 0.875rem', maxWidth: 180 }}>
+                    <td style={{ padding: '0.4rem 0.5rem', maxWidth: 180 }}>
                       <span style={{
                         display: 'block', overflow: 'hidden', textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap', color: 'rgb(var(--on-surface-muted))',
@@ -430,7 +432,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
                         {imp.reason_for_impound || '—'}
                       </span>
                     </td>
-                    <td className="col-notes" style={{ padding: '0.625rem 0.875rem', maxWidth: 220 }}>
+                    <td className="col-notes" style={{ padding: '0.4rem 0.5rem', maxWidth: 220 }}>
                       <span style={{
                         display: 'block', overflow: 'hidden', textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap', color: 'rgb(var(--on-surface-muted))',
@@ -439,9 +441,9 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
                         {imp.notes || '—'}
                       </span>
                     </td>
-                    <td style={{ padding: '0.625rem 0.875rem' }}><TriState value={imp.keys} /></td>
-                    <td style={{ padding: '0.625rem 0.875rem' }}><TriState value={imp.drives} /></td>
-                    <td style={{ padding: '0.625rem 0.875rem' }}>
+                    <td style={{ padding: '0.4rem 0.5rem' }}><TriState value={imp.keys} /></td>
+                    <td style={{ padding: '0.4rem 0.5rem' }}><TriState value={imp.drives} /></td>
+                    <td style={{ padding: '0.4rem 0.5rem' }}>
                       <span style={{
                         display: 'inline-block', padding: '0.15rem 0.5rem', borderRadius: 9999,
                         fontSize: '0.7rem', fontWeight: 600,
@@ -451,7 +453,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
                         {imp.sell ? 'Resale' : 'Scrap'}
                       </span>
                     </td>
-                    <td style={{ padding: '0.625rem 0.875rem', fontWeight: 600 }}>
+                    <td style={{ padding: '0.4rem 0.5rem', fontWeight: 600 }}>
                       {currency(vehicleValue(imp))}
                     </td>
                   </tr>
@@ -459,7 +461,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
               </tbody>
             </table>
           </div>
-          <div style={{ padding: '0.625rem 0.875rem', borderTop: '1px solid rgb(var(--outline))', fontSize: '0.75rem', color: 'rgb(var(--on-surface-muted))' }}>
+          <div style={{ padding: '0.4rem 0.5rem', borderTop: '1px solid rgb(var(--outline))', fontSize: '0.75rem', color: 'rgb(var(--on-surface-muted))' }}>
             {filtered.length} of {impounds.length} vehicles
           </div>
         </div>
