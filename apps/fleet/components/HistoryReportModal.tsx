@@ -46,7 +46,7 @@ function calcOosDaysInRange(truck: Truck, start: Date, end: Date): number {
     if (pe > ps) totalMs += pe.getTime() - ps.getTime()
   }
 
-  return Math.round(totalMs / (1000 * 60 * 60 * 24) * 10) / 10
+  return Math.floor(totalMs / (1000 * 60 * 60 * 24))
 }
 
 const LABEL_STYLE: React.CSSProperties = {
