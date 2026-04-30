@@ -414,12 +414,15 @@ def scrape_calls():
 def sync_to_supabase(tb_calls):
     now = datetime.now(timezone.utc).isoformat()
 
-    # Load ALL existing jobs (no status filter) to preserve all fields
+    # Load only active/scheduled jobs — completed calls won't reappear in TowBook dispatch,
+    # and filtering avoids hitting Supabase's default 1000-row page limit on large tables.
     resp = sb.from_("jobs") \
              .select("id, tb_call_num, tb_desc, tb_account, pickup_addr, drop_addr, "
                      "pickup_zip, drop_zip, pickup_lat, pickup_lon, drop_lat, drop_lon, "
                      "tb_scheduled, tb_reason, tb_driver, tb_driver_2, truck_and_equipment, day, "
                      "yard_id, driver_id, driver_id_2, status, priority, notes, stops, added_at") \
+             .in_("status", ["active", "scheduled"]) \
+             .limit(5000) \
              .execute()
 
     existing = {r["tb_call_num"]: r for r in (resp.data or []) if r.get("tb_call_num")}
@@ -528,7 +531,7 @@ def sync_to_supabase(tb_calls):
             print(f"  → {ex['tb_call_num']} left dispatch — marked complete (day {ex.get('day')})")
 
     if inserts:
-        sb.from_("jobs").insert(inserts).execute()
+        sb.from_("jobs").upsert(inserts, on_conflict="tb_call_num").execute()
     if updates:
         BATCH = 50
         for i in range(0, len(updates), BATCH):
