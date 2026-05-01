@@ -17,10 +17,11 @@ async function buildInspectionPdf(opts: {
   formattedDate: string
   locationName:  string
   allItems:      AllItem[]
+  comments?:     string | null
 }): Promise<Buffer | null> {
   try {
     const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib')
-    const { unitNumber, inspector, formattedDate, locationName, allItems } = opts
+    const { unitNumber, inspector, formattedDate, locationName, allItems, comments } = opts
 
     const pdfDoc  = await PDFDocument.create()
     const bold    = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
@@ -144,6 +145,23 @@ async function buildInspectionPdf(opts: {
       y -= 8
     }
 
+    // ── Inspector Comments ───────────────────────────────────────────────
+    if (comments?.trim()) {
+      ensureSpace(40)
+      y -= 4
+      page.drawLine({ start: { x: M, y }, end: { x: PW - M, y }, thickness: 0.5, color: LIGHT })
+      y -= 14
+      page.drawText('INSPECTOR COMMENTS', { x: M, y, font: bold, size: 8, color: BLUE })
+      y -= 13
+      const commentLines = splitLines(comments.trim(), regular, 9, PW - 2 * M)
+      for (const line of commentLines) {
+        ensureSpace(14)
+        page.drawText(line, { x: M, y, font: regular, size: 9, color: BLACK })
+        y -= 12
+      }
+      y -= 8
+    }
+
     // ── Footer ──────────────────────────────────────────────────────────
     const footerText = 'Generated automatically by NETC Fleet Tracker'
     page.drawText(footerText, {
@@ -162,7 +180,7 @@ export async function POST(req: NextRequest) {
   console.log('[notify-inspection] Route called')
   try {
     const body = await req.json()
-    const { truckId, unitNumber, inspector, date, hasFails, failItems, allItems } = body
+    const { truckId, unitNumber, inspector, date, hasFails, failItems, allItems, comments } = body
     console.log('[notify-inspection] Payload:', { truckId, unitNumber, inspector, date, hasFails, failCount: (failItems as unknown[])?.length, allItemCount: (allItems as unknown[])?.length })
 
     const supabaseUrl  = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -240,11 +258,18 @@ export async function POST(req: NextRequest) {
       ? `Inspection — ${unitNumber} · ${failList.length} failed item${failList.length !== 1 ? 's' : ''}`
       : `Inspection Complete — ${unitNumber} · All passed`
 
+    const commentsSection = (comments as string | null)?.trim() ? `
+        <div style="margin-bottom:20px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px">
+          <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Inspector Comments</p>
+          <p style="margin:0;font-size:13px;color:#1e293b">${(comments as string).trim()}</p>
+        </div>` : ''
+
     const html = `
       <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px">
         <h2 style="margin:0 0 4px;color:#1e293b">Vehicle Inspection — ${unitNumber}</h2>
         <p style="margin:0 0 20px;color:#64748b;font-size:14px">NETC Fleet Services · ${formattedDate}</p>
         ${failSection}
+        ${commentsSection}
         <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
           <tr><td style="padding:6px 0;color:#64748b;font-size:13px;width:130px">Unit</td><td style="padding:6px 0;font-weight:600;font-size:13px">${unitNumber}</td></tr>
           <tr><td style="padding:6px 0;color:#64748b;font-size:13px">Location</td><td style="padding:6px 0;font-size:13px">${locationName}</td></tr>
@@ -259,7 +284,7 @@ export async function POST(req: NextRequest) {
 
     if (Array.isArray(allItems) && allItems.length > 0) {
       console.log('[notify-inspection] Generating PDF...')
-      const pdfBuffer = await buildInspectionPdf({ unitNumber, inspector, formattedDate, locationName, allItems })
+      const pdfBuffer = await buildInspectionPdf({ unitNumber, inspector, formattedDate, locationName, allItems, comments: comments as string | null })
       if (pdfBuffer) {
         emailBody.attachments = [{ filename: `inspection-${unitNumber}-${date}.pdf`, content: pdfBuffer.toString('base64') }]
         console.log('[notify-inspection] PDF generated, bytes:', pdfBuffer.length)

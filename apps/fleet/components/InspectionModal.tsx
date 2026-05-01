@@ -87,6 +87,7 @@ export function InspectionModal({ truck, onClose, onSaved }: Props) {
   const [inspector, setInspector]   = useState('')
   const [date,      setDate]        = useState(new Date().toISOString().slice(0, 10))
   const [items,     setItems]       = useState<InspectionItem[]>(buildInitialItems)
+  const [comments,  setComments]    = useState('')
   const [saving,    setSaving]      = useState(false)
   const [error,     setError]       = useState('')
 
@@ -119,6 +120,7 @@ export function InspectionModal({ truck, onClose, onSaved }: Props) {
       inspected_date: date,
       items:          items,
       has_fails,
+      comments:       comments.trim() || null,
     })
 
     if (dbErr) { setError(dbErr.message); setSaving(false); return }
@@ -142,6 +144,7 @@ export function InspectionModal({ truck, onClose, onSaved }: Props) {
         hasFails:   has_fails,
         failItems:  failItems.map(i => ({ label: i.label, comment: i.comment })),
         allItems,
+        comments:   comments.trim() || null,
       }),
     }).then(r => r.json()).then(d => {
       if (d.error) console.error('[notify-inspection] API error:', d.error)
@@ -254,6 +257,25 @@ export function InspectionModal({ truck, onClose, onSaved }: Props) {
               })}
             </div>
           ))}
+
+          {/* Comments */}
+          <div style={{ marginBottom: '1rem' }}>
+            <div style={{
+              fontSize: '0.75rem', fontWeight: 800, color: 'rgb(var(--primary))', textTransform: 'uppercase',
+              letterSpacing: '0.05em', paddingBottom: '0.375rem', marginBottom: '0.5rem',
+              borderBottom: '1px solid rgb(var(--outline-variant))',
+            }}>
+              Inspector Comments
+            </div>
+            <textarea
+              className="form-input"
+              rows={3}
+              placeholder="Any additional notes or observations about this inspection (optional)"
+              value={comments}
+              onChange={e => setComments(e.target.value)}
+              style={{ resize: 'vertical', fontSize: '0.8125rem', fontFamily: 'inherit' }}
+            />
+          </div>
 
           {error && (
             <div style={{ marginBottom: '0.75rem', padding: '0.5rem 0.75rem', background: 'rgb(var(--error-container))', border: '1px solid rgb(var(--error))', borderRadius: '0.375rem', color: 'rgb(var(--error))', fontSize: '0.8rem' }}>
