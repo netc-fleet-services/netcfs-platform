@@ -157,27 +157,27 @@ def sync_pm():
         print("  No PM assignments found — run seed_pm_assignments.py first.")
         return
 
-    # ── Fetch odometer + engine hours from fleet vehicle stats ───────────────
-    # Uses /fleet/vehicles/stats which is covered by "Read Vehicles" permission.
-    # obdOdometerMeters is in meters; engineSeconds is in seconds.
-    print("  Fetching vehicle stats (odometer + engine hours)...")
+    # ── Fetch current odometer from fleet vehicle stats ──────────────────────
+    # Uses /fleet/vehicles/stats (covered by "Read Vehicles" permission).
+    # Requests ECU odometer first; falls back to GPS odometer per vehicle.
+    # Values are in meters — converted to miles.
+    print("  Fetching vehicle odometer stats...")
     stats = samsara_get(
         "/fleet/vehicles/stats",
-        {"types": "obdOdometerMeters,engineSeconds", "limit": 512},
+        {"types": "obdOdometerMeters,gpsOdometerMeters"},
     )
     print(f"  {len(stats)} vehicle stats fetched")
 
-    # Build vehicle ID → {odo_miles, hours}
+    # Build vehicle ID → odo_miles (prefer ECU, fall back to GPS)
     reading_by_sam_id: dict[str, dict] = {}
     for s in stats:
         vehicle_id = s.get("id", "")
-        odo_m      = (s.get("obdOdometerMeters") or {}).get("value")
-        eng_sec    = (s.get("engineSeconds")     or {}).get("value")
-
+        odo_m = (
+            (s.get("obdOdometerMeters") or {}).get("value") or
+            (s.get("gpsOdometerMeters") or {}).get("value")
+        )
         odo_miles = round(odo_m / 1609.344) if odo_m is not None else None
-        hours     = round(eng_sec / 3600, 1)  if eng_sec is not None else None
-
-        reading_by_sam_id[vehicle_id] = {"odo_miles": odo_miles, "hours": hours}
+        reading_by_sam_id[vehicle_id] = {"odo_miles": odo_miles, "hours": None}
 
     # ── Update current_odometer + current_hours per truck ───────────────────
     updated = 0
