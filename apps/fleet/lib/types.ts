@@ -63,6 +63,7 @@ export interface Truck {
   on_job?: boolean
   locations?: { id: string; name: string } | null
   maintenance?: TruckMaintenance | null
+  truck_pm_assignments?: TruckPMAssignment[]
   truck_notes?: TruckNote[]
   status_history?: StatusHistoryEntry[]
 }
