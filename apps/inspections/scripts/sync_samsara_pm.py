@@ -15,10 +15,10 @@ Required env vars:
   SUPABASE_URL         — Supabase project URL
   SUPABASE_SERVICE_KEY — Service role key (bypasses RLS)
 
-Vehicle matching: Samsara vehicle names are matched against truck unit
-numbers (case-insensitive, leading # stripped). Unmatched vehicles are
-printed for reference. Add a samsara_vehicle_id column to the trucks table
-for a more robust long-term mapping.
+Vehicle matching: uses samsara_vehicle_id stored on each truck row (fast,
+reliable). For trucks not yet linked, falls back to regex extraction from
+the Samsara vehicle name and auto-saves the matched ID so the regex only
+runs once per truck.
 """
 
 import os, re
@@ -110,38 +110,59 @@ def normalize_unit(s: str) -> str:
 def sync_pm():
     print("\n── Samsara PM Sync ──")
 
-    # Load active trucks indexed by normalized unit number
-    trucks_resp = sb.table("trucks").select("id, unit_number").eq("active", True).execute()
-    truck_by_unit: dict[str, str] = {}
-    for t in (trucks_resp.data or []):
-        if t.get("unit_number"):
-            truck_by_unit[normalize_unit(t["unit_number"])] = t["id"]
-    print(f"  {len(truck_by_unit)} active trucks loaded from Supabase")
+    # Load active trucks — include samsara_vehicle_id for fast lookup
+    trucks_resp = sb.table("trucks").select("id, unit_number, samsara_vehicle_id").eq("active", True).execute()
+    trucks = trucks_resp.data or []
 
-    # Fetch Samsara vehicles to build assetId → truck_id mapping
+    # Two indexes: stored ID → truck_id (fast path), unit_number → truck row (regex fallback)
+    truck_by_sam_id: dict[str, str] = {}
+    truck_by_unit:   dict[str, dict] = {}
+    for t in trucks:
+        if t.get("samsara_vehicle_id"):
+            truck_by_sam_id[t["samsara_vehicle_id"]] = t["id"]
+        if t.get("unit_number"):
+            truck_by_unit[normalize_unit(t["unit_number"])] = t
+    print(f"  {len(trucks)} active trucks loaded — {len(truck_by_sam_id)} already linked to Samsara")
+
+    # Fetch all Samsara vehicles
     print("  Fetching Samsara vehicles...")
     vehicles = samsara_get("/fleet/vehicles", {"limit": 512})
-    asset_to_truck: dict[str, str] = {}
+
+    asset_to_truck: dict[str, str] = {}  # samsara assetId → internal truck_id
+    newly_linked = 0
     unmatched: list[str] = []
+
     for v in vehicles:
-        asset_id   = v.get("id", "")
-        name       = (v.get("name") or "").strip()
-        extracted  = extract_unit(name)
-        truck_id   = truck_by_unit.get(normalize_unit(extracted)) if extracted else None
-        if truck_id:
+        asset_id = v.get("id", "")
+        name     = (v.get("name") or "").strip()
+
+        # Fast path — stored samsara_vehicle_id
+        if asset_id in truck_by_sam_id:
+            asset_to_truck[asset_id] = truck_by_sam_id[asset_id]
+            continue
+
+        # Regex fallback for trucks not yet linked
+        extracted = extract_unit(name)
+        truck_row = truck_by_unit.get(normalize_unit(extracted)) if extracted else None
+        if truck_row:
+            truck_id = truck_row["id"]
             asset_to_truck[asset_id] = truck_id
-            print(f"    matched: {name!r} → unit {extracted}")
+            # Persist the link so this regex path never runs again for this truck
+            sb.table("trucks").update({"samsara_vehicle_id": asset_id}).eq("id", truck_id).execute()
+            newly_linked += 1
+            print(f"    linked: {name!r} → unit {extracted} (saved samsara_vehicle_id)")
         else:
             unmatched.append(f"{name!r}" + (f" (extracted: {extracted!r})" if extracted else " (no unit extracted)"))
 
-    print(f"  {len(asset_to_truck)} of {len(vehicles)} Samsara vehicles matched to fleet trucks")
+    print(f"  {len(asset_to_truck)} of {len(vehicles)} Samsara vehicles matched"
+          + (f" ({newly_linked} newly linked and saved)" if newly_linked else ""))
     if unmatched:
-        print(f"  {len(unmatched)} Samsara vehicles not matched (not in fleet tracker or name mismatch):")
+        print(f"  {len(unmatched)} not matched (not in fleet tracker or unrecognised name format):")
         for u in unmatched[:20]:
             print(f"    {u}")
 
     if not asset_to_truck:
-        print("  No vehicle matches — aborting. Ensure Samsara vehicle names match unit numbers.")
+        print("  No vehicle matches — aborting.")
         return
 
     # Fetch all work orders (paginated)
