@@ -138,9 +138,10 @@ interface TruckRowProps {
   onViewHistory: (truck: Truck) => void
   onInspect: (truck: Truck) => void
   onUpdateWaitingOn: (id: string, val: string) => Promise<void>
+  onLogPM: (truck: Truck) => void
 }
 
-export function TruckRow({ truck, currentStatus, profile, onStatusChange, onViewHistory, onInspect, onUpdateWaitingOn }: TruckRowProps) {
+export function TruckRow({ truck, currentStatus, profile, onStatusChange, onViewHistory, onInspect, onUpdateWaitingOn, onLogPM }: TruckRowProps) {
   const [changing, setChanging] = useState(false)
   const role = profile?.role
   const isDriver = role === ROLE.DRIVER
@@ -203,7 +204,7 @@ export function TruckRow({ truck, currentStatus, profile, onStatusChange, onView
 
       <WaitingOnCell truck={truck} canEdit={canEditWaitingOn} onUpdateWaitingOn={onUpdateWaitingOn} />
 
-      <td data-label="Next PM">
+      <td data-label="Next PM" onClick={() => onLogPM(truck)} style={{ cursor: 'pointer' }} title="Click to view / log PM">
         {(() => {
           const pm = computeMostUrgentPM(truck.truck_pm_assignments ?? [])
           if (!pm.status) return <span style={{ color: 'var(--on-surface-muted)', fontSize: '0.75rem' }}>—</span>
