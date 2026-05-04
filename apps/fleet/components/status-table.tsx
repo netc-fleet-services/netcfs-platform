@@ -24,9 +24,10 @@ interface Props {
   onViewHistory: (truck: Truck) => void
   onInspect: (truck: Truck) => void
   onUpdateWaitingOn: (id: string, val: string) => Promise<void>
+  onLogPM: (truck: Truck) => void
 }
 
-export function StatusTable({ status, trucks, totalCount, profile, onStatusChange, onViewHistory, onInspect, onUpdateWaitingOn }: Props) {
+export function StatusTable({ status, trucks, totalCount, profile, onStatusChange, onViewHistory, onInspect, onUpdateWaitingOn, onLogPM }: Props) {
   const [open, setOpen] = useState(true)
   const colors = STATUS_COLORS[status]
 
@@ -96,6 +97,7 @@ export function StatusTable({ status, trucks, totalCount, profile, onStatusChang
                     onViewHistory={onViewHistory}
                     onInspect={onInspect}
                     onUpdateWaitingOn={onUpdateWaitingOn}
+                    onLogPM={onLogPM}
                   />
                 ))}
               </tbody>
