@@ -157,25 +157,27 @@ def sync_pm():
         print("  No PM assignments found — run seed_pm_assignments.py first.")
         return
 
-    # ── Fetch odometer + engine hours from Readings API ─────────────────────
-    print("  Fetching vehicle readings (odometer + engine hours)...")
-    readings = samsara_get(
-        "/readings/latest",
-        {"readingIds": "samsaraOdometer,samsaraEngineHours", "entityType": "asset"},
+    # ── Fetch odometer + engine hours from fleet vehicle stats ───────────────
+    # Uses /fleet/vehicles/stats which is covered by "Read Vehicles" permission.
+    # obdOdometerMeters is in meters; engineSeconds is in seconds.
+    print("  Fetching vehicle stats (odometer + engine hours)...")
+    stats = samsara_get(
+        "/fleet/vehicles/stats",
+        {"types": "obdOdometerMeters,engineSeconds", "limit": 512},
     )
-    print(f"  {len(readings)} asset readings fetched")
+    print(f"  {len(stats)} vehicle stats fetched")
 
-    # Build entityId → {odo_miles, hours}
+    # Build vehicle ID → {odo_miles, hours}
     reading_by_sam_id: dict[str, dict] = {}
-    for r in readings:
-        entity_id = r.get("entityId", "")
-        odo_km    = (r.get("samsaraOdometer")    or {}).get("value")
-        hours_ms  = (r.get("samsaraEngineHours") or {}).get("value")
+    for s in stats:
+        vehicle_id = s.get("id", "")
+        odo_m      = (s.get("obdOdometerMeters") or {}).get("value")
+        eng_sec    = (s.get("engineSeconds")     or {}).get("value")
 
-        odo_miles = round(odo_km * 0.621371) if odo_km is not None else None
-        hours     = round(hours_ms / 3_600_000, 1) if hours_ms is not None else None
+        odo_miles = round(odo_m / 1609.344) if odo_m is not None else None
+        hours     = round(eng_sec / 3600, 1)  if eng_sec is not None else None
 
-        reading_by_sam_id[entity_id] = {"odo_miles": odo_miles, "hours": hours}
+        reading_by_sam_id[vehicle_id] = {"odo_miles": odo_miles, "hours": hours}
 
     # ── Update current_odometer + current_hours per truck ───────────────────
     updated = 0
