@@ -1,0 +1,32 @@
+name: Sync Samsara PM
+
+on:
+  schedule:
+    - cron: '0 7 * * *'    # 3 AM ET (7 UTC) daily
+  workflow_dispatch:         # allow manual runs from the Actions tab
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/inspections/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r apps/inspections/requirements.txt
+
+      - name: Run PM sync
+        env:
+          SAMSARA_API_KEY:      ${{ secrets.SAMSARA_API_KEY }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python apps/inspections/scripts/sync_samsara_pm.py

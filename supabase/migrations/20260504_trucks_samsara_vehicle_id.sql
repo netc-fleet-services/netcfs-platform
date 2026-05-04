@@ -1,0 +1,1 @@
+ALTER TABLE trucks ADD COLUMN IF NOT EXISTS samsara_vehicle_id TEXT UNIQUE;
