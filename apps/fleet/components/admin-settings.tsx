@@ -76,10 +76,11 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
 
-  const [editTruck, setEditTruck] = useState<TruckRow | null>(null)
   const [truckForm, setTruckForm] = useState(EMPTY_FORM)
   const [showTruckForm, setShowTruckForm] = useState(false)
   const [truckSearch, setTruckSearch] = useState('')
+  const [editingCell, setEditingCell] = useState<{ truckId: string; field: string } | null>(null)
+  const [editingValue, setEditingValue] = useState('')
 
   const [pmSchedules,      setPmSchedules]      = useState<PMScheduleOption[]>([])
 
@@ -173,18 +174,7 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
   }
 
   function openNewTruck() {
-    setEditTruck(null)
     setTruckForm(EMPTY_FORM)
-    setShowTruckForm(true)
-  }
-
-  function openEditTruck(truck: TruckRow) {
-    setEditTruck(truck)
-    setTruckForm({
-      unit_number: truck.unit_number, vin: truck.vin || '',
-      category: truck.category || '', location_id: truck.location_id || '',
-      current_status: truck.current_status, active: truck.active,
-    })
     setShowTruckForm(true)
   }
 
@@ -200,18 +190,30 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
       current_status: truckForm.current_status,
       active: truckForm.active,
     }
-    const { error } = editTruck
-      ? await supabase.from('trucks').update(payload).eq('id', editTruck.id)
-      : await supabase.from('trucks').insert(payload)
-
+    const { error } = await supabase.from('trucks').insert(payload)
     if (error) {
       setMsg('Error: ' + error.message)
     } else {
-      setMsg(editTruck ? 'Truck updated.' : 'Truck added.')
+      setMsg('Truck added.')
       setShowTruckForm(false)
       fetchAll()
     }
     setSaving(false)
+  }
+
+  async function handleCellSave(truckId: string, field: string, value: string) {
+    setEditingCell(null)
+    const trimmed = value.trim()
+    if (!trimmed && field === 'unit_number') return
+    const { error } = await supabase.from('trucks').update({ [field]: trimmed || null }).eq('id', truckId)
+    if (error) alert('Error: ' + error.message)
+    else fetchAll()
+  }
+
+  async function handleFieldUpdate(truckId: string, field: string, value: string | null) {
+    const { error } = await supabase.from('trucks').update({ [field]: value }).eq('id', truckId)
+    if (error) alert('Error: ' + error.message)
+    else fetchAll()
   }
 
   async function deactivateTruck(truck: TruckRow) {
@@ -374,7 +376,7 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
                     <h3 style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: 'var(--on-surface)' }}>
-                      {editTruck ? `Edit ${editTruck.unit_number}` : 'Add New Truck'}
+                      Add New Truck
                     </h3>
                     <button type="button" onClick={() => setShowTruckForm(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.5rem', color: 'var(--on-surface-muted)', lineHeight: 1, padding: '0.25rem' }}>×</button>
                   </div>
@@ -412,7 +414,7 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem' }}>
-                      <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving…' : editTruck ? 'Save Changes' : 'Add Truck'}</button>
+                      <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Add Truck'}</button>
                       <button type="button" className="btn-secondary" onClick={() => setShowTruckForm(false)}>Cancel</button>
                     </div>
                   </form>
@@ -424,7 +426,7 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
               <div style={{ overflowX: 'auto' }}>
                 <table className="fleet-table">
                   <thead>
-                    <tr><th>Unit</th><th>VIN</th><th>Category</th><th>Location</th><th>Status</th><th>Active</th><th>PM Schedules</th><th></th></tr>
+                    <tr><th>Unit</th><th>VIN</th><th>Category</th><th>Location</th><th>Status</th><th>Active</th><th>PM Schedules</th></tr>
                   </thead>
                   <tbody>
                     {trucks.filter(t => {
@@ -434,14 +436,101 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
                         (t.vin || '').toLowerCase().includes(q) ||
                         (CATEGORY_LABELS[t.category || ''] || '').toLowerCase().includes(q) ||
                         (t.locations?.name || '').toLowerCase().includes(q)
-                    }).map(truck => (
+                    }).map(truck => {
+                      const isEditingUnit = editingCell?.truckId === truck.id && editingCell.field === 'unit_number'
+                      const isEditingVin  = editingCell?.truckId === truck.id && editingCell.field === 'vin'
+                      return (
                       <tr key={truck.id} style={{ opacity: truck.active ? 1 : 0.55 }}>
-                        <td style={{ fontWeight: 600 }}>{truck.unit_number}</td>
-                        <td style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: 'var(--on-surface-muted)' }}>{truck.vin || '—'}</td>
-                        <td>{CATEGORY_LABELS[truck.category ?? ''] || '—'}</td>
-                        <td>{truck.locations?.name || '—'}</td>
-                        <td><span className={`status-badge status-badge-${truck.current_status}`}>{STATUS_LABELS[truck.current_status]}</span></td>
-                        <td><span style={{ color: truck.active ? 'var(--status-ready)' : 'var(--on-surface-muted)', fontSize: '0.75rem' }}>{truck.active ? 'Active' : 'Inactive'}</span></td>
+
+                        {/* Unit number — click to edit */}
+                        <td
+                          style={{ fontWeight: 600, cursor: isEditingUnit ? 'default' : 'text', minWidth: 90 }}
+                          onClick={() => { if (!isEditingUnit) { setEditingCell({ truckId: truck.id, field: 'unit_number' }); setEditingValue(truck.unit_number) } }}
+                        >
+                          {isEditingUnit ? (
+                            <input
+                              autoFocus
+                              value={editingValue}
+                              onChange={e => setEditingValue(e.target.value)}
+                              onBlur={() => handleCellSave(truck.id, 'unit_number', editingValue)}
+                              onKeyDown={e => { if (e.key === 'Enter') handleCellSave(truck.id, 'unit_number', editingValue); if (e.key === 'Escape') setEditingCell(null) }}
+                              style={{ width: '100%', padding: '0.2rem 0.375rem', background: 'var(--surface-high)', border: '1px solid var(--primary)', borderRadius: '0.3rem', color: 'var(--on-surface)', fontSize: '0.85rem', fontFamily: 'inherit', fontWeight: 600, outline: 'none' }}
+                            />
+                          ) : truck.unit_number}
+                        </td>
+
+                        {/* VIN — click to edit */}
+                        <td
+                          style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: 'var(--on-surface-muted)', cursor: isEditingVin ? 'default' : 'text', minWidth: 130 }}
+                          onClick={() => { if (!isEditingVin) { setEditingCell({ truckId: truck.id, field: 'vin' }); setEditingValue(truck.vin || '') } }}
+                        >
+                          {isEditingVin ? (
+                            <input
+                              autoFocus
+                              value={editingValue}
+                              onChange={e => setEditingValue(e.target.value)}
+                              onBlur={() => handleCellSave(truck.id, 'vin', editingValue)}
+                              onKeyDown={e => { if (e.key === 'Enter') handleCellSave(truck.id, 'vin', editingValue); if (e.key === 'Escape') setEditingCell(null) }}
+                              maxLength={17}
+                              style={{ width: '100%', padding: '0.2rem 0.375rem', background: 'var(--surface-high)', border: '1px solid var(--primary)', borderRadius: '0.3rem', color: 'var(--on-surface)', fontSize: '0.75rem', fontFamily: 'monospace', outline: 'none' }}
+                            />
+                          ) : (truck.vin || <span style={{ fontStyle: 'italic', opacity: 0.5 }}>—</span>)}
+                        </td>
+
+                        {/* Category — always a select */}
+                        <td style={{ minWidth: 130 }}>
+                          <select
+                            className="form-select"
+                            value={truck.category ?? ''}
+                            onChange={e => handleFieldUpdate(truck.id, 'category', e.target.value || null)}
+                            style={{ fontSize: '0.78rem', padding: '0.2rem 0.5rem' }}
+                          >
+                            <option value="">— None —</option>
+                            {Object.entries(CATEGORY_LABELS).map(([val, label]) => (
+                              <option key={val} value={val}>{label}</option>
+                            ))}
+                          </select>
+                        </td>
+
+                        {/* Location — always a select */}
+                        <td style={{ minWidth: 130 }}>
+                          <select
+                            className="form-select"
+                            value={truck.location_id ?? ''}
+                            onChange={e => handleFieldUpdate(truck.id, 'location_id', e.target.value || null)}
+                            style={{ fontSize: '0.78rem', padding: '0.2rem 0.5rem' }}
+                          >
+                            <option value="">— None —</option>
+                            {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                          </select>
+                        </td>
+
+                        {/* Status — always a select */}
+                        <td style={{ minWidth: 110 }}>
+                          <select
+                            className="form-select"
+                            value={truck.current_status}
+                            onChange={e => handleFieldUpdate(truck.id, 'current_status', e.target.value)}
+                            style={{ fontSize: '0.78rem', padding: '0.2rem 0.5rem' }}
+                          >
+                            {Object.entries(STATUS_LABELS).map(([val, label]) => (
+                              <option key={val} value={val}>{label}</option>
+                            ))}
+                          </select>
+                        </td>
+
+                        {/* Active — toggle button */}
+                        <td>
+                          <button
+                            className="btn-ghost"
+                            style={{ fontSize: '0.75rem', color: truck.active ? 'var(--status-ready)' : 'var(--error)', padding: '0.2rem 0.5rem' }}
+                            onClick={() => truck.active ? deactivateTruck(truck) : reactivateTruck(truck)}
+                          >
+                            {truck.active ? 'Active' : 'Inactive'}
+                          </button>
+                        </td>
+
+                        {/* PM Schedules */}
                         <td style={{ minWidth: 220 }}>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', marginBottom: '0.375rem' }}>
                             {(truck.truck_pm_assignments || []).map(a => (
@@ -472,17 +561,9 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
                             )
                           })()}
                         </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: '0.5rem' }}>
-                            <button className="btn-ghost" onClick={() => openEditTruck(truck)}>Edit</button>
-                            {truck.active
-                              ? <button className="btn-ghost" style={{ color: 'var(--error)' }} onClick={() => deactivateTruck(truck)}>Deactivate</button>
-                              : <button className="btn-ghost" style={{ color: 'var(--status-ready)' }} onClick={() => reactivateTruck(truck)}>Reactivate</button>
-                            }
-                          </div>
-                        </td>
                       </tr>
-                    ))}
+                    )})}
+
                   </tbody>
                 </table>
               </div>
