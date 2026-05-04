@@ -2,27 +2,23 @@
 Samsara → Supabase PM Sync
 Runs daily via GitHub Actions.
 
-Pulls completed work orders from Samsara, finds the most recent one per
-vehicle, and upserts last/next PM date and mileage into the fleet
-maintenance table.
+For each active truck linked to Samsara, pulls the current odometer (km)
+and engine hours (ms) from the Samsara Readings API and writes them into
+truck_pm_assignments so the fleet UI can show miles/days remaining per
+PM schedule.
 
-Next PM date/mileage are computed from the last completed work order using
-the configurable intervals at the top of this file — Samsara does not
-expose a "next due" field via the work orders API.
+Also performs one-time vehicle matching: for trucks not yet linked to a
+Samsara vehicle ID, falls back to regex extraction from the vehicle name
+and auto-saves the matched ID.
 
 Required env vars:
-  SAMSARA_API_KEY      — API token with "Read Work Orders" permission
+  SAMSARA_API_KEY      — API token with "Read Vehicles" + "Read Readings"
   SUPABASE_URL         — Supabase project URL
   SUPABASE_SERVICE_KEY — Service role key (bypasses RLS)
-
-Vehicle matching: uses samsara_vehicle_id stored on each truck row (fast,
-reliable). For trucks not yet linked, falls back to regex extraction from
-the Samsara vehicle name and auto-saves the matched ID so the regex only
-runs once per truck.
 """
 
 import os, re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import requests
 from supabase import create_client
 
@@ -32,19 +28,11 @@ SUPABASE_KEY    = os.environ["SUPABASE_SERVICE_KEY"].strip()
 
 BASE_URL = "https://api.samsara.com"
 
-# ── PM interval config ─────────────────────────────────────────────────────────
-# next_pm_date    = last completed work order date + PM_INTERVAL_DAYS
-# next_pm_mileage = last odometer reading + PM_INTERVAL_MILES
-PM_INTERVAL_DAYS  = 180    # 6 months
-PM_INTERVAL_MILES = 25000
-
-COMPLETED_STATUSES = {"Completed", "Closed"}
-
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 def samsara_get(path: str, params: dict) -> list[dict]:
-    """Paginated GET from Samsara v2 API."""
+    """Paginated GET from Samsara API."""
     headers = {"Authorization": f"Bearer {SAMSARA_API_KEY}"}
     results = []
     while True:
@@ -103,18 +91,16 @@ def extract_unit(samsara_name: str) -> str | None:
 
 
 def normalize_unit(s: str) -> str:
-    """Lowercase for final lookup — unit numbers are already stripped by extract_unit."""
     return s.strip().lower()
 
 
 def sync_pm():
     print("\n── Samsara PM Sync ──")
 
-    # Load active trucks — include samsara_vehicle_id for fast lookup
+    # Load active trucks
     trucks_resp = sb.table("trucks").select("id, unit_number, samsara_vehicle_id").eq("active", True).execute()
     trucks = trucks_resp.data or []
 
-    # Two indexes: stored ID → truck_id (fast path), unit_number → truck row (regex fallback)
     truck_by_sam_id: dict[str, str] = {}
     truck_by_unit:   dict[str, dict] = {}
     for t in trucks:
@@ -122,13 +108,13 @@ def sync_pm():
             truck_by_sam_id[t["samsara_vehicle_id"]] = t["id"]
         if t.get("unit_number"):
             truck_by_unit[normalize_unit(t["unit_number"])] = t
-    print(f"  {len(trucks)} active trucks loaded — {len(truck_by_sam_id)} already linked to Samsara")
+    print(f"  {len(trucks)} active trucks — {len(truck_by_sam_id)} already linked to Samsara")
 
-    # Fetch all Samsara vehicles
+    # ── Vehicle matching (links new trucks to their Samsara ID) ──────────────
     print("  Fetching Samsara vehicles...")
     vehicles = samsara_get("/fleet/vehicles", {"limit": 512})
 
-    asset_to_truck: dict[str, str] = {}  # samsara assetId → internal truck_id
+    asset_to_truck: dict[str, str] = {}
     newly_linked = 0
     unmatched: list[str] = []
 
@@ -136,18 +122,15 @@ def sync_pm():
         asset_id = v.get("id", "")
         name     = (v.get("name") or "").strip()
 
-        # Fast path — stored samsara_vehicle_id
         if asset_id in truck_by_sam_id:
             asset_to_truck[asset_id] = truck_by_sam_id[asset_id]
             continue
 
-        # Regex fallback for trucks not yet linked
         extracted = extract_unit(name)
         truck_row = truck_by_unit.get(normalize_unit(extracted)) if extracted else None
         if truck_row:
             truck_id = truck_row["id"]
             asset_to_truck[asset_id] = truck_id
-            # Persist the link so this regex path never runs again for this truck
             sb.table("trucks").update({"samsara_vehicle_id": asset_id}).eq("id", truck_id).execute()
             newly_linked += 1
             print(f"    linked: {name!r} → unit {extracted} (saved samsara_vehicle_id)")
@@ -155,9 +138,9 @@ def sync_pm():
             unmatched.append(f"{name!r}" + (f" (extracted: {extracted!r})" if extracted else " (no unit extracted)"))
 
     print(f"  {len(asset_to_truck)} of {len(vehicles)} Samsara vehicles matched"
-          + (f" ({newly_linked} newly linked and saved)" if newly_linked else ""))
+          + (f" ({newly_linked} newly linked)" if newly_linked else ""))
     if unmatched:
-        print(f"  {len(unmatched)} not matched (not in fleet tracker or unrecognised name format):")
+        print(f"  {len(unmatched)} not matched:")
         for u in unmatched[:20]:
             print(f"    {u}")
 
@@ -165,76 +148,58 @@ def sync_pm():
         print("  No vehicle matches — aborting.")
         return
 
-    # Fetch all work orders (paginated)
-    print("  Fetching work orders...")
-    all_orders = samsara_get("/maintenance/work-orders", {"limit": 100})
-    print(f"  {len(all_orders)} total work orders fetched")
+    # ── Check which trucks have PM assignments ───────────────────────────────
+    assign_resp = sb.table("truck_pm_assignments").select("truck_id").execute()
+    trucks_with_assignments = {r["truck_id"] for r in (assign_resp.data or [])}
+    print(f"  {len(trucks_with_assignments)} trucks have PM assignments")
 
-    # For each truck, find the most recent completed/closed work order
-    latest: dict[str, dict] = {}
-    n_skip_status = n_skip_asset = n_skip_date = 0
-
-    for wo in all_orders:
-        if wo.get("status") not in COMPLETED_STATUSES:
-            n_skip_status += 1
-            continue
-
-        truck_id = asset_to_truck.get(wo.get("assetId", ""))
-        if not truck_id:
-            n_skip_asset += 1
-            continue
-
-        completed_at = wo.get("completedAtTime")
-        if not completed_at:
-            n_skip_date += 1
-            continue
-
-        existing = latest.get(truck_id)
-        if not existing or completed_at > existing["completedAtTime"]:
-            latest[truck_id] = {
-                "completedAtTime": completed_at,
-                "odometerMeters":  wo.get("odometerMeters"),
-            }
-
-    print(
-        f"  {len(latest)} trucks with a completed work order "
-        f"(skipped: {n_skip_status} non-complete, {n_skip_asset} unmatched vehicle, "
-        f"{n_skip_date} missing date)"
-    )
-
-    if not latest:
-        print("  Nothing to update.")
+    if not trucks_with_assignments:
+        print("  No PM assignments found — run seed_pm_assignments.py first.")
         return
 
-    # Compute next PM and upsert into maintenance table
-    rows = []
-    for truck_id, wo in latest.items():
-        completed_at  = wo["completedAtTime"]
-        odometer_m    = wo.get("odometerMeters")
+    # ── Fetch odometer + engine hours from Readings API ─────────────────────
+    print("  Fetching vehicle readings (odometer + engine hours)...")
+    readings = samsara_get(
+        "/readings/latest",
+        {"readingIds": "samsaraOdometer,samsaraEngineHours", "entityType": "asset"},
+    )
+    print(f"  {len(readings)} asset readings fetched")
 
-        last_pm_date  = completed_at[:10]
-        last_pm_miles = round(odometer_m / 1609.344) if odometer_m else None
+    # Build entityId → {odo_miles, hours}
+    reading_by_sam_id: dict[str, dict] = {}
+    for r in readings:
+        entity_id = r.get("entityId", "")
+        odo_km    = (r.get("samsaraOdometer")    or {}).get("value")
+        hours_ms  = (r.get("samsaraEngineHours") or {}).get("value")
 
-        last_dt       = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
-        next_pm_date  = (last_dt + timedelta(days=PM_INTERVAL_DAYS)).strftime("%Y-%m-%d")
-        next_pm_miles = (last_pm_miles + PM_INTERVAL_MILES) if last_pm_miles else None
+        odo_miles = round(odo_km * 0.621371) if odo_km is not None else None
+        hours     = round(hours_ms / 3_600_000, 1) if hours_ms is not None else None
 
-        rows.append({
-            "truck_id":        truck_id,
-            "last_pm_date":    last_pm_date,
-            "last_pm_mileage": last_pm_miles,
-            "next_pm_date":    next_pm_date,
-            "next_pm_mileage": next_pm_miles,
-        })
-        print(
-            f"  → truck {truck_id}: last={last_pm_date}"
-            + (f" @ {last_pm_miles:,} mi" if last_pm_miles else "")
-            + f", next={next_pm_date}"
-            + (f" @ {next_pm_miles:,} mi" if next_pm_miles else "")
-        )
+        reading_by_sam_id[entity_id] = {"odo_miles": odo_miles, "hours": hours}
 
-    sb.table("maintenance").upsert(rows, on_conflict="truck_id").execute()
-    print(f"  {len(rows)} maintenance records upserted")
+    # ── Update current_odometer + current_hours per truck ───────────────────
+    updated = 0
+    no_reading = 0
+
+    for asset_id, truck_id in asset_to_truck.items():
+        if truck_id not in trucks_with_assignments:
+            continue
+
+        reading = reading_by_sam_id.get(asset_id)
+        if not reading or (reading["odo_miles"] is None and reading["hours"] is None):
+            no_reading += 1
+            continue
+
+        payload: dict = {}
+        if reading["odo_miles"] is not None:
+            payload["current_odometer"] = reading["odo_miles"]
+        if reading["hours"] is not None:
+            payload["current_hours"] = reading["hours"]
+
+        sb.table("truck_pm_assignments").update(payload).eq("truck_id", truck_id).execute()
+        updated += 1
+
+    print(f"  {updated} trucks updated, {no_reading} had no readings")
 
 
 def main():

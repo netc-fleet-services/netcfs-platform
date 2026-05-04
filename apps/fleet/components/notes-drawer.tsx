@@ -2,9 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { NOTE_TYPE, NOTE_TYPE_LABELS, STATUS_LABELS, ROLE } from '@/lib/constants'
-import { MaintenanceBadge } from './maintenance-badge'
 import { getSupabaseBrowserClient } from '@netcfs/auth/client'
-import type { Truck, FleetProfile, TruckNote, StatusHistoryEntry } from '@/lib/types'
+import type { Truck, FleetProfile, TruckNote, StatusHistoryEntry, TruckPMAssignment } from '@/lib/types'
 
 interface InspectionRecord {
   id: string
@@ -84,6 +83,14 @@ export function NotesDrawer({ truck, profile, onAddNote, onClose }: Props) {
   const [inspLoading,     setInspLoading]     = useState(false)
   const [expandedInspId,  setExpandedInspId]  = useState<string | null>(null)
 
+  const [pmAssignments,   setPmAssignments]   = useState<TruckPMAssignment[]>([])
+  const [pmLoading,       setPmLoading]       = useState(false)
+  const [loggingPmId,     setLoggingPmId]     = useState<string | null>(null)
+  const [pmLogDate,       setPmLogDate]       = useState(new Date().toISOString().slice(0, 10))
+  const [pmLogMileage,    setPmLogMileage]    = useState('')
+  const [pmLogHours,      setPmLogHours]      = useState('')
+  const [pmSaving,        setPmSaving]        = useState(false)
+
   useEffect(() => {
     if (activeTab !== 'inspections') return
     setInspLoading(true)
@@ -96,6 +103,16 @@ export function NotesDrawer({ truck, profile, onAddNote, onClose }: Props) {
       .then(({ data }) => { setInspections(data || []); setInspLoading(false) })
   }, [activeTab, truck.id, supabase])
 
+  useEffect(() => {
+    if (activeTab !== 'maintenance') return
+    setPmLoading(true)
+    supabase
+      .from('truck_pm_assignments')
+      .select('*, pm_schedules(*)')
+      .eq('truck_id', truck.id)
+      .then(({ data }) => { setPmAssignments(data || []); setPmLoading(false) })
+  }, [activeTab, truck.id, supabase])
+
   const isDriver = profile?.role === ROLE.DRIVER
   const availableNoteTypes = isDriver
     ? [NOTE_TYPE.DRIVER]
@@ -104,6 +121,56 @@ export function NotesDrawer({ truck, profile, onAddNote, onClose }: Props) {
   const notes: TimelineEntry[] = (truck.truck_notes || []).map(n => ({ ...n, _type: 'note' as const }))
   const history: TimelineEntry[] = (truck.status_history || []).map(h => ({ ...h, _type: 'history' as const }))
   const timeline = [...notes, ...history].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+
+  function computePMStatus(a: TruckPMAssignment): { remaining: number | null; status: 'ok' | 'soon' | 'overdue' | 'unknown'; unit: string } {
+    const { interval_type, interval_value } = a.pm_schedules
+    if (interval_type === 'miles') {
+      if (a.last_pm_mileage == null || a.current_odometer == null) return { remaining: null, status: 'unknown', unit: 'mi' }
+      const rem = interval_value - (a.current_odometer - a.last_pm_mileage)
+      return { remaining: rem, status: rem < 0 ? 'overdue' : rem < 1500 ? 'soon' : 'ok', unit: 'mi' }
+    }
+    if (interval_type === 'days') {
+      if (!a.last_pm_date) return { remaining: null, status: 'unknown', unit: 'days' }
+      const rem = interval_value - Math.floor((Date.now() - new Date(a.last_pm_date).getTime()) / 864e5)
+      return { remaining: rem, status: rem < 0 ? 'overdue' : rem < 30 ? 'soon' : 'ok', unit: 'days' }
+    }
+    if (interval_type === 'hours') {
+      if (a.last_pm_hours == null || a.current_hours == null) return { remaining: null, status: 'unknown', unit: 'hrs' }
+      const rem = interval_value - (a.current_hours - a.last_pm_hours)
+      return { remaining: Math.round(rem), status: rem < 0 ? 'overdue' : rem < 25 ? 'soon' : 'ok', unit: 'hrs' }
+    }
+    return { remaining: null, status: 'unknown', unit: '' }
+  }
+
+  async function handleLogPM(assignmentId: string, intervalType: string) {
+    setPmSaving(true)
+    const body: Record<string, unknown> = {
+      assignmentId,
+      date:      pmLogDate,
+      loggedBy:  profile?.full_name || profile?.email || null,
+    }
+    if (intervalType === 'miles' && pmLogMileage) body.mileage = Number(pmLogMileage.replace(/,/g, ''))
+    if (intervalType === 'hours' && pmLogHours)   body.hours   = Number(pmLogHours)
+
+    const res = await fetch('/api/log-pm', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    })
+    const json = await res.json()
+    if (json.error) {
+      console.error('[log-pm]', json.error)
+    } else {
+      setLoggingPmId(null)
+      setPmLogDate(new Date().toISOString().slice(0, 10))
+      setPmLogMileage('')
+      setPmLogHours('')
+      // Reload assignments
+      supabase.from('truck_pm_assignments').select('*, pm_schedules(*)').eq('truck_id', truck.id)
+        .then(({ data }) => setPmAssignments(data || []))
+    }
+    setPmSaving(false)
+  }
 
   async function handleAddNote(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -348,30 +415,150 @@ export function NotesDrawer({ truck, profile, onAddNote, onClose }: Props) {
           )}
 
           {activeTab === 'maintenance' && (
-            <div style={{ padding: '1.25rem', background: 'var(--surface-high)', border: '1px solid var(--outline)', borderRadius: '0.625rem' }}>
-              <p style={{ fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--on-surface-muted)', marginBottom: '1rem' }}>
-                PM Schedule
-              </p>
-              {truck.maintenance ? (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                  {([
-                    ['Last PM Date',    truck.maintenance.last_pm_date ? new Date(truck.maintenance.last_pm_date).toLocaleDateString() : '—'],
-                    ['Last PM Mileage', truck.maintenance.last_pm_mileage?.toLocaleString() || '—'],
-                    ['Next PM Due',     truck.maintenance.next_pm_date ? new Date(truck.maintenance.next_pm_date).toLocaleDateString() : '—'],
-                    ['Next PM Mileage', truck.maintenance.next_pm_mileage?.toLocaleString() || '—'],
-                  ] as [string, string][]).map(([label, val]) => (
-                    <div key={label}>
-                      <p style={{ margin: 0, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--on-surface-muted)' }}>{label}</p>
-                      <p style={{ margin: '0.25rem 0 0', fontWeight: 700, fontSize: '0.9375rem', color: 'var(--on-surface)' }}>{val}</p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p style={{ color: 'var(--on-surface-muted)', fontSize: '0.875rem', margin: 0 }}>No maintenance record on file.</p>
+            <div>
+              {pmLoading && (
+                <p style={{ color: 'var(--on-surface-muted)', fontSize: '0.875rem' }}>Loading…</p>
               )}
-              <div style={{ marginTop: '1rem' }}>
-                <MaintenanceBadge nextPmDate={truck.maintenance?.next_pm_date} />
-              </div>
+              {!pmLoading && pmAssignments.length === 0 && (
+                <p style={{ color: 'var(--on-surface-muted)', fontSize: '0.875rem' }}>No PM schedules assigned to this vehicle.</p>
+              )}
+              {pmAssignments.map(a => {
+                const sched    = a.pm_schedules
+                const pmStatus = computePMStatus(a)
+                const isLogging = loggingPmId === a.id
+                const canLogPM  = !isDriver
+
+                const statusColor =
+                  pmStatus.status === 'overdue' ? 'var(--error)' :
+                  pmStatus.status === 'soon'    ? '#f59e0b' :
+                  pmStatus.status === 'ok'      ? 'var(--status-ready)' :
+                                                  'var(--on-surface-muted)'
+                const statusLabel =
+                  pmStatus.status === 'overdue' ? `Overdue ${Math.abs(pmStatus.remaining!).toLocaleString()} ${pmStatus.unit}` :
+                  pmStatus.status === 'soon'    ? `Due in ${pmStatus.remaining!.toLocaleString()} ${pmStatus.unit}` :
+                  pmStatus.status === 'ok'      ? `${pmStatus.remaining!.toLocaleString()} ${pmStatus.unit} remaining` :
+                                                  'Not yet logged'
+
+                return (
+                  <div key={a.id} style={{ marginBottom: '0.75rem', border: '1px solid var(--outline-variant)', borderRadius: '0.5rem', overflow: 'hidden' }}>
+                    <div style={{ padding: '0.75rem 0.875rem', background: 'var(--surface-high)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                        <div>
+                          <p style={{ margin: 0, fontWeight: 700, fontSize: '0.8125rem', color: 'var(--on-surface)' }}>{sched.name}</p>
+                          <p style={{ margin: '1px 0 0', fontSize: '0.72rem', color: 'var(--on-surface-muted)' }}>
+                            Every {sched.interval_value.toLocaleString()} {sched.interval_type}
+                          </p>
+                        </div>
+                        <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: statusColor + '22', color: statusColor, whiteSpace: 'nowrap' }}>
+                          {statusLabel}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.375rem 1rem', fontSize: '0.775rem', marginBottom: canLogPM ? '0.625rem' : 0 }}>
+                        {sched.interval_type !== 'hours' && (
+                          <>
+                            <div>
+                              <span style={{ color: 'var(--on-surface-muted)' }}>Last PM </span>
+                              <span style={{ color: 'var(--on-surface)', fontWeight: 600 }}>
+                                {a.last_pm_date ? new Date(a.last_pm_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) : '—'}
+                                {sched.interval_type === 'miles' && a.last_pm_mileage != null ? ` @ ${a.last_pm_mileage.toLocaleString()} mi` : ''}
+                              </span>
+                            </div>
+                            <div>
+                              <span style={{ color: 'var(--on-surface-muted)' }}>Current </span>
+                              <span style={{ color: 'var(--on-surface)', fontWeight: 600 }}>
+                                {sched.interval_type === 'miles' && a.current_odometer != null
+                                  ? `${a.current_odometer.toLocaleString()} mi`
+                                  : sched.interval_type === 'days'
+                                    ? (a.last_pm_date ? `${Math.floor((Date.now() - new Date(a.last_pm_date).getTime()) / 864e5)} days ago` : '—')
+                                    : '—'}
+                              </span>
+                            </div>
+                          </>
+                        )}
+                        {sched.interval_type === 'hours' && (
+                          <>
+                            <div>
+                              <span style={{ color: 'var(--on-surface-muted)' }}>Last PM </span>
+                              <span style={{ color: 'var(--on-surface)', fontWeight: 600 }}>
+                                {a.last_pm_date ? new Date(a.last_pm_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) : '—'}
+                                {a.last_pm_hours != null ? ` @ ${a.last_pm_hours.toLocaleString()} hrs` : ''}
+                              </span>
+                            </div>
+                            <div>
+                              <span style={{ color: 'var(--on-surface-muted)' }}>Current </span>
+                              <span style={{ color: 'var(--on-surface)', fontWeight: 600 }}>
+                                {a.current_hours != null ? `${a.current_hours.toLocaleString()} hrs` : '—'}
+                              </span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      {canLogPM && !isLogging && (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}
+                          onClick={() => {
+                            setLoggingPmId(a.id)
+                            setPmLogDate(new Date().toISOString().slice(0, 10))
+                            setPmLogMileage(a.current_odometer != null ? String(a.current_odometer) : '')
+                            setPmLogHours(a.current_hours != null ? String(a.current_hours) : '')
+                          }}
+                        >
+                          Log PM
+                        </button>
+                      )}
+                    </div>
+
+                    {isLogging && (
+                      <div style={{ padding: '0.75rem 0.875rem', borderTop: '1px solid var(--outline-variant)', background: 'var(--surface)' }}>
+                        <p style={{ margin: '0 0 0.625rem', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--on-surface-muted)' }}>
+                          Log PM Completion
+                        </p>
+                        <div style={{ display: 'grid', gridTemplateColumns: sched.interval_type !== 'days' ? '1fr 1fr' : '1fr', gap: '0.5rem', marginBottom: '0.625rem' }}>
+                          <div>
+                            <label className="form-label">Date *</label>
+                            <input className="form-input" type="date" value={pmLogDate} onChange={e => setPmLogDate(e.target.value)} />
+                          </div>
+                          {sched.interval_type === 'miles' && (
+                            <div>
+                              <label className="form-label">Odometer at PM (mi)</label>
+                              <input className="form-input" type="number" value={pmLogMileage} onChange={e => setPmLogMileage(e.target.value)} placeholder="e.g. 234000" />
+                            </div>
+                          )}
+                          {sched.interval_type === 'hours' && (
+                            <div>
+                              <label className="form-label">Engine hours at PM</label>
+                              <input className="form-input" type="number" step="0.1" value={pmLogHours} onChange={e => setPmLogHours(e.target.value)} placeholder="e.g. 1250.5" />
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ fontSize: '0.75rem', padding: '0.3rem 0.875rem' }}
+                            disabled={pmSaving || !pmLogDate}
+                            onClick={() => handleLogPM(a.id, sched.interval_type)}
+                          >
+                            {pmSaving ? 'Saving…' : 'Save PM'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ fontSize: '0.75rem', padding: '0.3rem 0.75rem' }}
+                            onClick={() => setLoggingPmId(null)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
