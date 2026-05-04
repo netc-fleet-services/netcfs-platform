@@ -324,6 +324,14 @@ def scrape_tab(page, tab_id, tab_name):
                          eq_el.first.text_content() or '').strip()
                 truck = re.sub(r'\s+', ' ', truck).strip()
 
+        # Action status (columnid 14) — e.g. "Scheduled for action", "On Scene",
+        # "Towing at time", "Waiting", "Completed", etc.
+        action_status = ''
+        act_el = row.locator(".text[columnid='14']")
+        if act_el.count():
+            action_status = (act_el.first.get_attribute("title") or
+                             act_el.first.text_content() or '').strip()
+
         pickup = parse_addr(pickup)
         drop   = parse_addr(drop)
         day    = sched_to_day(sched) if sched else date.today().isoformat()
@@ -338,20 +346,21 @@ def scrape_tab(page, tab_id, tab_name):
         # sync will carry forward existing pickup/drop from the DB.
         if pickup or drop or tab_name == "Completed":
             calls.append({
-                'call_num':   call_num,
-                'desc':       desc,
-                'account':    account,
-                'pickup':     pickup,
-                'drop':       drop,
-                'pickup_zip': extract_zip(pickup),
-                'drop_zip':   extract_zip(drop),
-                'scheduled':  sched,
-                'reason':     reason,
-                'driver':     driver1,
-                'driver2':    driver2,
-                'truck':      truck,
-                'day':        day,
-                'source_tab': tab_name,
+                'call_num':     call_num,
+                'desc':         desc,
+                'account':      account,
+                'pickup':       pickup,
+                'drop':         drop,
+                'pickup_zip':   extract_zip(pickup),
+                'drop_zip':     extract_zip(drop),
+                'scheduled':    sched,
+                'reason':       reason,
+                'driver':       driver1,
+                'driver2':      driver2,
+                'truck':        truck,
+                'day':          day,
+                'source_tab':   tab_name,
+                'action_status': action_status,
             })
 
     return calls
@@ -495,9 +504,22 @@ def sync_to_supabase(tb_calls):
             "updated_at":   now,
         }
 
-        # Determine status from source tab. Completed has highest authority,
-        # then Active, then existing DB status, then default to scheduled.
-        is_active = call.get("source_tab") == "Active"
+        # Derive status from the action-status field (columnid 14).
+        # "Scheduled for action" → scheduled
+        # anything containing "complet" → complete
+        # any other non-empty value (On Scene, Towing at time, Waiting, …) → active
+        # empty (field not present) → fall back to tab name
+        act = call.get("action_status", "").strip().lower()
+        if act == "scheduled for action":
+            derived_status = "scheduled"
+        elif "complet" in act:
+            derived_status = "complete"
+        elif act:
+            derived_status = "active"
+        elif call.get("source_tab") == "Active":
+            derived_status = "active"
+        else:
+            derived_status = None   # no signal — keep existing DB status or default to scheduled
 
         if ex:
             # Existing record — carry forward all dispatcher-managed fields
@@ -509,7 +531,7 @@ def sync_to_supabase(tb_calls):
             row["priority"]    = ex["priority"]
             row["notes"]       = ex.get("notes")
             row["stops"]       = ex.get("stops") or []
-            row["status"]      = "active" if is_active else ex["status"]
+            row["status"]      = derived_status if derived_status is not None else ex["status"]
             updates.append(row)
             upd_count += 1
         else:
@@ -518,7 +540,7 @@ def sync_to_supabase(tb_calls):
             row["priority"] = "normal"
             row["stops"]    = []
             row["added_at"] = now
-            row["status"]   = "active" if is_active else "scheduled"
+            row["status"]   = derived_status if derived_status is not None else "scheduled"
             inserts.append(row)
             new_count += 1
 
