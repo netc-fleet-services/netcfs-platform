@@ -15,9 +15,18 @@ import type { Truck, FleetProfile, Location } from '@/lib/types'
 import { CAN_MANAGE_TRUCKS } from '@/lib/constants'
 
 function isPMDue(truck: Truck) {
-  if (!truck.maintenance?.next_pm_date) return false
-  const daysUntil = (new Date(truck.maintenance.next_pm_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-  return daysUntil <= 30
+  for (const a of truck.truck_pm_assignments ?? []) {
+    const { interval_type, interval_value } = a.pm_schedules
+    if (interval_type === 'days' && a.last_pm_date) {
+      const rem = interval_value - Math.floor((Date.now() - new Date(a.last_pm_date).getTime()) / 864e5)
+      if (rem <= 30) return true
+    } else if (interval_type === 'miles' && a.last_pm_mileage != null && a.current_odometer != null) {
+      if (interval_value - (a.current_odometer - a.last_pm_mileage) <= 1500) return true
+    } else if (interval_type === 'hours' && a.last_pm_hours != null && a.current_hours != null) {
+      if (interval_value - (a.current_hours - a.last_pm_hours) <= 25) return true
+    }
+  }
+  return false
 }
 
 function timeAgo(iso: string | null) {
@@ -49,6 +58,7 @@ const TRUCK_QUERY = `
   *,
   locations ( id, name ),
   maintenance ( last_pm_date, last_pm_mileage, next_pm_date, next_pm_mileage ),
+  truck_pm_assignments ( id, last_pm_date, last_pm_mileage, last_pm_hours, current_odometer, current_hours, pm_schedules ( name, interval_type, interval_value ) ),
   truck_notes ( id, note_type, body, created_by, created_at ),
   status_history ( id, old_status, new_status, changed_by, created_at, comment )
 `

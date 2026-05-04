@@ -2,8 +2,52 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { STATUS, STATUS_LABELS, CAN_CHANGE_STATUS, CAN_REPORT_ISSUES, ROLE, CATEGORY_LABELS } from '@/lib/constants'
-import { MaintenanceBadge } from './maintenance-badge'
-import type { Truck, FleetProfile } from '@/lib/types'
+import type { Truck, FleetProfile, TruckPMAssignment } from '@/lib/types'
+
+function computeMostUrgentPM(assignments: TruckPMAssignment[]): {
+  status: 'overdue' | 'soon' | 'ok' | null
+  label: string
+} {
+  let best: { status: 'overdue' | 'soon' | 'ok'; remaining: number; label: string } | null = null
+
+  const rank = { overdue: 0, soon: 1, ok: 2 }
+
+  for (const a of assignments) {
+    const { interval_type, interval_value } = a.pm_schedules
+    let remaining: number | null = null
+    let unit = ''
+
+    if (interval_type === 'days' && a.last_pm_date) {
+      remaining = interval_value - Math.floor((Date.now() - new Date(a.last_pm_date).getTime()) / 864e5)
+      unit = 'days'
+    } else if (interval_type === 'miles' && a.last_pm_mileage != null && a.current_odometer != null) {
+      remaining = interval_value - (a.current_odometer - a.last_pm_mileage)
+      unit = 'mi'
+    } else if (interval_type === 'hours' && a.last_pm_hours != null && a.current_hours != null) {
+      remaining = Math.round(interval_value - (a.current_hours - a.last_pm_hours))
+      unit = 'hrs'
+    }
+
+    if (remaining === null) continue
+
+    const status: 'overdue' | 'soon' | 'ok' =
+      remaining < 0 ? 'overdue' :
+      (unit === 'days' && remaining < 30) || (unit === 'mi' && remaining < 1500) || (unit === 'hrs' && remaining < 25)
+        ? 'soon' : 'ok'
+
+    const absRem = Math.abs(remaining)
+    const label = status === 'overdue'
+      ? `${absRem.toLocaleString()} ${unit} over`
+      : `${remaining.toLocaleString()} ${unit}`
+
+    if (!best || rank[status] < rank[best.status] || (status === best.status && absRem < Math.abs(best.remaining))) {
+      best = { status, remaining, label }
+    }
+  }
+
+  if (!best) return { status: null, label: '—' }
+  return { status: best.status, label: best.label }
+}
 
 function WaitingOnCell({ truck, canEdit, onUpdateWaitingOn }: {
   truck: Truck
@@ -160,7 +204,18 @@ export function TruckRow({ truck, currentStatus, profile, onStatusChange, onView
       <WaitingOnCell truck={truck} canEdit={canEditWaitingOn} onUpdateWaitingOn={onUpdateWaitingOn} />
 
       <td data-label="Next PM">
-        <MaintenanceBadge nextPmDate={truck.maintenance?.next_pm_date} />
+        {(() => {
+          const pm = computeMostUrgentPM(truck.truck_pm_assignments ?? [])
+          if (!pm.status) return <span style={{ color: 'var(--on-surface-muted)', fontSize: '0.75rem' }}>—</span>
+          const color = pm.status === 'overdue' ? 'var(--error)' : pm.status === 'soon' ? '#f59e0b' : 'var(--status-ready)'
+          const badgeLabel = pm.status === 'overdue' ? 'PM Overdue' : pm.status === 'soon' ? 'PM Soon' : 'PM OK'
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span className={`pm-badge pm-${pm.status}`}>{badgeLabel}</span>
+              <span style={{ fontSize: '0.68rem', color }}>{pm.label}</span>
+            </div>
+          )
+        })()}
       </td>
 
       <td data-label="Status">
