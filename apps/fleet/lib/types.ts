@@ -12,6 +12,27 @@ export interface TruckMaintenance {
   next_pm_mileage: number | null
 }
 
+export interface PMSchedule {
+  id: string
+  name: string
+  interval_type: 'days' | 'miles' | 'hours'
+  interval_value: number
+}
+
+export interface TruckPMAssignment {
+  id: string
+  truck_id: string
+  pm_schedule_id: string
+  last_pm_date: string | null
+  last_pm_mileage: number | null
+  last_pm_hours: number | null
+  current_odometer: number | null
+  current_hours: number | null
+  logged_by: string | null
+  logged_at: string | null
+  pm_schedules: PMSchedule
+}
+
 export interface TruckNote {
   id: string
   note_type: string
