@@ -22,6 +22,12 @@ interface EquipmentRequest {
   reviewed_at: string | null
 }
 
+interface PMAssignmentRow {
+  id: string
+  pm_schedule_id: string
+  pm_schedules: { name: string }
+}
+
 interface TruckRow {
   id: string
   unit_number: string
@@ -31,6 +37,12 @@ interface TruckRow {
   current_status: string
   active: boolean
   locations?: { name: string } | null
+  truck_pm_assignments?: PMAssignmentRow[]
+}
+
+interface PMScheduleOption {
+  id: string
+  name: string
 }
 
 interface NotifSetting {
@@ -68,6 +80,8 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
   const [truckForm, setTruckForm] = useState(EMPTY_FORM)
   const [showTruckForm, setShowTruckForm] = useState(false)
   const [truckSearch, setTruckSearch] = useState('')
+
+  const [pmSchedules,      setPmSchedules]      = useState<PMScheduleOption[]>([])
 
   const [equipRequests,    setEquipRequests]    = useState<EquipmentRequest[]>([])
   const [requestsLoading,  setRequestsLoading]  = useState(false)
@@ -132,11 +146,12 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
   }
 
   async function fetchAll() {
-    const [{ data: t }, { data: l }, { data: n }, { data: ni }] = await Promise.all([
-      supabase.from('trucks').select('*, locations(name)').order('unit_number'),
+    const [{ data: t }, { data: l }, { data: n }, { data: ni }, { data: ps }] = await Promise.all([
+      supabase.from('trucks').select('*, locations(name), truck_pm_assignments(id, pm_schedule_id, pm_schedules(name))').order('unit_number'),
       supabase.from('locations').select('*').order('name'),
       supabase.from('notification_settings').select('*'),
       supabase.from('inspection_notification_settings').select('*'),
+      supabase.from('pm_schedules').select('id, name').order('name'),
     ])
     const mapRules = (rows: { id: string; category: string | null; location_id: string | null; emails: string[] }[]) =>
       rows.map(r => ({ id: r.id, category: r.category, location_id: r.location_id, emails: r.emails ?? [], rawEmailText: (r.emails ?? []).join(', ') }))
@@ -144,6 +159,17 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
     setLocations(l || [])
     setNotifSettings(mapRules(n || []))
     setInspNotifSettings(mapRules(ni || []))
+    setPmSchedules(ps || [])
+  }
+
+  async function handleAddPMSchedule(truckId: string, scheduleId: string) {
+    await supabase.from('truck_pm_assignments').insert({ truck_id: truckId, pm_schedule_id: scheduleId })
+    fetchAll()
+  }
+
+  async function handleRemovePMSchedule(assignmentId: string) {
+    await supabase.from('truck_pm_assignments').delete().eq('id', assignmentId)
+    fetchAll()
   }
 
   function openNewTruck() {
@@ -398,7 +424,7 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
               <div style={{ overflowX: 'auto' }}>
                 <table className="fleet-table">
                   <thead>
-                    <tr><th>Unit</th><th>VIN</th><th>Category</th><th>Location</th><th>Status</th><th>Active</th><th></th></tr>
+                    <tr><th>Unit</th><th>VIN</th><th>Category</th><th>Location</th><th>Status</th><th>Active</th><th>PM Schedules</th><th></th></tr>
                   </thead>
                   <tbody>
                     {trucks.filter(t => {
@@ -416,6 +442,36 @@ export function AdminSettings({ profile }: { profile: FleetProfile }) {
                         <td>{truck.locations?.name || '—'}</td>
                         <td><span className={`status-badge status-badge-${truck.current_status}`}>{STATUS_LABELS[truck.current_status]}</span></td>
                         <td><span style={{ color: truck.active ? 'var(--status-ready)' : 'var(--on-surface-muted)', fontSize: '0.75rem' }}>{truck.active ? 'Active' : 'Inactive'}</span></td>
+                        <td style={{ minWidth: 220 }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', marginBottom: '0.375rem' }}>
+                            {(truck.truck_pm_assignments || []).map(a => (
+                              <span key={a.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', fontSize: '0.7rem', fontWeight: 500, padding: '1px 6px 1px 8px', background: 'var(--primary-container)', color: 'var(--on-primary-container)', borderRadius: '999px' }}>
+                                {a.pm_schedules.name}
+                                <button
+                                  onClick={() => handleRemovePMSchedule(a.id)}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 1px', lineHeight: 1, fontSize: '0.8rem', color: 'inherit', opacity: 0.7 }}
+                                  title="Remove"
+                                >×</button>
+                              </span>
+                            ))}
+                          </div>
+                          {(() => {
+                            const assigned = new Set((truck.truck_pm_assignments || []).map(a => a.pm_schedule_id))
+                            const unassigned = pmSchedules.filter(s => !assigned.has(s.id))
+                            if (!unassigned.length) return null
+                            return (
+                              <select
+                                className="form-select"
+                                value=""
+                                onChange={e => { if (e.target.value) handleAddPMSchedule(truck.id, e.target.value) }}
+                                style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
+                              >
+                                <option value="">+ Add schedule</option>
+                                {unassigned.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                              </select>
+                            )
+                          })()}
+                        </td>
                         <td>
                           <div style={{ display: 'flex', gap: '0.5rem' }}>
                             <button className="btn-ghost" onClick={() => openEditTruck(truck)}>Edit</button>
