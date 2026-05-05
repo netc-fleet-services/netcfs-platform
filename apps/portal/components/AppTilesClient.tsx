@@ -132,7 +132,6 @@ export function AppTilesClient({ role, firstName, greeting }: Props) {
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
         gap: '1rem',
-        marginBottom: '2.5rem',
       }}>
         {visibleModules.map(mod => (
           <a key={mod.id} href={makeHref(mod.baseUrl)} className="app-tile" style={{ textDecoration: 'none' }}>
@@ -161,35 +160,6 @@ export function AppTilesClient({ role, firstName, greeting }: Props) {
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
-        <div style={{
-          backgroundColor: 'var(--surface-container)',
-          border: '1px solid var(--outline)',
-          borderRadius: '0.875rem',
-          padding: '1.25rem',
-        }}>
-          <h3 style={{ margin: '0 0 1rem', fontSize: '0.875rem', fontWeight: 700, color: 'var(--on-surface)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-            Recent Activity
-          </h3>
-          <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--on-surface-muted)', fontStyle: 'italic' }}>
-            Activity feed will populate here as data is migrated into the platform.
-          </p>
-        </div>
-
-        <div style={{
-          backgroundColor: 'var(--surface-container)',
-          border: '1px solid var(--outline)',
-          borderRadius: '0.875rem',
-          padding: '1.25rem',
-        }}>
-          <h3 style={{ margin: '0 0 1rem', fontSize: '0.875rem', fontWeight: 700, color: 'var(--on-surface)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-            Alerts
-          </h3>
-          <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--on-surface-muted)', fontStyle: 'italic' }}>
-            PM overdue warnings, inspection flags, and blocked jobs will surface here.
-          </p>
-        </div>
-      </div>
     </div>
   )
 }
