@@ -40,7 +40,7 @@ const ALL_MODULES = [
   },
   {
     id: 'inspections',
-    label: 'Safety (Built by John Ciszek',
+    label: 'Safety',
     description: 'Driver pre-trip inspection compliance and audit reports',
     baseUrl: INSPECTIONS_URL,
     icon: (
