@@ -47,10 +47,16 @@ def to_ms(dt: datetime) -> int:
 def normalize_name(name: str) -> str:
     """Normalize a driver name for cross-system matching.
     Strips parenthetical nicknames ('ALAN (AJ) MISISCHIA' → 'alan misischia'),
+    handles 'LAST, FIRST' → 'first last' (TowBook format),
     collapses whitespace, and lowercases.
     """
     name = re.sub(r'\s*\([^)]*\)', '', name)
-    return re.sub(r'\s+', ' ', name).strip().lower()
+    name = re.sub(r'\s+', ' ', name).strip().lower()
+    if ',' in name:
+        parts = [p.strip() for p in name.split(',', 1)]
+        if len(parts) == 2 and parts[0] and parts[1]:
+            name = f"{parts[1]} {parts[0]}"
+    return name
 
 # ── Severity map (mirrors sync_samsara_events.py) ─────────────────────────────
 
@@ -339,8 +345,10 @@ def resolve_truck_id(
 def _driver_id_from_job(job: dict, by_name: dict[str, int]) -> int | None:
     if job.get("driver_id"):
         return int(job["driver_id"])
-    tb_name = (job.get("tb_driver") or "").strip().lower()
-    return by_name.get(tb_name) if tb_name else None
+    tb_name = (job.get("tb_driver") or "").strip()
+    if not tb_name:
+        return None
+    return by_name.get(tb_name.lower()) or by_name.get(normalize_name(tb_name))
 
 def _unique_driver(jobs: list[dict], by_name: dict[str, int]) -> int | None:
     """Return driver_id only if all jobs resolve to exactly one distinct driver."""
