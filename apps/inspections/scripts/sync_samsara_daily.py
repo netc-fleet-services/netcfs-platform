@@ -60,6 +60,69 @@ def normalize_name(name: str) -> str:
             name = f"{parts[1]} {parts[0]}"
     return name
 
+FIRST_NAME_ALIASES: dict[str, list[str]] = {
+    "matthew":     ["matt"],
+    "joshua":      ["josh"],
+    "jonathan":    ["jon"],
+    "patrick":     ["pat"],
+    "padraic":     ["pat"],
+    "richard":     ["rich", "rick"],
+    "daniel":      ["dan", "danny"],
+    "joseph":      ["joe"],
+    "robert":      ["rob", "bob"],
+    "james":       ["jim"],
+    "william":     ["will", "bill"],
+    "michael":     ["mike"],
+    "thomas":      ["tom"],
+    "christopher": ["chris"],
+    "nicholas":    ["nick"],
+    "zachary":     ["zach"],
+    "andrew":      ["andy"],
+    "timothy":     ["tim"],
+    "jeffrey":     ["jeff"],
+    "gregory":     ["greg"],
+    "stephen":     ["steve"],
+    "steven":      ["steve"],
+    "raymond":     ["ray"],
+    "lawrence":    ["larry"],
+    "donald":      ["don"],
+    "edward":      ["ed"],
+    "anthony":     ["tony"],
+    "kenneth":     ["ken"],
+    "benjamin":    ["ben"],
+}
+
+def _name_forms(name: str) -> list[str]:
+    """Return all lookup keys for a name (lowercased, deduplicated).
+    Covers: base form, normalize_name, nickname expansions,
+    hyphenated-last shortening, and middle-name stripping.
+    """
+    seen: set[str] = set()
+    keys: list[str] = []
+    def _add(s: str) -> None:
+        s = s.strip()
+        if s and s not in seen:
+            seen.add(s); keys.append(s)
+
+    _add(name.strip().lower())
+    _add(normalize_name(name))
+    parts = name.strip().lower().split()
+    if not parts:
+        return keys
+    first, rest = parts[0], parts[1:]
+    if len(parts) >= 3:
+        _add(f"{first} {parts[-1]}")
+        for nick in FIRST_NAME_ALIASES.get(first, []):
+            _add(f"{nick} {parts[-1]}")
+    if rest and '-' in rest[-1]:
+        short_rest = rest[:-1] + [rest[-1].split('-')[0]]
+        _add(f"{first} {' '.join(short_rest)}")
+        for nick in FIRST_NAME_ALIASES.get(first, []):
+            _add(f"{nick} {' '.join(short_rest)}")
+    for nick in FIRST_NAME_ALIASES.get(first, []):
+        _add(f"{nick} {' '.join(rest)}")
+    return keys
+
 # ── API helpers ────────────────────────────────────────────────────────────────
 
 def samsara_get(path: str, params: dict) -> list[dict]:
@@ -151,8 +214,8 @@ def sync_drivers():
     db_by_name: dict[str, dict] = {}
     for r in (db_resp.data or []):
         if r.get("name"):
-            db_by_name[r["name"].strip().lower()] = r
-            db_by_name.setdefault(normalize_name(r["name"]), r)
+            for key in _name_forms(r["name"]):
+                db_by_name.setdefault(key, r)
     db_by_sam_id = {r["samsara_driver_id"]: r for r in (db_resp.data or []) if r.get("samsara_driver_id")}
 
     linked = 0
@@ -168,7 +231,7 @@ def sync_drivers():
             continue
 
         # Try exact then normalized name match to auto-link
-        match = db_by_name.get(sam_name.lower()) or db_by_name.get(normalize_name(sam_name))
+        match = next((db_by_name[k] for k in _name_forms(sam_name) if k in db_by_name), None)
         if match:
             sb.table("drivers").update({"samsara_driver_id": sam_id}).eq("id", match["id"]).execute()
             db_by_sam_id[sam_id] = match
@@ -207,7 +270,7 @@ def link_job_drivers(by_name: dict[str, int]) -> int:
         raw = (job.get("tb_driver") or "").strip()
         if not raw:
             continue
-        driver_id = by_name.get(raw.lower()) or by_name.get(normalize_name(raw))
+        driver_id = next((by_name[k] for k in _name_forms(raw) if k in by_name), None)
         if driver_id:
             by_driver.setdefault(driver_id, []).append(job["id"])
         else:
@@ -259,7 +322,7 @@ def mileage_from_jobs(target_date: date, by_name: dict[str, int], skip_pairs: se
         if not driver_id:
             raw_tb = (job.get("tb_driver") or "").strip()
             if raw_tb:
-                driver_id = by_name.get(raw_tb.lower()) or by_name.get(normalize_name(raw_tb))
+                driver_id = next((by_name[k] for k in _name_forms(raw_tb) if k in by_name), None)
         if not driver_id:
             raw_tb = (job.get("tb_driver") or "").strip()
             if raw_tb:
@@ -508,7 +571,7 @@ def patch_unlinked_event_drivers(by_name: dict[str, int]) -> int:
     by_driver: dict[int, list[str]] = {}
     for ev in events:
         raw = (ev.get("driver_name") or "").strip()
-        internal_id = by_name.get(raw.lower()) or (by_name.get(normalize_name(raw)) if raw else None)
+        internal_id = next((by_name[k] for k in _name_forms(raw) if k in by_name), None) if raw else None
         if internal_id:
             by_driver.setdefault(internal_id, []).append(ev["id"])
 
@@ -530,8 +593,8 @@ def main():
     by_name: dict[str, int] = {}
     for r in (db_resp.data or []):
         if r.get("name"):
-            by_name[r["name"].strip().lower()] = r["id"]
-            by_name.setdefault(normalize_name(r["name"]), r["id"])
+            for key in _name_forms(r["name"]):
+                by_name.setdefault(key, r["id"])
 
     print("\n── Job driver linking ──")
     linked_jobs = link_job_drivers(by_name)

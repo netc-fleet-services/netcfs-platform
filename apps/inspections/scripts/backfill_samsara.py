@@ -58,6 +58,69 @@ def normalize_name(name: str) -> str:
             name = f"{parts[1]} {parts[0]}"
     return name
 
+FIRST_NAME_ALIASES: dict[str, list[str]] = {
+    "matthew":     ["matt"],
+    "joshua":      ["josh"],
+    "jonathan":    ["jon"],
+    "patrick":     ["pat"],
+    "padraic":     ["pat"],
+    "richard":     ["rich", "rick"],
+    "daniel":      ["dan", "danny"],
+    "joseph":      ["joe"],
+    "robert":      ["rob", "bob"],
+    "james":       ["jim"],
+    "william":     ["will", "bill"],
+    "michael":     ["mike"],
+    "thomas":      ["tom"],
+    "christopher": ["chris"],
+    "nicholas":    ["nick"],
+    "zachary":     ["zach"],
+    "andrew":      ["andy"],
+    "timothy":     ["tim"],
+    "jeffrey":     ["jeff"],
+    "gregory":     ["greg"],
+    "stephen":     ["steve"],
+    "steven":      ["steve"],
+    "raymond":     ["ray"],
+    "lawrence":    ["larry"],
+    "donald":      ["don"],
+    "edward":      ["ed"],
+    "anthony":     ["tony"],
+    "kenneth":     ["ken"],
+    "benjamin":    ["ben"],
+}
+
+def _name_forms(name: str) -> list[str]:
+    """Return all lookup keys for a name (lowercased, deduplicated).
+    Covers: base form, normalize_name, nickname expansions,
+    hyphenated-last shortening, and middle-name stripping.
+    """
+    seen: set[str] = set()
+    keys: list[str] = []
+    def _add(s: str) -> None:
+        s = s.strip()
+        if s and s not in seen:
+            seen.add(s); keys.append(s)
+
+    _add(name.strip().lower())
+    _add(normalize_name(name))
+    parts = name.strip().lower().split()
+    if not parts:
+        return keys
+    first, rest = parts[0], parts[1:]
+    if len(parts) >= 3:
+        _add(f"{first} {parts[-1]}")
+        for nick in FIRST_NAME_ALIASES.get(first, []):
+            _add(f"{nick} {parts[-1]}")
+    if rest and '-' in rest[-1]:
+        short_rest = rest[:-1] + [rest[-1].split('-')[0]]
+        _add(f"{first} {' '.join(short_rest)}")
+        for nick in FIRST_NAME_ALIASES.get(first, []):
+            _add(f"{nick} {' '.join(short_rest)}")
+    for nick in FIRST_NAME_ALIASES.get(first, []):
+        _add(f"{nick} {' '.join(rest)}")
+    return keys
+
 # ── Severity map (mirrors sync_samsara_events.py) ─────────────────────────────
 
 # Speeding event types — all resolved via mph-over calculation in get_severity_points
@@ -152,8 +215,8 @@ def load_driver_maps() -> tuple[dict[str, int], dict[str, int]]:
         if r.get("samsara_driver_id"):
             by_sam_id[r["samsara_driver_id"]] = r["id"]
         if r.get("name"):
-            by_name[r["name"].strip().lower()] = r["id"]
-            by_name.setdefault(normalize_name(r["name"]), r["id"])
+            for key in _name_forms(r["name"]):
+                by_name.setdefault(key, r["id"])
     return by_sam_id, by_name
 
 def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -348,7 +411,7 @@ def _driver_id_from_job(job: dict, by_name: dict[str, int]) -> int | None:
     tb_name = (job.get("tb_driver") or "").strip()
     if not tb_name:
         return None
-    return by_name.get(tb_name.lower()) or by_name.get(normalize_name(tb_name))
+    return next((by_name[k] for k in _name_forms(tb_name) if k in by_name), None)
 
 def _unique_driver(jobs: list[dict], by_name: dict[str, int]) -> int | None:
     """Return driver_id only if all jobs resolve to exactly one distinct driver."""
@@ -487,7 +550,7 @@ def _parse_event_row(ev, by_sam_id, by_name, by_unit_raw, by_unit_num, by_vin, s
         if not internal_id:
             # samsara_driver_id not yet linked — try exact then normalized name
             raw = (driver_info.get("name") or "").strip()
-            internal_id = by_name.get(raw.lower()) or (by_name.get(normalize_name(raw)) if raw else None)
+            internal_id = next((by_name[k] for k in _name_forms(raw) if k in by_name), None) if raw else None
 
     # If driver path failed (no Samsara ID or unlinked driver), try vehicle→job resolution
     if not internal_id and (sam_veh_id or sam_unit):
@@ -625,7 +688,7 @@ def backfill_mileage_from_jobs(
         if not driver_id:
             raw_tb = (job.get("tb_driver") or "").strip()
             if raw_tb:
-                driver_id = by_name.get(raw_tb.lower()) or by_name.get(normalize_name(raw_tb))
+                driver_id = next((by_name[k] for k in _name_forms(raw_tb) if k in by_name), None)
         if not driver_id:
             raw_tb = (job.get("tb_driver") or "").strip()
             if raw_tb:
@@ -764,11 +827,20 @@ def backfill_dvirs():
         print("  No linked Interstate drivers — skipping")
         return
 
-    interstate_sam_ids = {d["samsara_driver_id"] for d in interstate}
+    interstate_sam_ids      = {d["samsara_driver_id"] for d in interstate}
+    interstate_internal_ids = {d["id"] for d in interstate}
+    int_id_map              = {d["samsara_driver_id"]: d["id"] for d in interstate}
 
-    # DVIRs have vehicle.id but no driver.id (drivers don't use the Samsara app).
-    # Resolve driver by matching each DVIR's vehicle + startTime against the
-    # same driver-vehicle assignment windows used for mileage.
+    # Load truck reference data for strategy 3 (vehicle → truck → job → driver)
+    by_unit_raw, by_unit_num, by_vin, by_id_towbook = load_truck_maps()
+    sam_vehicles = load_samsara_vehicle_info()
+    db_resp = sb.table("drivers").select("id, name").execute()
+    by_name: dict[str, int] = {}
+    for r in (db_resp.data or []):
+        if r.get("name"):
+            for key in _name_forms(r["name"]):
+                by_name.setdefault(key, r["id"])
+
     start_dt = datetime(BACKFILL_START.year, BACKFILL_START.month, BACKFILL_START.day, 0, 0, 0, tzinfo=EASTERN)
     end_dt   = datetime(BACKFILL_END.year,   BACKFILL_END.month,   BACKFILL_END.day, 23, 59, 59, tzinfo=EASTERN)
 
@@ -796,10 +868,14 @@ def backfill_dvirs():
     #   bypasses assignment window timing gaps entirely).
     # Strategy 2: vehicle + timestamp within a driver-vehicle assignment window
     #   (fallback for DVIRs that don't carry a driverInfo field).
-    submitted: set[tuple[str, str]] = set()  # (driver_sam_id, date_str)
+    # submitted_sam: resolved via Samsara driver ID (strategies 1 & 2)
+    # submitted_int: resolved via TowBook vehicle→job lookup (strategy 3)
+    submitted_sam: set[tuple[str, str]] = set()  # (samsara_driver_id, date_str)
+    submitted_int: set[tuple[int, str]] = set()  # (internal_driver_id, date_str)
     no_vehicle    = 0
     direct_match  = 0
     window_match  = 0
+    job_match     = 0
     unmatched_veh = 0
     for dvir in all_dvirs:
         veh_id = (dvir.get("vehicle") or {}).get("id")
@@ -823,7 +899,7 @@ def backfill_dvirs():
             driver_sam_id = direct_id
             direct_match += 1
 
-        # Strategy 2: assignment window fallback
+        # Strategy 2: assignment window
         if not driver_sam_id and veh_id:
             for (drv_id, a_start_ms, a_end_ms) in veh_to_driver.get(veh_id, []):
                 if a_start_ms <= dvir_ms <= a_end_ms:
@@ -832,12 +908,26 @@ def backfill_dvirs():
                     break
 
         if driver_sam_id:
-            submitted.add((driver_sam_id, dvir_date.isoformat()))
-        elif veh_id:
-            unmatched_veh += 1
+            submitted_sam.add((driver_sam_id, dvir_date.isoformat()))
+            continue
 
-    print(f"  {len(submitted)} driver-day DVIRs resolved "
-          f"({direct_match} via driver signature, {window_match} via assignment window)")
+        # Strategy 3: vehicle → trucks table → jobs table → driver
+        if veh_id:
+            veh_name   = (sam_vehicles.get(veh_id) or {}).get("raw_name", "")
+            truck_uuid = resolve_truck_id(veh_id, veh_name, sam_vehicles,
+                                          by_unit_raw, by_unit_num, by_vin)
+            internal_id = resolve_driver_from_job(truck_uuid, veh_name, dvir_date,
+                                                   by_name, by_id_towbook)
+            if internal_id and internal_id in interstate_internal_ids:
+                submitted_int.add((internal_id, dvir_date.isoformat()))
+                job_match += 1
+            else:
+                unmatched_veh += 1
+
+    total_resolved = len(submitted_sam) + len(submitted_int)
+    print(f"  {total_resolved} driver-day DVIRs resolved "
+          f"({direct_match} via driver signature, {window_match} via assignment window, "
+          f"{job_match} via vehicle→job lookup)")
     print(f"  {no_vehicle} DVIRs skipped (no timestamp), "
           f"{unmatched_veh} with vehicle but no match")
 
@@ -883,7 +973,7 @@ def backfill_dvirs():
                 "driver_id":          internal_id,
                 "driver_name":        drv["name"],
                 "log_date":           day_str,
-                "completed":          (sam_id, day_str) in submitted,
+                "completed":          (sam_id, day_str) in submitted_sam or (internal_id, day_str) in submitted_int,
                 "manually_overridden": False,
                 "source":             "samsara",
             })

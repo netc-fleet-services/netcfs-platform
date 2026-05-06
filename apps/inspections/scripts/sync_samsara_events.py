@@ -53,6 +53,72 @@ def normalize_name(name: str) -> str:
             name = f"{parts[1]} {parts[0]}"
     return name
 
+FIRST_NAME_ALIASES: dict[str, list[str]] = {
+    "matthew":     ["matt"],
+    "joshua":      ["josh"],
+    "jonathan":    ["jon"],
+    "patrick":     ["pat"],
+    "padraic":     ["pat"],
+    "richard":     ["rich", "rick"],
+    "daniel":      ["dan", "danny"],
+    "joseph":      ["joe"],
+    "robert":      ["rob", "bob"],
+    "james":       ["jim"],
+    "william":     ["will", "bill"],
+    "michael":     ["mike"],
+    "thomas":      ["tom"],
+    "christopher": ["chris"],
+    "nicholas":    ["nick"],
+    "zachary":     ["zach"],
+    "andrew":      ["andy"],
+    "timothy":     ["tim"],
+    "jeffrey":     ["jeff"],
+    "gregory":     ["greg"],
+    "stephen":     ["steve"],
+    "steven":      ["steve"],
+    "raymond":     ["ray"],
+    "lawrence":    ["larry"],
+    "donald":      ["don"],
+    "edward":      ["ed"],
+    "anthony":     ["tony"],
+    "kenneth":     ["ken"],
+    "benjamin":    ["ben"],
+}
+
+def _name_forms(name: str) -> list[str]:
+    """Return all lookup keys for a name (lowercased, deduplicated).
+    Covers: base form, normalize_name, nickname expansions,
+    hyphenated-last shortening, and middle-name stripping.
+    """
+    seen: set[str] = set()
+    keys: list[str] = []
+    def _add(s: str) -> None:
+        s = s.strip()
+        if s and s not in seen:
+            seen.add(s); keys.append(s)
+
+    _add(name.strip().lower())
+    _add(normalize_name(name))
+    parts = name.strip().lower().split()
+    if not parts:
+        return keys
+    first, rest = parts[0], parts[1:]
+    # Middle-name stripping: "jean francis leblanc" → "jean leblanc"
+    if len(parts) >= 3:
+        _add(f"{first} {parts[-1]}")
+        for nick in FIRST_NAME_ALIASES.get(first, []):
+            _add(f"{nick} {parts[-1]}")
+    # Hyphenated last name: "brandon plante-dupont" → "brandon plante"
+    if rest and '-' in rest[-1]:
+        short_rest = rest[:-1] + [rest[-1].split('-')[0]]
+        _add(f"{first} {' '.join(short_rest)}")
+        for nick in FIRST_NAME_ALIASES.get(first, []):
+            _add(f"{nick} {' '.join(short_rest)}")
+    # Nickname expansions
+    for nick in FIRST_NAME_ALIASES.get(first, []):
+        _add(f"{nick} {' '.join(rest)}")
+    return keys
+
 # ── Severity point mapping ─────────────────────────────────────────────────────
 
 SPEEDING_TYPES = {
@@ -148,8 +214,8 @@ def load_driver_maps() -> tuple[dict[str, int], dict[str, int]]:
         if r.get("samsara_driver_id"):
             by_sam_id[r["samsara_driver_id"]] = r["id"]
         if r.get("name"):
-            by_name[r["name"].strip().lower()] = r["id"]
-            by_name.setdefault(normalize_name(r["name"]), r["id"])
+            for key in _name_forms(r["name"]):
+                by_name.setdefault(key, r["id"])
     return by_sam_id, by_name
 
 # ── Truck maps ─────────────────────────────────────────────────────────────────
@@ -258,7 +324,7 @@ def _driver_id_from_job(job: dict, by_name: dict[str, int]) -> int | None:
     tb_name = (job.get("tb_driver") or "").strip()
     if not tb_name:
         return None
-    return by_name.get(tb_name.lower()) or by_name.get(normalize_name(tb_name))
+    return next((by_name[k] for k in _name_forms(tb_name) if k in by_name), None)
 
 def _unique_driver(jobs: list[dict], by_name: dict[str, int]) -> int | None:
     ids = {_driver_id_from_job(j, by_name) for j in jobs}
@@ -373,7 +439,7 @@ def sync_events():
             if not internal_id:
                 # samsara_driver_id not yet linked — try exact then normalized name
                 raw = (driver_info.get("name") or "").strip()
-                internal_id = by_name.get(raw.lower()) or (by_name.get(normalize_name(raw)) if raw else None)
+                internal_id = next((by_name[k] for k in _name_forms(raw) if k in by_name), None) if raw else None
             if not internal_id:
                 unmatched_drivers.add(f"{driver_info.get('name', '?')} ({sam_drv_id})")
 
