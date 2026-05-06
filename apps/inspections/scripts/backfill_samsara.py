@@ -791,14 +791,20 @@ def backfill_dvirs():
     })
     print(f"  {len(all_dvirs)} total DVIRs fetched")
 
-    # For each DVIR, resolve driver via vehicle assignment at the DVIR's startTime
+    # Resolve each DVIR to a driver.
+    # Strategy 1: authorSignature.driverInfo.id on the DVIR itself (most reliable —
+    #   bypasses assignment window timing gaps entirely).
+    # Strategy 2: vehicle + timestamp within a driver-vehicle assignment window
+    #   (fallback for DVIRs that don't carry a driverInfo field).
     submitted: set[tuple[str, str]] = set()  # (driver_sam_id, date_str)
-    no_vehicle = 0
+    no_vehicle    = 0
+    direct_match  = 0
+    window_match  = 0
     unmatched_veh = 0
     for dvir in all_dvirs:
         veh_id = (dvir.get("vehicle") or {}).get("id")
         ts_raw = dvir.get("startTime") or dvir.get("updatedAtTime")
-        if not veh_id or not ts_raw:
+        if not ts_raw:
             no_vehicle += 1
             continue
         dvir_dt   = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
@@ -806,20 +812,34 @@ def backfill_dvirs():
         dvir_date = dvir_dt.astimezone(EASTERN).date()
         if not (BACKFILL_START <= dvir_date <= BACKFILL_END):
             continue
-        # Find which driver had this vehicle at the time of the DVIR
+
         driver_sam_id = None
-        for (drv_id, a_start_ms, a_end_ms) in veh_to_driver.get(veh_id, []):
-            if a_start_ms <= dvir_ms <= a_end_ms:
-                driver_sam_id = drv_id
-                break
+
+        # Strategy 1: driver ID directly on the DVIR
+        author    = dvir.get("authorSignature") or {}
+        drv_info  = author.get("driverInfo") or dvir.get("driver") or {}
+        direct_id = drv_info.get("id", "")
+        if direct_id and direct_id in interstate_sam_ids:
+            driver_sam_id = direct_id
+            direct_match += 1
+
+        # Strategy 2: assignment window fallback
+        if not driver_sam_id and veh_id:
+            for (drv_id, a_start_ms, a_end_ms) in veh_to_driver.get(veh_id, []):
+                if a_start_ms <= dvir_ms <= a_end_ms:
+                    driver_sam_id = drv_id
+                    window_match += 1
+                    break
+
         if driver_sam_id:
             submitted.add((driver_sam_id, dvir_date.isoformat()))
-        else:
+        elif veh_id:
             unmatched_veh += 1
 
-    print(f"  {len(submitted)} driver-day DVIRs resolved via vehicle assignment")
-    print(f"  {no_vehicle} DVIRs skipped (no vehicle/timestamp), "
-          f"{unmatched_veh} with vehicle but no assignment match")
+    print(f"  {len(submitted)} driver-day DVIRs resolved "
+          f"({direct_match} via driver signature, {window_match} via assignment window)")
+    print(f"  {no_vehicle} DVIRs skipped (no timestamp), "
+          f"{unmatched_veh} with vehicle but no match")
 
     # Load mileage_logs for the period to know which days each driver drove
     ml_resp = (
