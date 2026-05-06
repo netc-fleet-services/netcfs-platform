@@ -381,10 +381,8 @@ def sync_dvirs(target_date: date):
                          0, 0, 0, tzinfo=EASTERN)
     day_end   = day_start + timedelta(days=1)
 
-    # DVIRs have vehicle.id but no driver.id — resolve via vehicle assignments.
+    # Build reverse mapping for assignment-window fallback.
     assignments = load_driver_vehicle_assignments(interstate_sam_ids, day_start, day_end)
-
-    # Build reverse mapping: vehicle_id → [(driver_sam_id, start_ms, end_ms)]
     veh_to_driver: dict[str, list[tuple[str, int, int]]] = {}
     for drv_sam_id, drv_assignments in assignments.items():
         for (veh_id, a_start_ms, a_end_ms) in drv_assignments:
@@ -398,30 +396,50 @@ def sync_dvirs(target_date: date):
         "limit":     200,
     })
 
-    # Resolve each DVIR to a driver via vehicle assignment at the DVIR's startTime.
+    # Resolve each DVIR to a driver.
+    # Strategy 1: authorSignature.driverInfo.id on the DVIR itself (most reliable —
+    #   bypasses assignment window timing gaps entirely).
+    # Strategy 2: vehicle + timestamp within a driver-vehicle assignment window
+    #   (fallback for DVIRs that don't carry a driverInfo field).
     submitted: set[str] = set()  # driver_sam_ids that submitted on target_date
+    direct_match  = 0
+    window_match  = 0
     unmatched_veh = 0
     for dvir in all_dvirs:
         veh_id = (dvir.get("vehicle") or {}).get("id")
         ts_raw = dvir.get("startTime") or dvir.get("updatedAtTime")
-        if not veh_id or not ts_raw:
+        if not ts_raw:
             continue
         dvir_dt   = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
         dvir_ms   = int(dvir_dt.timestamp() * 1000)
         dvir_date = dvir_dt.astimezone(EASTERN).date()
         if dvir_date != target_date:
             continue
+
         driver_sam_id = None
-        for (drv_id, a_start_ms, a_end_ms) in veh_to_driver.get(veh_id, []):
-            if a_start_ms <= dvir_ms <= a_end_ms:
-                driver_sam_id = drv_id
-                break
+
+        # Strategy 1: driver ID directly on the DVIR
+        author     = dvir.get("authorSignature") or {}
+        drv_info   = author.get("driverInfo") or dvir.get("driver") or {}
+        direct_id  = drv_info.get("id", "")
+        if direct_id and direct_id in interstate_sam_ids:
+            driver_sam_id = direct_id
+            direct_match += 1
+
+        # Strategy 2: assignment window (only if strategy 1 failed and we have a vehicle)
+        if not driver_sam_id and veh_id:
+            for (drv_id, a_start_ms, a_end_ms) in veh_to_driver.get(veh_id, []):
+                if a_start_ms <= dvir_ms <= a_end_ms:
+                    driver_sam_id = drv_id
+                    window_match += 1
+                    break
+
         if driver_sam_id:
             submitted.add(driver_sam_id)
         else:
             unmatched_veh += 1
-    print(f"  {len(all_dvirs)} total DVIRs fetched, {len(submitted)} Interstate drivers confirmed "
-          f"on {target_date}, {unmatched_veh} DVIRs with no assignment match")
+    print(f"  {len(all_dvirs)} total DVIRs fetched, {len(submitted)} Interstate drivers confirmed on {target_date}")
+    print(f"  Matched: {direct_match} via driver signature, {window_match} via assignment window, {unmatched_veh} unmatched")
 
     # Load mileage_logs to determine who actually drove today
     # (don't penalise drivers who were off)
