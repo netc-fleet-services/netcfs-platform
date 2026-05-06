@@ -49,10 +49,16 @@ ROAD_FACTOR = 1.25
 def normalize_name(name: str) -> str:
     """Normalize a driver name for cross-system matching.
     Strips parenthetical nicknames ('ALAN (AJ) MISISCHIA' → 'alan misischia'),
+    handles 'LAST, FIRST' → 'first last' (TowBook format),
     collapses whitespace, and lowercases.
     """
     name = re.sub(r'\s*\([^)]*\)', '', name)
-    return re.sub(r'\s+', ' ', name).strip().lower()
+    name = re.sub(r'\s+', ' ', name).strip().lower()
+    if ',' in name:
+        parts = [p.strip() for p in name.split(',', 1)]
+        if len(parts) == 2 and parts[0] and parts[1]:
+            name = f"{parts[1]} {parts[0]}"
+    return name
 
 # ── API helpers ────────────────────────────────────────────────────────────────
 
@@ -177,7 +183,52 @@ def sync_drivers():
         for d in sorted(unmatched):
             print(f"    {d}")
 
-# ── 2. Mileage sync ────────────────────────────────────────────────────────────
+# ── 2. Job driver linking ──────────────────────────────────────────────────────
+
+def link_job_drivers(by_name: dict[str, int]) -> int:
+    """
+    Resolve tb_driver name strings to driver_id FKs in the jobs table and write
+    them back persistently. This means safety event and mileage lookups find a
+    proper FK instead of relying on name-string matching at query time.
+    Only updates rows where driver_id is currently null.
+    """
+    resp = (sb.table("jobs")
+              .select("id, tb_driver")
+              .is_("driver_id", "null")
+              .not_.is_("tb_driver", "null")
+              .execute())
+    jobs = resp.data or []
+    if not jobs:
+        return 0
+
+    by_driver: dict[int, list[str]] = {}
+    unmatched: set[str] = set()
+    for job in jobs:
+        raw = (job.get("tb_driver") or "").strip()
+        if not raw:
+            continue
+        driver_id = by_name.get(raw.lower()) or by_name.get(normalize_name(raw))
+        if driver_id:
+            by_driver.setdefault(driver_id, []).append(job["id"])
+        else:
+            unmatched.add(raw)
+
+    updated = 0
+    for driver_id, job_ids in by_driver.items():
+        for i in range(0, len(job_ids), 200):
+            sb.table("jobs").update({"driver_id": driver_id}).in_("id", job_ids[i:i+200]).execute()
+        updated += len(job_ids)
+
+    if unmatched:
+        sample = sorted(unmatched)[:10]
+        print(f"  {len(unmatched)} unique tb_driver names not matched to drivers table:")
+        for n in sample:
+            print(f"    {n!r}")
+
+    return updated
+
+
+# ── 3. Mileage sync ────────────────────────────────────────────────────────────
 
 def mileage_from_jobs(target_date: date, by_name: dict[str, int], skip_pairs: set[tuple[int, str]]) -> int:
     """
@@ -300,7 +351,7 @@ def sync_mileage(target_date: date, by_name: dict[str, int]):
     if tb_count:
         print(f"  TowBook haversine upserted {tb_count} additional driver-days")
 
-# ── 3. DVIR sync ───────────────────────────────────────────────────────────────
+# ── 4. DVIR sync ───────────────────────────────────────────────────────────────
 
 def sync_dvirs(target_date: date):
     """
@@ -463,6 +514,13 @@ def main():
         if r.get("name"):
             by_name[r["name"].strip().lower()] = r["id"]
             by_name.setdefault(normalize_name(r["name"]), r["id"])
+
+    print("\n── Job driver linking ──")
+    linked_jobs = link_job_drivers(by_name)
+    if linked_jobs:
+        print(f"  Linked driver_id on {linked_jobs} jobs with previously null FK")
+    else:
+        print("  No unlinked jobs with resolvable tb_driver names")
 
     patched = patch_unlinked_event_drivers(by_name)
     if patched:
