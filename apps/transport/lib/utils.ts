@@ -68,6 +68,13 @@ export function genDays(n: number): string[] {
   return o
 }
 
+// ── Address validity ──────────────────────────────────────────────
+function addrMissing(addr: string | null | undefined): boolean {
+  if (!addr) return true
+  const a = addr.trim().toLowerCase()
+  return a === '' || a === 'tbd' || a.startsWith('tbd ')
+}
+
 // ── Job Time / Distance Calculation ───────────────────────────────
 export function jCalc(
   ya: string, yz: string,
@@ -125,6 +132,7 @@ export function jCalc(
 }
 
 export function jobTotal(j: Job): number {
+  if (addrMissing(j.pickupAddr) || addrMissing(j.dropAddr)) return NaN
   const yd = YARDS.find(y => y.id === j.yardId) || YARDS[0]
   if (!yd) return 1
   const stops = j.stops || []
@@ -143,6 +151,7 @@ export function jobTotal(j: Job): number {
 }
 
 export function jobMiles(j: Job): number {
+  if (addrMissing(j.pickupAddr) || addrMissing(j.dropAddr)) return NaN
   const yd = YARDS.find(y => y.id === j.yardId) || YARDS[0]
   if (!yd) return 0
   const stops = j.stops || []
