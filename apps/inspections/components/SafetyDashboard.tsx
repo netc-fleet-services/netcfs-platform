@@ -78,15 +78,17 @@ export function SafetyDashboard() {
       .order('period_start', { ascending: false })
       .then(({ data }) => {
         if (!data?.length) { setLoading(false); return }
-        const seen = new Set<string>()
-        const unique: Period[] = []
+        // Group by quarter label; keep the row with the most recent period_end per quarter.
+        const byLabel = new Map<string, Period>()
         for (const r of data) {
-          const key = `${r.period_start}|${r.period_end}`
-          if (!seen.has(key)) {
-            seen.add(key)
-            unique.push({ start: r.period_start, end: r.period_end, label: formatPeriod(r.period_start, r.period_end) })
+          const label = formatPeriod(r.period_start, r.period_end)
+          const existing = byLabel.get(label)
+          if (!existing || r.period_end > existing.end) {
+            byLabel.set(label, { start: r.period_start, end: r.period_end, label })
           }
         }
+        // Sort newest-first by period_start
+        const unique = Array.from(byLabel.values()).sort((a, b) => b.start.localeCompare(a.start))
         setPeriods(unique)
         setSelectedPeriod(unique[0])
       })
