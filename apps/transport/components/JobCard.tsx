@@ -51,6 +51,8 @@ export function JobCard({ job, drivers, onUpdate, onRemove, onDayChange }: Props
   const dim = job.status === 'complete' || job.status === 'cancelled'
   const pri = job.priority || 'normal'
 
+  const JOB_TYPES = ['Equipment Transport', 'Heavy Duty Tow', 'Light Duty Tow', 'Road Service', 'Crane Service']
+
   const [showNotes, setShowNotes] = useState(false)
   const [showStops, setShowStops] = useState(false)
   const [newAddr,   setNewAddr]   = useState('')
@@ -147,6 +149,19 @@ export function JobCard({ job, drivers, onUpdate, onRemove, onDayChange }: Props
             <option value="flexible">Flex</option>
           </select>
         </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+        <div style={{ fontSize: 8, color: C.dm, fontWeight: 600, flexShrink: 0 }}>JOB TYPE:</div>
+        <select
+          style={{ ...sS, fontSize: 10, padding: '3px 5px', flex: 1 }}
+          value={job.jobType || ''}
+          onChange={e => onUpdate({ jobType: e.target.value || null, jobTypeOverride: true })}
+        >
+          <option value="">— unclassified —</option>
+          {JOB_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        {job.jobTypeOverride && <span style={{ fontSize: 8, color: C.am, flexShrink: 0 }}>overridden</span>}
       </div>
 
       {(job.tbDriver || job.tbDriver2) && (

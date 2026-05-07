@@ -22,6 +22,8 @@ export interface Job {
   tbAccount: string
   tbScheduled: string | null
   tbReason: string
+  jobType: string | null
+  jobTypeOverride: boolean
   tbDriver: string
   tbDriver2: string
   tbTruck: string

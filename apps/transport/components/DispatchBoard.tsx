@@ -84,9 +84,11 @@ export function DispatchBoard() {
   const [newDr,           setNewDr]           = useState({ name: '', truck: '', yard: 'exeter', func: 'Transport' })
   const [newYard,         setNewYard]         = useState({ short: '', addr: '', zip: '' })
   const [reasonFilter,    setReasonFilter]    = useState<Set<string>>(() => {
+    const _CANONICAL = ['Equipment Transport', 'Heavy Duty Tow', 'Light Duty Tow', 'Road Service', 'Crane Service']
     const saved = LS.get<string | string[]>('filter', 'ALL')
-    if (typeof saved === 'string') return new Set([saved])
-    return new Set(saved)
+    const vals  = typeof saved === 'string' ? [saved] : saved
+    const valid = vals.filter((v: string) => v === 'ALL' || _CANONICAL.includes(v))
+    return new Set(valid.length ? valid : ['ALL'])
   })
   const [locationFilter,  setLocationFilter]  = useState<Set<string>>(() => new Set(['ALL']))
   const [lastSynced,      setLastSynced]      = useState<string | null>(null)
@@ -280,7 +282,7 @@ export function DispatchBoard() {
       driverId2: null, pickupZip: fp, dropZip: fd, pickupAddr: '', dropAddr: '',
       pickupLat: null, pickupLon: null, dropLat: null, dropLon: null,
       tbCallNum: null, tbDesc: '', tbAccount: '', tbScheduled: null,
-      tbReason: 'MANUAL', tbDriver: '', tbDriver2: '', tbTruck: '',
+      tbReason: 'MANUAL', jobType: null, jobTypeOverride: false, tbDriver: '', tbDriver2: '', tbTruck: '',
       priority: 'normal', status: 'scheduled',
       addedAt: new Date().toISOString(), day: viewDay, stops: [],
       notes: '', startedAt: null, completedAt: null, hasTolls: false,
@@ -435,7 +437,7 @@ export function DispatchBoard() {
   const LOC_MAP: Record<string, string> = { '1': 'NETC', '2': "Matt Brown's", '3': "Ray's", '4': 'Interstate' }
   const locLabel = (cn: string | null | undefined) => { const s = (cn || '').replace(/^#/, ''); return LOC_MAP[s[0]] || null }
 
-  const allReasons = useMemo(() => { const s = new Set<string>(); jobs.forEach(j => { if (j.tbReason) s.add(j.tbReason) }); return ['ALL', ...[...s].sort()] }, [jobs])
+  const CANONICAL_JOB_TYPES = ['Equipment Transport', 'Heavy Duty Tow', 'Light Duty Tow', 'Road Service', 'Crane Service']
 
   const calDays = useMemo(() => {
     const base = new Set(genDays(21))
@@ -450,7 +452,7 @@ export function DispatchBoard() {
   }, [calDays, calExpanded, calWeekEnd, viewDay])
 
   const filt = (arr: Job[]) => {
-    let out = reasonFilter.has('ALL') ? arr : arr.filter(j => reasonFilter.has(j.tbReason || ''))
+    let out = reasonFilter.has('ALL') ? arr : arr.filter(j => reasonFilter.has(j.jobType || ''))
     if (!locationFilter.has('ALL')) out = out.filter(j => locationFilter.has(locLabel(j.tbCallNum) || ''))
     return out
   }
@@ -563,13 +565,15 @@ export function DispatchBoard() {
         ))}
       </div>
 
-      {/* Reason filter */}
-      {tab === 'schedule' && allReasons.length > 1 && (
+      {/* Job type filter */}
+      {tab === 'schedule' && (
         <div className="fb">
           <span style={{ fontSize: 9, color: C.dm, fontWeight: 600, alignSelf: 'center', marginRight: 2 }}>JOB TYPE:</span>
-          {allReasons.map(r => (
+          {(['ALL', ...CANONICAL_JOB_TYPES]).map(r => (
             <button key={r} className={'fbtn' + (reasonFilter.has(r) ? ' on' : '')} onClick={() => toggleReason(r)}>
-              {r === 'ALL' ? 'All' : r} ({r === 'ALL' ? jobs.filter(j => j.day === viewDay && j.status !== 'cancelled').length : jobs.filter(j => j.day === viewDay && j.tbReason === r && j.status !== 'cancelled').length})
+              {r === 'ALL' ? 'All' : r} ({r === 'ALL'
+                ? jobs.filter(j => j.day === viewDay && j.status !== 'cancelled').length
+                : jobs.filter(j => j.day === viewDay && j.jobType === r && j.status !== 'cancelled').length})
             </button>
           ))}
         </div>

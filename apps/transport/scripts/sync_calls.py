@@ -109,6 +109,24 @@ def split_drivers(raw):
     return [raw]
 
 
+JOB_TYPE_RULES = [
+    ('Equipment Transport', lambda r: 'transport' in r),
+    ('Heavy Duty Tow',      lambda r: 'heavy' in r or 'hdt' in r),
+    ('Light Duty Tow',      lambda r: 'light' in r or 'ldt' in r),
+    ('Road Service',        lambda r: 'road service' in r),
+    ('Crane Service',       lambda r: 'crane' in r),
+]
+
+def classify_job_type(reason: str) -> 'str | None':
+    """Map a raw TowBook reason string to a canonical job type, or None."""
+    if not reason:
+        return None
+    r = reason.lower()
+    for label, test in JOB_TYPE_RULES:
+        if test(r):
+            return label
+    return None
+
 def sched_to_day(sched):
     """'4/8/26 7:00 AM' → '2026-04-08'. Falls back to today on parse failure."""
     for fmt in ['%m/%d/%y %I:%M %p', '%m/%d/%Y %I:%M %p', '%m/%d/%y', '%m/%d/%Y']:
@@ -428,7 +446,8 @@ def sync_to_supabase(tb_calls):
     _SELECT = ("id, tb_call_num, tb_desc, tb_account, pickup_addr, drop_addr, "
                "pickup_zip, drop_zip, pickup_lat, pickup_lon, drop_lat, drop_lon, "
                "tb_scheduled, tb_reason, tb_driver, tb_driver_2, truck_and_equipment, day, "
-               "yard_id, driver_id, driver_id_2, status, priority, notes, stops, added_at")
+               "yard_id, driver_id, driver_id_2, status, priority, notes, stops, added_at, "
+               "job_type, job_type_override")
     _PAGE = 1000
     all_jobs: list = []
     _offset = 0
@@ -483,6 +502,8 @@ def sync_to_supabase(tb_calls):
             elif d_addr:
                 d_lat, d_lon = geocode(d_addr)
 
+        tb_reason_final = keep(call["reason"], "tb_reason")
+
         row = {
             "tb_call_num":  cn,
             "tb_desc":      keep(call["desc"],      "tb_desc"),
@@ -496,7 +517,7 @@ def sync_to_supabase(tb_calls):
             "drop_lat":     d_lat,
             "drop_lon":     d_lon,
             "tb_scheduled": keep(call["scheduled"], "tb_scheduled"),
-            "tb_reason":    keep(call["reason"],    "tb_reason"),
+            "tb_reason":    tb_reason_final,
             "tb_driver":    keep(call["driver"],    "tb_driver"),
             "tb_driver_2":  keep(call["driver2"],   "tb_driver_2"),
             "truck_and_equipment": keep(call["truck"], "truck_and_equipment"),
@@ -532,15 +553,24 @@ def sync_to_supabase(tb_calls):
             row["notes"]       = ex.get("notes")
             row["stops"]       = ex.get("stops") or []
             row["status"]      = derived_status if derived_status is not None else ex["status"]
+            # Preserve manually-overridden job_type; otherwise re-classify from tb_reason
+            if ex.get("job_type_override"):
+                row["job_type"]          = ex.get("job_type")
+                row["job_type_override"] = True
+            else:
+                row["job_type"]          = classify_job_type(tb_reason_final)
+                row["job_type_override"] = False
             updates.append(row)
             upd_count += 1
         else:
             # New call — set defaults
-            row["id"]       = str(uuid.uuid4())
-            row["priority"] = "normal"
-            row["stops"]    = []
-            row["added_at"] = now
-            row["status"]   = derived_status if derived_status is not None else "scheduled"
+            row["id"]                = str(uuid.uuid4())
+            row["priority"]          = "normal"
+            row["stops"]             = []
+            row["added_at"]          = now
+            row["status"]            = derived_status if derived_status is not None else "scheduled"
+            row["job_type"]          = classify_job_type(tb_reason_final)
+            row["job_type_override"] = False
             inserts.append(row)
             new_count += 1
 
