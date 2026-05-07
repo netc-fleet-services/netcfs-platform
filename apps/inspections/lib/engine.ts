@@ -41,6 +41,7 @@ export interface AuditResult {
   dateRange: { min: string | null; max: string | null }
   fuzzyMatches: FuzzyMatch[]
   missedDetails: MissedDetail[]
+  requiredDetails: Array<{ driver: string; date: string }>
 }
 
 // ---------------------------------------------------------------------------
@@ -244,6 +245,7 @@ export function calculateAudit(
   const driverStats  = new Map<string, { driver: string; required: number; completed: number }>()
   const fuzzyMatches: FuzzyMatch[]  = []
   const missedDetails: MissedDetail[] = []
+  const seenDriverDate = new Map<string, { driver: string; date: string }>()
   let minDate: string | null = null
   let maxDate: string | null = null
 
@@ -254,6 +256,11 @@ export function calculateAudit(
     }
     const stat = driverStats.get(dKey)!
     stat.required++
+
+    const ddKey = `${dKey}||${req.date}`
+    if (!seenDriverDate.has(ddKey)) {
+      seenDriverDate.set(ddKey, { driver: req.driver, date: req.date })
+    }
 
     if (!minDate || req.date < minDate) minDate = req.date
     if (!maxDate || req.date > maxDate) maxDate = req.date
@@ -313,5 +320,11 @@ export function calculateAudit(
   results.sort((a, b) => a.pct - b.pct || a.driver.localeCompare(b.driver))
   missedDetails.sort((a, b) => a.date.localeCompare(b.date) || a.driver.localeCompare(b.driver))
 
-  return { results, dateRange: { min: minDate, max: maxDate }, fuzzyMatches, missedDetails }
+  return {
+    results,
+    dateRange: { min: minDate, max: maxDate },
+    fuzzyMatches,
+    missedDetails,
+    requiredDetails: Array.from(seenDriverDate.values()),
+  }
 }
