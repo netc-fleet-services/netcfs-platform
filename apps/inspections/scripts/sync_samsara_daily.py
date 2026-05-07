@@ -46,6 +46,24 @@ def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float
 
 ROAD_FACTOR = 1.25
 
+# Yard coordinates mirror transport app geo.ts geoCache exactly (4-decimal precision
+# matches the route_cache key format the transport app uses).
+YARD_COORDS: dict[str, tuple[float, float]] = {
+    "exeter":     (42.9814, -70.9319),
+    "pembroke":   (43.1473, -71.4579),
+    "mattbrowns": (43.1379, -71.4792),
+    "rays":       (43.5084, -70.4618),
+}
+
+def _route_key(*coords: tuple[float, float]) -> str:
+    """Build a route_cache lookup key identical to the transport app's routeKey()."""
+    return "|".join(f"{lat:.4f},{lon:.4f}" for lat, lon in coords)
+
+def load_route_cache() -> dict[str, float]:
+    """Load road-distance cache from Supabase (populated by transport app GraphHopper calls)."""
+    resp = sb.table("route_cache").select("key, miles").execute()
+    return {r["key"]: float(r["miles"]) for r in (resp.data or []) if r.get("miles") is not None}
+
 def normalize_name(name: str) -> str:
     """Normalize a driver name for cross-system matching.
     Strips parenthetical nicknames ('ALAN (AJ) MISISCHIA' → 'alan misischia'),
@@ -293,16 +311,24 @@ def link_job_drivers(by_name: dict[str, int]) -> int:
 
 # ── 3. Mileage sync ────────────────────────────────────────────────────────────
 
-def mileage_from_jobs(target_date: date, by_name: dict[str, int], skip_pairs: set[tuple[int, str]]) -> int:
+def mileage_from_jobs(
+    target_date: date,
+    by_name:     dict[str, int],
+    skip_pairs:  set[tuple[int, str]],
+    route_cache: dict[str, float],
+) -> int:
     """
-    Estimate mileage for target_date from TowBook jobs using pickup/drop coordinates.
-    Fills any driver-days Samsara didn't cover (non-interstate, unlinked vehicles, etc.).
+    Calculate total daily trip miles for target_date from TowBook jobs.
+    Uses full round-trip distance (yard→pickup→drop→yard) to match the transport
+    app's mileage methodology. Looks up route_cache for exact road miles when
+    the transport app has already computed the route; falls back to haversine × 1.25.
+    Covers all driver-days Samsara GPS doesn't provide.
     Returns number of driver-days upserted.
     """
     day_str = target_date.isoformat()
     resp = (
         sb.table("jobs")
-          .select("driver_id, tb_driver, pickup_lat, pickup_lon, drop_lat, drop_lon")
+          .select("driver_id, tb_driver, yard_id, pickup_lat, pickup_lon, drop_lat, drop_lon")
           .eq("day", day_str)
           .not_.is_("pickup_lat", "null")
           .not_.is_("drop_lat",   "null")
@@ -332,12 +358,23 @@ def mileage_from_jobs(target_date: date, by_name: dict[str, int], skip_pairs: se
         if key in skip_pairs:
             continue
         try:
-            dist = haversine_miles(
-                float(job["pickup_lat"]), float(job["pickup_lon"]),
-                float(job["drop_lat"]),   float(job["drop_lon"]),
-            ) * ROAD_FACTOR
+            p_lat = float(job["pickup_lat"])
+            p_lon = float(job["pickup_lon"])
+            d_lat = float(job["drop_lat"])
+            d_lon = float(job["drop_lon"])
         except (TypeError, ValueError):
             continue
+        yard = YARD_COORDS.get((job.get("yard_id") or "").strip())
+        if yard:
+            y_lat, y_lon = yard
+            ck = _route_key((y_lat, y_lon), (p_lat, p_lon), (d_lat, d_lon), (y_lat, y_lon))
+            dist = route_cache[ck] if ck in route_cache else (
+                haversine_miles(y_lat, y_lon, p_lat, p_lon) +
+                haversine_miles(p_lat, p_lon, d_lat, d_lon) +
+                haversine_miles(d_lat, d_lon, y_lat, y_lon)
+            ) * ROAD_FACTOR
+        else:
+            dist = haversine_miles(p_lat, p_lon, d_lat, d_lon) * ROAD_FACTOR
         miles_map[int(driver_id)] = miles_map.get(int(driver_id), 0.0) + dist
 
     if unmatched_tb:
@@ -410,9 +447,10 @@ def sync_mileage(target_date: date, by_name: dict[str, int]):
         sb.table("mileage_logs").upsert(rows, on_conflict="driver_id,log_date").execute()
         samsara_pairs = {(r["driver_id"], r["log_date"]) for r in rows}
 
-    tb_count = mileage_from_jobs(target_date, by_name, samsara_pairs)
+    route_cache = load_route_cache()
+    tb_count = mileage_from_jobs(target_date, by_name, samsara_pairs, route_cache)
     if tb_count:
-        print(f"  TowBook haversine upserted {tb_count} additional driver-days")
+        print(f"  TowBook upserted {tb_count} additional driver-days")
 
 # ── 4. DVIR sync ───────────────────────────────────────────────────────────────
 
