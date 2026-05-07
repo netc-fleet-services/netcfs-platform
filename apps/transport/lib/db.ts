@@ -94,8 +94,6 @@ function driverToApp(row: Record<string, unknown>): Driver {
 
 export const db = {
   async loadAllJobs(): Promise<Job[]> {
-    // Supabase caps unranged queries at 1000 rows. Paginate to get everything,
-    // same approach the sync script uses to avoid missing recent jobs.
     const PAGE = 1000
     const all: Record<string, unknown>[] = []
     let offset = 0
