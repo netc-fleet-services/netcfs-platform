@@ -8,8 +8,9 @@ External data enters the platform through Python scripts triggered by GitHub Act
 |----------|------|---------|-----|
 | Sync Samsara Events | `sync-samsara-events.yml` | Every 15 min | inspections |
 | Sync Samsara Daily | `sync-samsara-daily.yml` | Daily 06:00 UTC | inspections |
+| Sync Samsara PM | `sync-samsara-pm.yml` | Daily 07:00 UTC | inspections |
 | Backfill Samsara | `backfill-samsara.yml` | Manual (`workflow_dispatch`) | inspections |
-| Compute Safety Scores | `compute-safety-scores.yml` | Daily 07:00 UTC + quarterly | inspections |
+| Compute Safety Scores | `compute-safety-scores.yml` | Daily 07:00 UTC + quarterly + manual | inspections |
 | Sync TowBook Jobs | `sync-calls.yml` | Every 15 min | transport |
 | Sync TowBook Impounds | `sync-towbook.yml` | Every 4 hours + manual | impounds |
 | Diagnose Safety | `diagnose-safety.yml` | Manual | inspections |
@@ -131,7 +132,12 @@ safety_score      = max(5, driving_score - compliance_penalty)
 - Subsequent runs skip locked rows
 - The current quarter is always recalculated (accumulates YTD)
 
-**Manual override via workflow inputs** (`PERIOD_START`, `PERIOD_END`): allows computing scores for a specific date range, e.g., to recompute after a backfill.
+**Scoring period logic:**
+- Daily cron and manual trigger with no dates → scores current quarter YTD (quarter start through today)
+- Quarterly cron (1st of Jan/Apr/Jul/Oct) → auto-detects and finalises the prior completed quarter
+- Manual trigger with explicit `PERIOD_START` / `PERIOD_END` inputs → uses those dates exactly
+
+After running a backfill, trigger this workflow manually (leave dates blank for current quarter, or supply dates to score a past quarter) to update the dashboard.
 
 ---
 
