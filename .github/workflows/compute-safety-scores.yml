@@ -56,25 +56,28 @@ jobs:
       - name: Resolve scoring period
         id: period
         run: |
+          # Helper: compute current-quarter start date
+          _quarter_start() {
+            local M Y
+            M=$(date +%-m); Y=$(date +%Y)
+            if   [ $M -le 3 ]; then echo "${Y}-01-01"
+            elif [ $M -le 6 ]; then echo "${Y}-04-01"
+            elif [ $M -le 9 ]; then echo "${Y}-07-01"
+            else                     echo "${Y}-10-01"
+            fi
+          }
           if [ -n "${{ github.event.inputs.period_start }}" ]; then
             # Manual run with explicit dates — use them as-is
             echo "start=${{ github.event.inputs.period_start }}" >> $GITHUB_OUTPUT
             echo "end=${{ github.event.inputs.period_end }}"     >> $GITHUB_OUTPUT
-          elif [ "${{ github.event.schedule }}" = "0 7 * * *" ]; then
-            # Daily run — current quarter start through today
-            M=$(date +%-m)
-            Y=$(date +%Y)
-            if   [ $M -le 3 ]; then QS="${Y}-01-01"
-            elif [ $M -le 6 ]; then QS="${Y}-04-01"
-            elif [ $M -le 9 ]; then QS="${Y}-07-01"
-            else                     QS="${Y}-10-01"
-            fi
-            echo "start=${QS}"              >> $GITHUB_OUTPUT
-            echo "end=$(date +%Y-%m-%d)"   >> $GITHUB_OUTPUT
-          else
-            # Quarterly run or manual with no dates — let script auto-detect last quarter
+          elif [ "${{ github.event.schedule }}" = "0 8 1 1,4,7,10 *" ]; then
+            # Quarterly finalisation — score the quarter that just ended
             echo "start=" >> $GITHUB_OUTPUT
             echo "end="   >> $GITHUB_OUTPUT
+          else
+            # Daily cron OR manual trigger with no dates — current quarter YTD
+            echo "start=$(_quarter_start)"   >> $GITHUB_OUTPUT
+            echo "end=$(date +%Y-%m-%d)"     >> $GITHUB_OUTPUT
           fi
 
       - name: Run scoring engine

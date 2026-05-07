@@ -113,7 +113,7 @@ def load_miles(period_start: date, period_end: date) -> dict[int, float]:
 def load_dvir_misses(period_start: date, period_end: date) -> dict[int, int]:
     """Returns {driver_id: days_missed} — only rows where completed=false."""
     resp = sb.table("dvir_logs") \
-             .select("driver_id") \
+             .select("driver_id, log_date, source") \
              .gte("log_date", period_start.isoformat()) \
              .lte("log_date", period_end.isoformat()) \
              .eq("completed", False) \
@@ -122,6 +122,31 @@ def load_dvir_misses(period_start: date, period_end: date) -> dict[int, int]:
     counts: dict[int, int] = defaultdict(int)
     for row in (resp.data or []):
         counts[row["driver_id"]] += 1
+
+    if resp.data:
+        by_source: dict[str, int] = defaultdict(int)
+        for row in resp.data:
+            by_source[row.get("source") or "unknown"] += 1
+        print(f"  DVIR miss rows found: {len(resp.data)} "
+              f"({', '.join(f'{s}={n}' for s, n in sorted(by_source.items()))})")
+        print(f"  Across {len(counts)} driver(s): "
+              + ", ".join(f"driver_id={did}:{n}" for did, n in sorted(counts.items())))
+    else:
+        # Help diagnose why no rows were found
+        total_resp = sb.table("dvir_logs") \
+                       .select("driver_id, log_date, completed, source", count="exact") \
+                       .gte("log_date", period_start.isoformat()) \
+                       .lte("log_date", period_end.isoformat()) \
+                       .execute()
+        total = total_resp.count or len(total_resp.data or [])
+        print(f"  0 DVIR miss rows found. Total dvir_logs rows in date range: {total}")
+        if total_resp.data:
+            sample = total_resp.data[:5]
+            print("  Sample rows (first 5):")
+            for r in sample:
+                print(f"    driver_id={r.get('driver_id')} log_date={r.get('log_date')} "
+                      f"completed={r.get('completed')} source={r.get('source')!r}")
+
     return dict(counts)
 
 def load_compliance(period_start: date, period_end: date) -> dict[int, dict]:
