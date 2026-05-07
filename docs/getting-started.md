@@ -95,16 +95,18 @@ Run a sync manually:
 
 ```bash
 # Backfill Samsara data for a date range
-python apps/inspections/scripts/backfill_samsara.py \
-  --start 2026-04-01 --end 2026-04-28
+BACKFILL_START=2026-04-01 BACKFILL_END=2026-04-28 \
+  python apps/inspections/scripts/backfill_samsara.py
 
 # Compute safety scores for a period
-python apps/inspections/scripts/compute_safety_scores.py \
-  --start 2026-04-01 --end 2026-04-28
+PERIOD_START=2026-04-01 PERIOD_END=2026-04-28 \
+  python apps/inspections/scripts/compute_safety_scores.py
 
 # Sync impounds from TowBook
 python apps/impounds/scripts/sync_impounds.py
 ```
+
+> Scripts accept dates via environment variables, not CLI flags. Omit `PERIOD_START`/`PERIOD_END` to auto-score the last completed quarter.
 
 ## Supabase Migrations
 

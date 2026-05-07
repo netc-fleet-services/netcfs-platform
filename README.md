@@ -36,6 +36,7 @@ pnpm --filter @netcfs/impounds dev    # impounds
 | [Architecture](docs/architecture.md) | Monorepo structure, packages, tech decisions |
 | [Database](docs/database.md) | Supabase schema, all tables, RLS, migrations |
 | [Data Sync](docs/data-sync.md) | Python scripts, Samsara/TowBook integrations, GitHub Actions |
+| [Infrastructure](docs/infrastructure.md) | Supabase/Vercel/GitHub setup, all secrets, handover checklist |
 | [Portal](docs/apps/portal.md) | Auth flow, role-based app tiles |
 | [Fleet](docs/apps/fleet.md) | Truck tracking, PM schedules, notes |
 | [Transport](docs/apps/transport.md) | Dispatch, job sync, geocoding |
