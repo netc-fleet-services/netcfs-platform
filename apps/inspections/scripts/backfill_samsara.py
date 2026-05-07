@@ -231,6 +231,24 @@ def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float
 # Road-distance factor: actual road miles ≈ straight-line × 1.25 for service/tow routes
 ROAD_FACTOR = 1.25
 
+# Yard coordinates mirror transport app geo.ts geoCache exactly (4-decimal precision
+# matches the route_cache key format the transport app uses).
+YARD_COORDS: dict[str, tuple[float, float]] = {
+    "exeter":     (42.9814, -70.9319),
+    "pembroke":   (43.1473, -71.4579),
+    "mattbrowns": (43.1379, -71.4792),
+    "rays":       (43.5084, -70.4618),
+}
+
+def _route_key(*coords: tuple[float, float]) -> str:
+    """Build a route_cache lookup key identical to the transport app's routeKey()."""
+    return "|".join(f"{lat:.4f},{lon:.4f}" for lat, lon in coords)
+
+def load_route_cache() -> dict[str, float]:
+    """Load road-distance cache from Supabase (populated by transport app GraphHopper calls)."""
+    resp = sb.table("route_cache").select("key, miles").execute()
+    return {r["key"]: float(r["miles"]) for r in (resp.data or []) if r.get("miles") is not None}
+
 def load_truck_maps() -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
     """
     Returns:
@@ -642,10 +660,13 @@ def backfill_mileage_from_jobs(
     end_date:      date,
     by_name:       dict[str, int],
     skip_pairs:    set[tuple[int, str]],  # (driver_id, date_str) already filled by Samsara
+    route_cache:   dict[str, float],
 ) -> int:
     """
-    Estimate daily mileage from TowBook jobs using pickup/drop coordinates.
-    Covers all drivers (not just Samsara-linked ones) and fills gaps Samsara leaves.
+    Calculate total daily trip miles from TowBook jobs using full round-trip distance
+    (yard→pickup→drop→yard), matching the transport app's mileage methodology.
+    Looks up route_cache for exact road miles; falls back to haversine × 1.25.
+    Covers all drivers and fills gaps Samsara GPS leaves.
     Returns number of driver-days upserted.
     """
     # Paginate through jobs with coordinates in the date range
@@ -655,7 +676,7 @@ def backfill_mileage_from_jobs(
     while True:
         resp = (
             sb.table("jobs")
-              .select("driver_id, tb_driver, day, pickup_lat, pickup_lon, drop_lat, drop_lon")
+              .select("driver_id, tb_driver, yard_id, day, pickup_lat, pickup_lon, drop_lat, drop_lon")
               .gte("day", start_date.isoformat())
               .lte("day", end_date.isoformat())
               .not_.is_("pickup_lat", "null")
@@ -705,13 +726,24 @@ def backfill_mileage_from_jobs(
             continue
 
         try:
-            dist = haversine_miles(
-                float(job["pickup_lat"]), float(job["pickup_lon"]),
-                float(job["drop_lat"]),   float(job["drop_lon"]),
-            ) * ROAD_FACTOR
+            p_lat = float(job["pickup_lat"])
+            p_lon = float(job["pickup_lon"])
+            d_lat = float(job["drop_lat"])
+            d_lon = float(job["drop_lon"])
         except (TypeError, ValueError):
             bad_coords += 1
             continue
+        yard = YARD_COORDS.get((job.get("yard_id") or "").strip())
+        if yard:
+            y_lat, y_lon = yard
+            ck = _route_key((y_lat, y_lon), (p_lat, p_lon), (d_lat, d_lon), (y_lat, y_lon))
+            dist = route_cache[ck] if ck in route_cache else (
+                haversine_miles(y_lat, y_lon, p_lat, p_lon) +
+                haversine_miles(p_lat, p_lon, d_lat, d_lon) +
+                haversine_miles(d_lat, d_lon, y_lat, y_lon)
+            ) * ROAD_FACTOR
+        else:
+            dist = haversine_miles(p_lat, p_lon, d_lat, d_lon) * ROAD_FACTOR
 
         miles_map[key] = miles_map.get(key, 0.0) + dist
 
@@ -814,8 +846,10 @@ def backfill_mileage(by_name_global: dict[str, int]):
         print(f"  Upserted {len(rows)} interstate driver-days (Samsara GPS)")
         samsara_pairs = {(r["driver_id"], r["log_date"]) for r in rows}
 
-    tb_count = backfill_mileage_from_jobs(BACKFILL_START, BACKFILL_END, by_name_global, samsara_pairs)
-    print(f"  TowBook haversine upserted {tb_count} additional driver-days")
+    route_cache = load_route_cache()
+    print(f"  {len(route_cache)} entries in route_cache")
+    tb_count = backfill_mileage_from_jobs(BACKFILL_START, BACKFILL_END, by_name_global, samsara_pairs, route_cache)
+    print(f"  TowBook upserted {tb_count} additional driver-days")
 
 # ── 3. DVIR backfill ───────────────────────────────────────────────────────────
 
@@ -1007,7 +1041,7 @@ def patch_unlinked_event_drivers(by_name: dict[str, int]) -> int:
     by_driver: dict[int, list[str]] = {}
     for ev in events:
         raw = (ev.get("driver_name") or "").strip()
-        internal_id = by_name.get(raw.lower()) or (by_name.get(normalize_name(raw)) if raw else None)
+        internal_id = next((by_name[k] for k in _name_forms(raw) if k in by_name), None) if raw else None
         if internal_id:
             by_driver.setdefault(internal_id, []).append(ev["id"])
 

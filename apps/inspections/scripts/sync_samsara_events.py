@@ -511,7 +511,7 @@ def patch_unlinked_event_drivers(by_name: dict[str, int]) -> int:
     by_driver: dict[int, list[str]] = {}
     for ev in events:
         raw = (ev.get("driver_name") or "").strip()
-        internal_id = by_name.get(raw.lower()) or (by_name.get(normalize_name(raw)) if raw else None)
+        internal_id = next((by_name[k] for k in _name_forms(raw) if k in by_name), None) if raw else None
         if internal_id:
             by_driver.setdefault(internal_id, []).append(ev["id"])
 
