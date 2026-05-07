@@ -360,9 +360,11 @@ def scrape_tab(page, tab_id, tab_name):
         if len(driver_parts) > 1:
             print(f"  Split drivers for {call_num}: {driver_parts}")
 
-        # For Completed tab, include the row even if addresses are empty —
-        # sync will carry forward existing pickup/drop from the DB.
-        if pickup or drop or tab_name == "Completed":
+        # Include any call that has at least one meaningful field.
+        # Calls with no addresses yet are valid — the next sync will pick up
+        # the addresses once they're filled in TowBook.
+        # Only skip rows that are completely empty (no address, account, reason, or desc).
+        if pickup or drop or account or reason or desc or tab_name == "Completed":
             calls.append({
                 'call_num':     call_num,
                 'desc':         desc,

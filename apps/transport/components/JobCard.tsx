@@ -53,7 +53,17 @@ export function JobCard({ job, drivers, onUpdate, onRemove, onDayChange }: Props
 
   const JOB_TYPES = ['Equipment Transport', 'Heavy Duty Tow', 'Light Duty Tow', 'Road Service', 'Crane Service']
 
-  const [showNotes, setShowNotes] = useState(false)
+  const extractZip = (addr: string) => {
+    const m = addr.match(/\b[A-Za-z]{2}\s*(\d{5})\b/) || addr.match(/\b(\d{5})\b/)
+    return m ? m[1] : ''
+  }
+
+  const [showNotes,   setShowNotes]   = useState(false)
+  const [showAddrEdit, setShowAddrEdit] = useState(false)
+  const [editPickup,  setEditPickup]  = useState(job.pickupAddr || '')
+  const [editDrop,    setEditDrop]    = useState(job.dropAddr   || '')
+  const [addrSaving,  setAddrSaving]  = useState(false)
+  const [addrStatus,  setAddrStatus]  = useState<'idle' | 'saved' | 'error'>('idle')
   const [showStops, setShowStops] = useState(false)
   const [newAddr,   setNewAddr]   = useState('')
   const [newZip,    setNewZip]    = useState('')
@@ -169,6 +179,83 @@ export function JobCard({ job, drivers, onUpdate, onRemove, onDayChange }: Props
           TB Driver: <strong style={{ color: C.am }}>{[job.tbDriver, job.tbDriver2].filter(Boolean).join(', ')}</strong>
         </div>
       )}
+
+      {/* Address edit panel */}
+      <div style={{ marginBottom: 6 }}>
+        <button
+          style={{ ...bSt, fontSize: 9, color: C.ac, borderColor: C.ac }}
+          onClick={() => { setShowAddrEdit(v => !v); setAddrStatus('idle') }}
+        >
+          {showAddrEdit ? 'Hide addresses' : '✏ Edit Addresses'}
+        </button>
+        {showAddrEdit && (
+          <div style={{ marginTop: 4, padding: 8, background: C.sf, borderRadius: 6, border: '1px solid ' + C.bd }}>
+            <div style={{ fontSize: 9, color: C.dm, marginBottom: 6 }}>
+              Enter full street addresses including city and state for best geocoding results.
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div>
+                <div style={{ fontSize: 8, color: C.dm, marginBottom: 2 }}>PICKUP</div>
+                <input
+                  style={{ ...iS, width: '100%', fontSize: 10, padding: '4px 6px', boxSizing: 'border-box' } as React.CSSProperties}
+                  placeholder="123 Main St, City ST 00000"
+                  value={editPickup}
+                  onChange={e => setEditPickup(e.target.value)}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 8, color: C.dm, marginBottom: 2 }}>DROP</div>
+                <input
+                  style={{ ...iS, width: '100%', fontSize: 10, padding: '4px 6px', boxSizing: 'border-box' } as React.CSSProperties}
+                  placeholder="123 Main St, City ST 00000"
+                  value={editDrop}
+                  onChange={e => setEditDrop(e.target.value)}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                <button
+                  style={{ ...bSt, fontSize: 9, color: C.gn, borderColor: C.gn, opacity: addrSaving ? 0.5 : 1 }}
+                  disabled={addrSaving}
+                  onClick={async () => {
+                    setAddrSaving(true); setAddrStatus('idle')
+                    try {
+                      const geocode = async (addr: string) => {
+                        if (!addr.trim()) return { addr: '', lat: null as number | null, lon: null as number | null }
+                        const res = await fetch('/api/geocode', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ addr }),
+                        })
+                        return res.ok ? res.json() : { addr, lat: null, lon: null }
+                      }
+                      const [pu, dr] = await Promise.all([geocode(editPickup), geocode(editDrop)])
+                      onUpdate({
+                        pickupAddr: pu.addr || editPickup,
+                        pickupZip:  extractZip(pu.addr || editPickup),
+                        pickupLat:  pu.lat,
+                        pickupLon:  pu.lon,
+                        dropAddr:   dr.addr || editDrop,
+                        dropZip:    extractZip(dr.addr || editDrop),
+                        dropLat:    dr.lat,
+                        dropLon:    dr.lon,
+                      })
+                      setAddrStatus('saved')
+                    } catch {
+                      setAddrStatus('error')
+                    } finally {
+                      setAddrSaving(false)
+                    }
+                  }}
+                >
+                  {addrSaving ? 'Geocoding…' : 'Save & Geocode'}
+                </button>
+                {addrStatus === 'saved' && <span style={{ fontSize: 9, color: C.gn }}>Saved</span>}
+                {addrStatus === 'error' && <span style={{ fontSize: 9, color: C.rd }}>Error — try again</span>}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div style={{ padding: '0 0 0 2px' }}>
         {allPts.map((pt, i) => {
