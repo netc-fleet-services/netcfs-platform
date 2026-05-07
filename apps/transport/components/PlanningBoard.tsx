@@ -3,7 +3,7 @@ import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { C, bSt, bP, sS, iS, cB, YARDS } from '../lib/config'
 import { fH, todayISO, jobTotal } from '../lib/utils'
 import { db } from '../lib/db'
-import { cityFrom, lz } from '../lib/geo'
+import { cityFrom, lz, jobCrd, dMi } from '../lib/geo'
 import type { Job, Driver } from '../lib/types'
 
 // ── Timeline constants ────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ function fmtMin(min: number): string {
 
 // ── Layout computation ────────────────────────────────────────────────────────
 
-interface Layout { job: Job; startMin: number; durationMin: number }
+interface Layout { job: Job; startMin: number; durationMin: number; transitMinsBefore: number }
 
 function buildLayout(
   jobs: Job[],
@@ -113,16 +113,26 @@ function buildLayout(
     const j   = sorted[i]
     const raw = jobTotal(j)
     const dur = Math.max(0.25, isFinite(raw) ? raw : 1)
+
+    let transitMins = 0
+    if (i > 0) {
+      const prev = sorted[i - 1]
+      const mi = dMi(jobCrd(prev, 'drop'), jobCrd(j, 'pickup'))
+      if (isFinite(mi) && mi > 0) transitMins = Math.round(mi / 45 * 60)
+    }
+
     const override = startOverrides[j.id]
     if (override != null) {
-      out.push({ job: j, startMin: override, durationMin: dur * 60 })
+      out.push({ job: j, startMin: override, durationMin: dur * 60, transitMinsBefore: transitMins })
       cursor = override + dur * 60
     } else {
       if (i === 0) {
         const s = parseSchedMin(j.tbScheduled)
         if (s != null && s >= START_H * 60 && s <= END_H * 60) cursor = s
+      } else {
+        cursor += transitMins
       }
-      out.push({ job: j, startMin: cursor, durationMin: dur * 60 })
+      out.push({ job: j, startMin: cursor, durationMin: dur * 60, transitMinsBefore: transitMins })
       cursor += dur * 60
     }
   }
@@ -163,6 +173,7 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
   const [dragJobId,   setDragJobId]   = useState<string | null>(null)
   const [dragFrom,    setDragFrom]    = useState<number | 'pool' | null>(null)
   const [showAdd,     setShowAdd]     = useState(false)
+  const [showStacks,  setShowStacks]  = useState(false)
   const ganttRef = useRef<HTMLDivElement>(null)
 
   // ── Load / save day state ──────────────────────────────────────────────────
@@ -237,6 +248,20 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
     return m
   }, [assignedByDriver])
 
+  const stacks = useMemo(() => {
+    const pairs: Array<{ a: Job; b: Job; dist: number }> = []
+    for (let i = 0; i < unassigned.length; i++) {
+      for (let k = i + 1; k < unassigned.length; k++) {
+        const ai = unassigned[i], bi = unassigned[k]
+        const d1 = dMi(jobCrd(ai, 'drop'), jobCrd(bi, 'pickup'))
+        if (isFinite(d1) && d1 > 0 && d1 <= 15) pairs.push({ a: ai, b: bi, dist: d1 })
+        const d2 = dMi(jobCrd(bi, 'drop'), jobCrd(ai, 'pickup'))
+        if (isFinite(d2) && d2 > 0 && d2 <= 15) pairs.push({ a: bi, b: ai, dist: d2 })
+      }
+    }
+    return pairs.sort((x, y) => x.dist - y.dist).slice(0, 12)
+  }, [unassigned])
+
   // ── Day navigation ─────────────────────────────────────────────────────────
 
   const shiftDay = (n: number) => {
@@ -252,9 +277,18 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
 
   // ── Assignment operations ──────────────────────────────────────────────────
 
-  const assign = useCallback((jobId: string, driverId: number) => {
+  const assign = useCallback((jobId: string, driverId: number, dropMin?: number) => {
     const existing = assignedByDriver[driverId] ?? []
-    const newOrder = { ...order, [jobId]: existing.length }
+    const sortedEx = [...existing].sort((a, b) => (order[a.id] ?? 999) - (order[b.id] ?? 999))
+    let insertIdx = sortedEx.length
+    if (dropMin != null && existing.length > 0) {
+      const lay = buildLayout(existing, order, startOverrides)
+      const before = lay.findIndex(l => l.startMin > dropMin)
+      if (before >= 0) insertIdx = before
+    }
+    const newOrder = { ...order }
+    sortedEx.forEach((j, i) => { newOrder[j.id] = i < insertIdx ? i : i + 1 })
+    newOrder[jobId] = insertIdx
     setOrder(newOrder)
     onJobUpdate(jobId, { driverId })
     persist(newOrder, hidden, startOverrides)
@@ -269,12 +303,20 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
     persist(newOrder, hidden, newOverrides)
   }, [order, hidden, startOverrides, onJobUpdate, persist])
 
-  const reassign = useCallback((jobId: string, toDriver: number) => {
-    const existing  = assignedByDriver[toDriver] ?? []
-    const newOrder  = { ...order, [jobId]: existing.length }
+  const reassign = useCallback((jobId: string, toDriver: number, dropMin?: number) => {
+    const existing = assignedByDriver[toDriver] ?? []
+    const sortedEx = [...existing].sort((a, b) => (order[a.id] ?? 999) - (order[b.id] ?? 999))
+    let insertIdx = sortedEx.length
+    if (dropMin != null && existing.length > 0) {
+      const lay = buildLayout(existing, order, startOverrides)
+      const before = lay.findIndex(l => l.startMin > dropMin)
+      if (before >= 0) insertIdx = before
+    }
+    const newOrder = { ...order }; delete newOrder[jobId]
+    sortedEx.forEach((j, i) => { newOrder[j.id] = i < insertIdx ? i : i + 1 })
+    newOrder[jobId] = insertIdx
     const newOverrides = { ...startOverrides }; delete newOverrides[jobId]
-    setOrder(newOrder)
-    setStartOverrides(newOverrides)
+    setOrder(newOrder); setStartOverrides(newOverrides)
     onJobUpdate(jobId, { driverId: toDriver })
     persist(newOrder, hidden, newOverrides)
   }, [assignedByDriver, order, hidden, startOverrides, onJobUpdate, persist])
@@ -312,8 +354,11 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
   const handleDropOnDriver = (driverId: number) => (e: React.DragEvent) => {
     e.preventDefault()
     if (!dragJobId) return
-    if (dragFrom === 'pool') assign(dragJobId, driverId)
-    else if (typeof dragFrom === 'number' && dragFrom !== driverId) reassign(dragJobId, driverId)
+    const rect = e.currentTarget.getBoundingClientRect()
+    const rawMin = ((e.clientX - rect.left) / rect.width) * TOTAL_MIN + START_H * 60
+    const dropMin = Math.round(rawMin / 15) * 15
+    if (dragFrom === 'pool') assign(dragJobId, driverId, dropMin)
+    else if (typeof dragFrom === 'number' && dragFrom !== driverId) reassign(dragJobId, driverId, dropMin)
     setDragJobId(null); setDragFrom(null)
   }
   const handleDropOnPool = (e: React.DragEvent) => {
@@ -427,6 +472,39 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
           🔄 Sync TowBook
         </button>
       </div>
+
+      {/* ── Stacking suggestions ─────────────────────────────────────── */}
+      {stacks.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <button
+            style={{ ...bSt, fontSize: 10, color: C.am, borderColor: C.am }}
+            onClick={() => setShowStacks(v => !v)}
+          >
+            🔗 Stacking Suggestions ({stacks.length}) {showStacks ? '▲' : '▼'}
+          </button>
+          {showStacks && (
+            <div style={{ marginTop: 6, padding: '8px 10px', background: C.sf, borderRadius: 6, border: '1px solid ' + C.bd }}>
+              <div style={{ fontSize: 9, color: C.dm, fontWeight: 600, marginBottom: 6 }}>
+                UNASSIGNED JOBS WITH NEARBY PICKUP / DROP — consider same driver
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {stacks.map((s, i) => (
+                  <div key={i} style={{ fontSize: 10, color: C.tx, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ color: C.pu, fontWeight: 700 }}>{s.a.tbCallNum || '—'}</span>
+                    <span style={{ color: C.dm }}>drop →</span>
+                    <span style={{ color: C.pu, fontWeight: 700 }}>{s.b.tbCallNum || '—'}</span>
+                    <span style={{ color: C.dm }}>pickup</span>
+                    <span style={{ color: C.am, fontWeight: 600 }}>~{Math.round(s.dist)} mi</span>
+                    <span style={{ color: C.dm, fontSize: 9 }}>
+                      · {cityLabel(s.a.dropAddr, s.a.dropZip)} → {cityLabel(s.b.pickupAddr, s.b.pickupZip)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Unassigned pool ──────────────────────────────────────────── */}
       <div
@@ -573,6 +651,40 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
                     width: 1, background: C.bd, opacity: 0.4,
                   }} />
                 ))}
+
+                {/* Transit indicators between consecutive bars */}
+                {layout.map(({ job: j, startMin, transitMinsBefore }, idx) => {
+                  if (idx === 0 || transitMinsBefore < 2) return null
+                  const prev = layout[idx - 1]
+                  const prevEndMin = prev.startMin + prev.durationMin
+                  const activeStart = timeDrag?.jobId === j.id ? timeDrag.previewMin : startMin
+                  const gapMin = activeStart - prevEndMin
+                  if (gapMin < 5) return null
+                  const gapLeftPct = minToPct(prevEndMin)
+                  const gapWidthPct = gapMin / TOTAL_MIN * 100
+                  return (
+                    <div
+                      key={j.id + '_t'}
+                      style={{
+                        position: 'absolute',
+                        top: '50%', transform: 'translateY(-50%)',
+                        left: `${gapLeftPct}%`, width: `${Math.max(0, gapWidthPct)}%`,
+                        height: 1, background: C.dm + '50',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        pointerEvents: 'none', overflow: 'visible',
+                      }}
+                    >
+                      {gapWidthPct > 1.5 && (
+                        <span style={{
+                          fontSize: 7, color: C.dm, background: C.bg,
+                          padding: '0 3px', whiteSpace: 'nowrap', position: 'absolute',
+                        }}>
+                          ~{transitMinsBefore}m
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
 
                 {/* Job bars */}
                 {layout.map(({ job: j, startMin, durationMin }, idx) => {
