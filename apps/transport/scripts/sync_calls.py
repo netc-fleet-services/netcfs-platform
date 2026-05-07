@@ -427,8 +427,21 @@ def scrape_calls():
             try:
                 tab_calls = scrape_tab(page, tab_id, tab_name)
                 print(f"  {tab_name}: {len(tab_calls)} calls parsed (of visible rows above)")
+                today = date.today().isoformat()
+                day_overrides = 0
                 for call in tab_calls:
+                    existing = merged.get(call["call_num"])
+                    if existing and not call.get("scheduled") and existing.get("day", today) > today:
+                        # Later tab has no scheduled time for this call, but an earlier tab
+                        # already assigned it a future date — keep the earlier date so a
+                        # Current/Active tab entry doesn't overwrite tomorrow's jobs to today.
+                        call = dict(call)
+                        call["day"]       = existing["day"]
+                        call["scheduled"] = existing["scheduled"]
+                        day_overrides += 1
                     merged[call["call_num"]] = call
+                if day_overrides:
+                    print(f"    ({day_overrides} future-dated calls kept their scheduled day)")
             except Exception as e:
                 print(f"  Warning: failed to scrape {tab_name} tab — {e}")
 

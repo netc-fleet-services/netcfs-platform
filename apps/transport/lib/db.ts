@@ -94,9 +94,19 @@ function driverToApp(row: Record<string, unknown>): Driver {
 
 export const db = {
   async loadAllJobs(): Promise<Job[]> {
-    const { data, error } = await sb.from('jobs').select('*').order('added_at')
-    if (error) { console.error('db.loadAllJobs:', error); return [] }
-    return (data || []).map(jobToApp)
+    // Supabase caps unranged queries at 1000 rows. Paginate to get everything,
+    // same approach the sync script uses to avoid missing recent jobs.
+    const PAGE = 1000
+    const all: Record<string, unknown>[] = []
+    let offset = 0
+    while (true) {
+      const { data, error } = await sb.from('jobs').select('*').order('added_at').range(offset, offset + PAGE - 1)
+      if (error) { console.error('db.loadAllJobs:', error); break }
+      all.push(...(data || []))
+      if ((data || []).length < PAGE) break
+      offset += PAGE
+    }
+    return all.map(jobToApp)
   },
 
   async upsertJob(job: Job): Promise<void> {
