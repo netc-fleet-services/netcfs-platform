@@ -6,8 +6,11 @@ import {
   parsePreTrip,
   calculateAudit,
   fmtDate,
+  normName,
+  namesMatch,
   type AuditResult,
 } from '../lib/engine'
+import { getSupabaseBrowserClient } from '@netcfs/auth/client'
 
 type SortCol = 'driver' | 'required' | 'completed' | 'missed' | 'pct'
 type SortDir = 'asc' | 'desc'
@@ -124,6 +127,10 @@ export function PreTripAuditTool() {
   const [error,        setError]        = useState<string | null>(null)
   const [actOver,      setActOver]      = useState(false)
   const [ptOver,       setPtOver]       = useState(false)
+  const [saveState,    setSaveState]    = useState<'idle' | 'saving' | 'done' | 'error'>('idle')
+  const [saveResult,   setSaveResult]   = useState<{
+    saved: number; skipped: number; unresolved: string[]
+  } | null>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const xlsxRef = useRef<any>(null)
 
@@ -166,7 +173,100 @@ export function PreTripAuditTool() {
     setSortDir('asc')
     setQuery('')
     setError(null)
+    setSaveState('idle')
+    setSaveResult(null)
   }, [])
+
+  const handleSave = useCallback(async () => {
+    if (!auditData) return
+    setSaveState('saving')
+    setSaveResult(null)
+    try {
+      const supabase = getSupabaseBrowserClient()
+
+      // Load all drivers and build name→id lookup
+      const { data: drivers, error: drvErr } = await supabase
+        .from('drivers').select('id, name').order('name')
+      if (drvErr || !drivers) throw drvErr ?? new Error('Could not load drivers table')
+
+      const nameMap = new Map<string, { id: number; name: string }>()
+      for (const d of drivers) {
+        if (d.name) nameMap.set(normName(d.name), { id: d.id, name: d.name })
+      }
+
+      function resolveDriverId(tbName: string): number | null {
+        const norm = normName(tbName)
+        const exact = nameMap.get(norm)
+        if (exact) return exact.id
+        for (const [, info] of nameMap) {
+          if (namesMatch(tbName, info.name)) return info.id
+        }
+        return null
+      }
+
+      // Build missed set for O(1) lookup
+      const missedSet = new Set(
+        auditData.missedDetails.map(m => `${normName(m.driver)}||${m.date}`)
+      )
+
+      // Resolve every required driver-day to a DB row
+      type DvirRow = {
+        driver_id: number; driver_name: string; log_date: string
+        completed: boolean; manually_overridden: boolean; source: string
+      }
+      const rowMap = new Map<string, DvirRow>()
+      const unresolved = new Set<string>()
+
+      for (const r of auditData.requiredDetails) {
+        const driverId = resolveDriverId(r.driver)
+        if (!driverId) { unresolved.add(r.driver); continue }
+        const key     = `${driverId}||${r.date}`
+        const missed  = missedSet.has(`${normName(r.driver)}||${r.date}`)
+        // If this driver-day already exists, keep completed=false if ANY requirement was missed
+        const existing = rowMap.get(key)
+        if (!existing || (missed && existing.completed)) {
+          rowMap.set(key, {
+            driver_id: driverId, driver_name: r.driver, log_date: r.date,
+            completed: !missed, manually_overridden: false, source: 'manual',
+          })
+        }
+      }
+
+      // Fetch manually-overridden rows in the audit period — never overwrite these
+      const { min: startDate, max: endDate } = auditData.dateRange
+      const overriddenKeys = new Set<string>()
+      if (startDate && endDate) {
+        const { data: overridden } = await supabase
+          .from('dvir_logs')
+          .select('driver_id, log_date')
+          .gte('log_date', startDate)
+          .lte('log_date', endDate)
+          .eq('manually_overridden', true)
+        for (const o of (overridden ?? [])) {
+          overriddenKeys.add(`${o.driver_id}||${o.log_date}`)
+        }
+      }
+
+      const toSave = Array.from(rowMap.values())
+        .filter(r => !overriddenKeys.has(`${r.driver_id}||${r.log_date}`))
+      const skipped = rowMap.size - toSave.length
+
+      // Batch upsert
+      const BATCH = 100
+      for (let i = 0; i < toSave.length; i += BATCH) {
+        const { error: upsertErr } = await supabase
+          .from('dvir_logs')
+          .upsert(toSave.slice(i, i + BATCH), { onConflict: 'driver_id,log_date' })
+        if (upsertErr) throw upsertErr
+      }
+
+      setSaveResult({ saved: toSave.length, skipped, unresolved: Array.from(unresolved).sort() })
+      setSaveState('done')
+    } catch (e) {
+      console.error('Save to safety scores failed:', e)
+      setSaveState('error')
+    }
+  }, [auditData])
 
   const handleExport = useCallback(async () => {
     if (!auditData || !xlsxRef.current) return
@@ -315,8 +415,37 @@ export function PreTripAuditTool() {
           </span>
         )}
         <button className="pit-btn-sec" onClick={handleExport}>↓ Export Excel</button>
+        <button
+          className="pit-btn-run"
+          style={{ padding: '0.4rem 1rem', fontSize: '0.8125rem' }}
+          disabled={saveState === 'saving'}
+          onClick={handleSave}
+        >
+          {saveState === 'saving'
+            ? <><span className="pit-spinner" />Saving…</>
+            : '↑ Save to Safety Scores'}
+        </button>
         <button className="pit-btn-sec" onClick={handleReset}>← New Audit</button>
       </div>
+
+      {saveState === 'done' && saveResult && (
+        <div style={{
+          margin: '0.5rem 0', padding: '0.6rem 0.875rem', borderRadius: 6,
+          background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)',
+          fontSize: '0.8125rem', color: 'rgb(var(--on-surface))',
+        }}>
+          Saved {saveResult.saved} driver-days to safety scores.
+          {saveResult.skipped > 0 && ` ${saveResult.skipped} skipped (manually overridden).`}
+          {saveResult.unresolved.length > 0 && (
+            <span style={{ color: 'rgb(var(--error))' }}>
+              {' '}{saveResult.unresolved.length} driver{saveResult.unresolved.length > 1 ? 's' : ''} not found in drivers table: {saveResult.unresolved.join(', ')}
+            </span>
+          )}
+        </div>
+      )}
+      {saveState === 'error' && (
+        <div className="pit-error">Save failed — check the browser console for details.</div>
+      )}
 
       {/* Table */}
       <div className="pit-tbl-wrap">
