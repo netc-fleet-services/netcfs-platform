@@ -7,13 +7,20 @@ completely isolated from the primary impound sync.  If this script errors or
 times out the main sync is completely unaffected.
 
 Strategy:
-  For each impound with keys IS NULL, navigate directly to its TowBook detail
-  page (https://app.towbook.com/impounds/Impound?id={call_number}) and try two
-  methods in order:
-    1. Intercept the JSON response TowBook loads for the page — clean, structured.
-    2. Regex search on the rendered HTML for "Have Keys … Yes/No" as a fallback.
-  Any impound that errors or times out is skipped (keys stays NULL) and will be
-  retried on the next daily run.
+  The TowBook detail page URL uses the impound's stock number as the `id`
+  parameter (e.g. https://app.towbook.com/impounds/Impound?id=28130000).
+  The stock number is stored in the `stock_number` column, which the main sync
+  populates from the CSV export.  This script navigates directly to each detail
+  page — no list-page iteration needed.
+
+  For each page it tries two methods in order:
+    1. Intercept the JSON response TowBook loads for the page.
+    2. Regex search on the rendered HTML for "Have Keys … Yes/No".
+  Any impound that errors or times out is skipped (keys stays NULL and will be
+  retried on the next daily run).
+
+  Impounds with no stock_number yet are reported but skipped — they will get
+  their stock_number on the next main sync run and be processed the day after.
 
 Required environment variables (no new secrets — same as the main sync):
   TOWBOOK_USER         — TowBook login username
@@ -34,7 +41,7 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 
 DETAIL_URL  = "https://app.towbook.com/impounds/Impound?id={}"
-MAX_PER_RUN = 75   # cap per run to stay comfortably within the 15-minute timeout
+MAX_PER_RUN = 75   # cap per run to stay within the 15-minute timeout
 
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -52,24 +59,21 @@ def login(page):
 
 # ── Per-impound scrape ─────────────────────────────────────────────────────────
 
-DEBUG_SCREENSHOTS = 3   # take a screenshot for the first N records to inspect
-
-def scrape_keys(page, call_number: str, debug: bool = False) -> bool | None:
+def scrape_keys(page, call_number: str, stock_number: str) -> bool | None:
     """
-    Visit the TowBook detail page for one impound and return:
+    Navigate directly to the TowBook impound detail page via stock number and return:
       True  — Have Keys: Yes
       False — Have Keys: No
       None  — could not determine; skip and leave keys as NULL
     """
-    url           = DETAIL_URL.format(call_number)
-    captured_json = {}          # keyed by response URL
-    all_responses = []          # (url, status, content_type) for debug logging
+    url      = DETAIL_URL.format(stock_number)
+    captured = {}
 
     def on_response(response):
         try:
-            ct = response.headers.get("content-type", "")
-            all_responses.append((response.url, response.status, ct))
-            if response.status != 200 or "json" not in ct:
+            if response.status != 200:
+                return
+            if "json" not in response.headers.get("content-type", ""):
                 return
             body = response.json()
             if isinstance(body, dict):
@@ -77,14 +81,14 @@ def scrape_keys(page, call_number: str, debug: bool = False) -> bool | None:
                     if wrapper in body and isinstance(body[wrapper], dict):
                         body = body[wrapper]
                         break
-                captured_json.update(body)
+                captured.update(body)
         except Exception:
             pass
 
     page.on("response", on_response)
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-        page.wait_for_timeout(4_000)
+        page.wait_for_timeout(3_000)
     except PlaywrightTimeout:
         print(f"  [{call_number}] Page load timeout — skipping")
         return None
@@ -94,36 +98,9 @@ def scrape_keys(page, call_number: str, debug: bool = False) -> bool | None:
     finally:
         page.remove_listener("response", on_response)
 
-    actual_url = page.url
-    page_title = page.title()
-
-    if debug:
-        print(f"  [{call_number}] Navigated to: {actual_url}")
-        print(f"  [{call_number}] Page title:    {page_title}")
-        print(f"  [{call_number}] JSON responses intercepted: {len(captured_json)} keys")
-        if captured_json:
-            print(f"  [{call_number}] JSON keys: {list(captured_json.keys())[:20]}")
-        print(f"  [{call_number}] All XHR responses ({len(all_responses)} total):")
-        for r_url, r_status, r_ct in all_responses[:15]:
-            print(f"    {r_status}  {r_ct[:40]:40s}  {r_url[:100]}")
-        try:
-            content = page.content()
-            # Print a window of content around "key" to see what's nearby
-            idx = content.lower().find("key")
-            if idx >= 0:
-                print(f"  [{call_number}] HTML snippet near 'key': ...{content[max(0,idx-60):idx+120]}...")
-            else:
-                print(f"  [{call_number}] 'key' not found anywhere in page HTML")
-            # Print first 500 chars of body text to confirm we're on the right page
-            print(f"  [{call_number}] Page HTML start: {content[:500]}")
-        except Exception as e:
-            print(f"  [{call_number}] Could not read page content: {e}")
-        page.screenshot(path=f"keys_debug_{call_number}.png")
-        print(f"  [{call_number}] Screenshot saved: keys_debug_{call_number}.png")
-
     # ── Method 1: network response JSON ───────────────────────────────────────
     for field in ("haveKeys", "have_keys", "HaveKeys", "HasKeys", "keys"):
-        val = captured_json.get(field)
+        val = captured.get(field)
         if val is not None:
             result = str(val).strip().lower() in ("yes", "true", "1", "y")
             print(f"  [{call_number}] keys={result}  (network JSON, field='{field}')")
@@ -146,15 +123,26 @@ def scrape_keys(page, call_number: str, debug: bool = False) -> bool | None:
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
-    resp = sb.table("impounds").select("call_number").is_("keys", "null").execute()
-    unknowns = [r["call_number"] for r in (resp.data or [])]
+    resp = sb.table("impounds") \
+             .select("call_number, stock_number") \
+             .is_("keys", "null") \
+             .execute()
+    all_unknown = resp.data or []
 
-    if not unknowns:
-        print("No impounds with unknown keys — nothing to do.")
+    # Split into actionable (have stock_number) and waiting (don't yet)
+    actionable = [r for r in all_unknown if r.get("stock_number")]
+    waiting    = [r for r in all_unknown if not r.get("stock_number")]
+
+    if waiting:
+        print(f"{len(waiting)} impound(s) have no stock_number yet "
+              f"— will be populated by the next main sync, then processed tomorrow.")
+
+    if not actionable:
+        print("No actionable impounds with unknown keys — nothing to do.")
         return
 
-    to_process = unknowns[:MAX_PER_RUN]
-    print(f"Found {len(unknowns)} impound(s) with unknown keys, "
+    to_process = actionable[:MAX_PER_RUN]
+    print(f"Found {len(actionable)} impound(s) with unknown keys and a stock number, "
           f"processing {len(to_process)} this run")
 
     updates: list[dict] = []
@@ -166,13 +154,14 @@ def main():
 
         try:
             login(page)
-            for i, call_number in enumerate(to_process):
-                debug = i < DEBUG_SCREENSHOTS
-                print(f"[{i + 1}/{len(to_process)}] call #{call_number}…")
-                result = scrape_keys(page, call_number, debug=debug)
+            for i, record in enumerate(to_process):
+                call_number  = record["call_number"]
+                stock_number = record["stock_number"]
+                print(f"[{i + 1}/{len(to_process)}] call #{call_number}  (stock #{stock_number})…")
+                result = scrape_keys(page, call_number, stock_number)
                 if result is not None:
                     updates.append({"call_number": call_number, "keys": result})
-                time.sleep(1)   # polite delay between requests
+                time.sleep(1)
         finally:
             browser.close()
 
@@ -184,9 +173,9 @@ def main():
           .execute()
         print(f"  call #{upd['call_number']} → keys={upd['keys']}")
 
-    remaining = len(unknowns) - len(to_process)
+    remaining = len(actionable) - len(to_process)
     if remaining > 0:
-        print(f"\n{remaining} impound(s) still unknown — will be processed in future runs.")
+        print(f"\n{remaining} actionable impound(s) still unknown — will be processed in future runs.")
     print(f"\nKeys sync complete. Updated {len(updates)}/{len(to_process)} processed.")
 
 

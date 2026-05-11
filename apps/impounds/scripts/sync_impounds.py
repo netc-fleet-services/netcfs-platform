@@ -198,6 +198,8 @@ def parse_export(csv_path: Path) -> list[dict]:
 
         storage_lot = col(vals, "storage lot", "storage_lot", "lot", "location")
 
+        raw_stock = col(vals, "stock #", "stock#", "stock no.", "stock no", "stock number", "stock")
+
         records.append({
             "call_number":     raw_call,
             "date_of_impound": parse_date(col(vals, "impound date", "impound_date", "date of impound", "date")),
@@ -208,6 +210,7 @@ def parse_export(csv_path: Path) -> list[dict]:
             "internal_cost":   internal_cost,
             "amount_paid":     amount_paid,
             "released":        False,
+            "stock_number":    raw_stock if raw_stock else None,
         })
 
     print(f"Parsed {len(records)} impound records from CSV")
