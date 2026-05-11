@@ -416,7 +416,7 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
           <span style={{ fontSize: 9, color: C.dm, fontWeight: 600, alignSelf: 'center', minWidth: 80 }}>DRIVER YARD:</span>
           {['ALL', ...allYards].map(y => (
             <button key={y} style={filterBtn(yardFilt.has(y))} onClick={() => setYardFilt(prev => toggleFilter(prev, y))}>
-              {y === 'ALL' ? 'All Yards' : (YARDS.find(yd => yd.id === y)?.short ?? y)}
+              {y === 'ALL' ? 'All Yards' : (YARDS.find(yd => yd.id.toLowerCase() === y)?.short ?? (y.charAt(0).toUpperCase() + y.slice(1)))}
             </button>
           ))}
         </div>
@@ -618,7 +618,7 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
                     {driver.name}
                   </div>
                   <div style={{ fontSize: 8, color: C.dm }}>
-                    {[driver.func, driver.yard].filter(Boolean).join(' · ')}
+                    {[driver.func, YARDS.find(yd => yd.id.toLowerCase() === driver.yard)?.short ?? (driver.yard.charAt(0).toUpperCase() + driver.yard.slice(1))].filter(Boolean).join(' · ')}
                   </div>
                   {totalH > 0 && (
                     <div style={{ fontSize: 9, fontWeight: 700, color: overCap ? C.rd : C.gn, marginTop: 1 }}>
