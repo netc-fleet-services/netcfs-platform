@@ -52,38 +52,39 @@ def login(page):
 
 # ── Per-impound scrape ─────────────────────────────────────────────────────────
 
-def scrape_keys(page, call_number: str) -> bool | None:
+DEBUG_SCREENSHOTS = 3   # take a screenshot for the first N records to inspect
+
+def scrape_keys(page, call_number: str, debug: bool = False) -> bool | None:
     """
     Visit the TowBook detail page for one impound and return:
       True  — Have Keys: Yes
       False — Have Keys: No
       None  — could not determine; skip and leave keys as NULL
     """
-    url      = DETAIL_URL.format(call_number)
-    captured = {}
+    url           = DETAIL_URL.format(call_number)
+    captured_json = {}          # keyed by response URL
+    all_responses = []          # (url, status, content_type) for debug logging
 
     def on_response(response):
-        """Capture any JSON API response that might contain impound detail data."""
         try:
-            if response.status != 200:
-                return
-            if "json" not in response.headers.get("content-type", ""):
+            ct = response.headers.get("content-type", "")
+            all_responses.append((response.url, response.status, ct))
+            if response.status != 200 or "json" not in ct:
                 return
             body = response.json()
-            # TowBook sometimes wraps the payload under a key like 'data' or 'record'
             if isinstance(body, dict):
                 for wrapper in ("data", "result", "impound", "record"):
                     if wrapper in body and isinstance(body[wrapper], dict):
                         body = body[wrapper]
                         break
-                captured.update(body)
+                captured_json.update(body)
         except Exception:
             pass
 
     page.on("response", on_response)
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-        page.wait_for_timeout(3_000)   # let async requests finish
+        page.wait_for_timeout(4_000)
     except PlaywrightTimeout:
         print(f"  [{call_number}] Page load timeout — skipping")
         return None
@@ -93,9 +94,36 @@ def scrape_keys(page, call_number: str) -> bool | None:
     finally:
         page.remove_listener("response", on_response)
 
+    actual_url = page.url
+    page_title = page.title()
+
+    if debug:
+        print(f"  [{call_number}] Navigated to: {actual_url}")
+        print(f"  [{call_number}] Page title:    {page_title}")
+        print(f"  [{call_number}] JSON responses intercepted: {len(captured_json)} keys")
+        if captured_json:
+            print(f"  [{call_number}] JSON keys: {list(captured_json.keys())[:20]}")
+        print(f"  [{call_number}] All XHR responses ({len(all_responses)} total):")
+        for r_url, r_status, r_ct in all_responses[:15]:
+            print(f"    {r_status}  {r_ct[:40]:40s}  {r_url[:100]}")
+        try:
+            content = page.content()
+            # Print a window of content around "key" to see what's nearby
+            idx = content.lower().find("key")
+            if idx >= 0:
+                print(f"  [{call_number}] HTML snippet near 'key': ...{content[max(0,idx-60):idx+120]}...")
+            else:
+                print(f"  [{call_number}] 'key' not found anywhere in page HTML")
+            # Print first 500 chars of body text to confirm we're on the right page
+            print(f"  [{call_number}] Page HTML start: {content[:500]}")
+        except Exception as e:
+            print(f"  [{call_number}] Could not read page content: {e}")
+        page.screenshot(path=f"keys_debug_{call_number}.png")
+        print(f"  [{call_number}] Screenshot saved: keys_debug_{call_number}.png")
+
     # ── Method 1: network response JSON ───────────────────────────────────────
     for field in ("haveKeys", "have_keys", "HaveKeys", "HasKeys", "keys"):
-        val = captured.get(field)
+        val = captured_json.get(field)
         if val is not None:
             result = str(val).strip().lower() in ("yes", "true", "1", "y")
             print(f"  [{call_number}] keys={result}  (network JSON, field='{field}')")
@@ -139,8 +167,9 @@ def main():
         try:
             login(page)
             for i, call_number in enumerate(to_process):
+                debug = i < DEBUG_SCREENSHOTS
                 print(f"[{i + 1}/{len(to_process)}] call #{call_number}…")
-                result = scrape_keys(page, call_number)
+                result = scrape_keys(page, call_number, debug=debug)
                 if result is not None:
                     updates.append({"call_number": call_number, "keys": result})
                 time.sleep(1)   # polite delay between requests
