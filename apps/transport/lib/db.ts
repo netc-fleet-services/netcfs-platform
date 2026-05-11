@@ -77,7 +77,7 @@ export function jobToApp(row: Record<string, unknown>): Job {
 }
 
 function driverToDB(d: Driver) {
-  return { id: d.id, name: d.name, truck: d.truck || null, yard: d.yard, function: d.func || null }
+  return { id: d.id, name: d.name.trim(), truck: d.truck?.trim() || null, yard: d.yard.trim().toLowerCase(), function: d.func?.trim() || null }
 }
 
 function driverToApp(row: Record<string, unknown>): Driver {
@@ -85,7 +85,7 @@ function driverToApp(row: Record<string, unknown>): Driver {
     id:    row.id as number,
     name:  ((row.name as string) || '').trim(),
     truck: ((row.truck as string) || '').trim(),
-    yard:  ((row.yard as string) || '').trim(),
+    yard:  ((row.yard as string) || '').trim().toLowerCase(),
     func:  ((row.function as string) || '').trim(),
   }
 }
