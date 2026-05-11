@@ -83,10 +83,10 @@ function driverToDB(d: Driver) {
 function driverToApp(row: Record<string, unknown>): Driver {
   return {
     id:    row.id as number,
-    name:  row.name as string,
-    truck: (row.truck as string) || '',
-    yard:  row.yard as string,
-    func:  (row.function as string) || '',
+    name:  ((row.name as string) || '').trim(),
+    truck: ((row.truck as string) || '').trim(),
+    yard:  ((row.yard as string) || '').trim(),
+    func:  ((row.function as string) || '').trim(),
   }
 }
 
