@@ -1,0 +1,49 @@
+# ═══════════════════════════════════════════════
+# Statement Reconciliation Runner
+#
+# Triggered by the statement-reconciler Next.js app via repository_dispatch
+# when a user submits a reconciliation job.  Files are already uploaded to
+# Supabase storage by the time this workflow fires.
+#
+# Secrets required (same as other sync workflows):
+#   SUPABASE_URL              — Supabase project URL
+#   SUPABASE_SERVICE_KEY      — service role key (bypasses RLS)
+# ═══════════════════════════════════════════════
+
+name: Run Statement Reconciliation
+
+on:
+  repository_dispatch:
+    types: [run-reconciliation]
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/statement-reconciler/requirements.txt
+
+      - name: Install system deps for OCR (Zips parser)
+        run: sudo apt-get install -y tesseract-ocr poppler-utils
+
+      - name: Install Python dependencies
+        run: pip install -r apps/statement-reconciler/requirements.txt
+
+      - name: Run reconciliation
+        env:
+          SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          JOB_ID:                    ${{ github.event.client_payload.job_id }}
+          VENDOR_KEY:                ${{ github.event.client_payload.vendor_key }}
+          QB_FILE_COUNT:             ${{ github.event.client_payload.qb_file_count }}
+          STMT_FILE_COUNT:           ${{ github.event.client_payload.stmt_file_count }}
+        run: python apps/statement-reconciler/scripts/run_reconciliation.py

@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'shop_manager' | 'dispatcher' | 'mechanic' | 'driver' | 'viewer' | 'impound_manager'
+export type UserRole = 'admin' | 'shop_manager' | 'dispatcher' | 'mechanic' | 'driver' | 'viewer' | 'impound_manager' | 'accounts'
 
 export interface UserProfile {
   id: string
@@ -25,16 +25,18 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   driver:          'Driver',
   viewer:          'Viewer',
   impound_manager: 'Impound Manager',
+  accounts:        'Accounts',
 }
 
 export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
-  admin:           ['fleet', 'transport', 'inspections', 'swaps', 'reports', 'admin', 'impounds'],
+  admin:           ['fleet', 'transport', 'inspections', 'swaps', 'reports', 'admin', 'impounds', 'statement-reconciler'],
   shop_manager:    ['fleet'],
   dispatcher:      ['fleet', 'transport', 'inspections', 'swaps', 'reports', 'impounds'],
   mechanic:        ['fleet', 'inspections'],
   driver:          ['fleet'],
   viewer:          ['fleet', 'transport', 'inspections', 'swaps', 'reports'],
   impound_manager: ['impounds'],
+  accounts:        ['statement-reconciler'],
 }
 
 export function hasPermission(role: UserRole, module: string): boolean {
