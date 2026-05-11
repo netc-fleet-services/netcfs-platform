@@ -89,6 +89,75 @@ const ALL_MODULES = [
     ),
     color: '#34d399',
   },
+  {
+    id: 'grist-news',
+    label: 'NEWS Grist',
+    description: 'NEWS build shop documents',
+    baseUrl: 'https://netcnews.getgrist.com/aJns236vLxGe/NEWS-Build-Shop',
+    external: true,
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
+        <path d="M8 9h8M8 13h6M8 17h4" />
+      </svg>
+    ),
+    color: '#06b6d4',
+  },
+  {
+    id: 'grist-fleet',
+    label: 'Fleet Management Grist',
+    description: 'Fleet management spreadsheets and data',
+    baseUrl: 'https://netcfleet.getgrist.com/9PG2sk9t9yFW/Fleet-Management',
+    external: true,
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="3" y="3" width="18" height="18" rx="2" />
+        <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
+      </svg>
+    ),
+    color: '#6366f1',
+  },
+  {
+    id: 'netctools',
+    label: 'NETC Tools',
+    description: 'Internal NETC tools and analytics',
+    baseUrl: 'https://netctools.vercel.app/login',
+    external: true,
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+      </svg>
+    ),
+    color: '#f43f5e',
+  },
+  {
+    id: 'netclabs',
+    label: 'NETCLabs Toolhub',
+    description: 'Open Source Previews of all projects',
+    baseUrl: 'https://netc-fleet-services.github.io/netc-labs/#/',
+    external: true,
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M9 3h6v8l3 6H6l3-6V3z" />
+        <path d="M6 17h12" />
+        <path d="M9 3H6a1 1 0 0 0-1 1v2h14V4a1 1 0 0 0-1-1h-3" />
+      </svg>
+    ),
+    color: '#14b8a6',
+  },
+  {
+    id: 'github',
+    label: 'NETC Fleet Services Github',
+    description: 'Source code and repositories',
+    baseUrl: 'https://github.com/netc-fleet-services',
+    external: true,
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" />
+      </svg>
+    ),
+    color: '#94a3b8',
+  },
 ]
 
 interface Props {
@@ -106,9 +175,9 @@ export function AppTilesClient({ role, firstName, greeting }: Props) {
     })
   }, [])
 
-  function makeHref(baseUrl: string): string {
-    if (!baseUrl.startsWith('http') || !ssoTokens) return baseUrl
-    const url = new URL(`${baseUrl}/auth/sso`)
+  function makeHref(mod: typeof ALL_MODULES[number]): string {
+    if (mod.external || !mod.baseUrl.startsWith('http') || !ssoTokens) return mod.baseUrl
+    const url = new URL(`${mod.baseUrl}/auth/sso`)
     url.searchParams.set('access_token',  ssoTokens.access_token)
     url.searchParams.set('refresh_token', ssoTokens.refresh_token)
     return url.toString()
@@ -134,7 +203,13 @@ export function AppTilesClient({ role, firstName, greeting }: Props) {
         gap: '1rem',
       }}>
         {visibleModules.map(mod => (
-          <a key={mod.id} href={makeHref(mod.baseUrl)} className="app-tile" style={{ textDecoration: 'none' }}>
+          <a
+            key={mod.id}
+            href={makeHref(mod)}
+            className="app-tile"
+            style={{ textDecoration: 'none' }}
+            {...(mod.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+          >
             <div style={{
               display: 'flex',
               alignItems: 'center',
