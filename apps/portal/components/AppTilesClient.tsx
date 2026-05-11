@@ -184,7 +184,9 @@ export function AppTilesClient({ role, firstName, greeting }: Props) {
   }
 
   const allowedModules = ROLE_PERMISSIONS[role as UserRole] ?? []
-  const visibleModules = ALL_MODULES.filter(m => allowedModules.includes(m.id))
+  const visibleModules = ALL_MODULES.filter(m =>
+    m.external ? role === 'admin' : allowedModules.includes(m.id)
+  )
 
   return (
     <div style={{ padding: '2rem', maxWidth: 1100, margin: '0 auto' }}>
