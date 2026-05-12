@@ -30,14 +30,29 @@ const COMPLIANCE_TYPES = [
 ]
 
 const REPORTS = [
-  { id: 'driver-safety',       label: 'Driver Safety Report',      description: 'Scorecards, safety events, and mileage for drivers over a period.' },
-  { id: 'dvir-compliance',     label: 'DVIR Compliance',           description: 'Daily vehicle inspection completion by driver and date.' },
-  { id: 'compliance-incidents',label: 'Compliance Incidents',      description: 'DOT citations, out-of-service orders, and accidents.' },
-  { id: 'impound-inventory',   label: 'Impound Inventory',         description: 'Active and historical impound records filtered by status and location.' },
-  { id: 'impound-disposition', label: 'Impound Disposition & Revenue', description: 'Sold, scrapped, and released vehicles with revenue totals.' },
-  { id: 'dispatch-history',    label: 'Dispatch History',          description: 'TowBook jobs filterable by date, status, and job type.' },
-  { id: 'maintenance-history', label: 'Maintenance History',       description: 'Truck OOS days, PM dates, and work notes by category and location.' },
-  { id: 'equipment-requests',  label: 'Equipment Requests',        description: 'Submitted equipment requests with approval status.' },
+  { id: 'driver-safety',        label: 'Driver Safety Report',         description: 'Scorecards, safety events, and mileage for drivers over a period.' },
+  { id: 'dvir-compliance',      label: 'DVIR Compliance',              description: 'Daily vehicle inspection completion by driver and date.' },
+  { id: 'compliance-incidents', label: 'Compliance Incidents',         description: 'DOT citations, out-of-service orders, and accidents.' },
+  { id: 'impound-inventory',    label: 'Impound Inventory',            description: 'Active and historical impound records filtered by status and location.' },
+  { id: 'impound-disposition',  label: 'Impound Disposition & Revenue',description: 'Sold, scrapped, and released vehicles with revenue totals.' },
+  { id: 'dispatch-history',     label: 'Dispatch History',             description: 'TowBook jobs filterable by date, status, and job type.' },
+  { id: 'maintenance-history',  label: 'Maintenance History',          description: 'Truck OOS days, PM dates, and work notes by category and location.' },
+  { id: 'equipment-requests',   label: 'Equipment Requests',           description: 'Submitted equipment requests with approval status.' },
+  { id: 'scheduler-analytics',  label: 'Scheduler Analytics',          description: 'Aggregated analytics from the driver scheduler — coverage, hours, trends, and more.' },
+]
+
+const SCHED_CARD_DEFS = [
+  { id: 'coverage-hour',      label: 'Coverage by hour-of-day' },
+  { id: 'coverage-day',       label: 'Hours by day-of-week' },
+  { id: 'coverage-heatmap',   label: 'Coverage heatmap' },
+  { id: 'shift-length',       label: 'Shift-length distribution' },
+  { id: 'top-drivers',        label: 'Top 10 drivers by hours' },
+  { id: 'bottom-drivers',     label: 'Bottom 10 drivers by hours' },
+  { id: 'function-breakdown', label: 'Hours by function' },
+  { id: 'week-over-week',     label: 'Week-over-week total hours' },
+  { id: 'off-reasons',        label: 'Off-day reasons' },
+  { id: 'yard-utilization',   label: 'Yard utilization' },
+  { id: 'overnight-trend',    label: 'Overnight shifts trend' },
 ]
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -88,6 +103,172 @@ function calcOosDays(
     if (rangeEnd > s) totalMs += rangeEnd - s
   }
   return Math.round(totalMs / 86_400_000)
+}
+
+// ── Scheduler helpers (ported from apps/scheduler/lib/utils.ts) ───────────────
+
+function schedToIsoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function schedFromIsoDate(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d)
+}
+function schedAddDays(d: Date, n: number): Date {
+  const out = new Date(d); out.setDate(out.getDate() + n); return out
+}
+function schedStartOfWeek(d: Date): Date {
+  const out = new Date(d); const dow = out.getDay()
+  out.setDate(out.getDate() + (dow === 0 ? -6 : 1 - dow)); out.setHours(0, 0, 0, 0); return out
+}
+function schedShiftDurationHours(startTime: string | null, endTime: string | null): number {
+  if (!startTime || !endTime) return 0
+  const t = (s: string) => { const [h, m] = s.split(':').map(Number); return h + (m || 0) / 60 }
+  const s = t(startTime); let e = t(endTime); if (e <= s) e += 24; return e - s
+}
+function schedParseTime(t: string | null | undefined): number {
+  if (!t) return 0; const [h, m] = String(t).split(':').map(Number); return h + (m || 0) / 60
+}
+
+// ── Scheduler aggregations (ported from apps/scheduler/components/StatsView.tsx) ─
+
+interface SchedEntry {
+  driver_id: number; schedule_date: string; entry_type: string
+  start_time: string | null; end_time: string | null; off_reason: string | null
+}
+interface SchedDriver {
+  id: number; name: string | null; function: string | null; irh_yard_number: string | null
+}
+
+function schedAggHoursByHourOfDay(entries: SchedEntry[], days: number): number[] {
+  const counts = new Array(24).fill(0)
+  for (const e of entries) {
+    if (e.entry_type !== 'shift') continue
+    let s = schedParseTime(e.start_time); let f = schedParseTime(e.end_time)
+    if (f <= s) f += 24
+    for (let h = Math.floor(s); h < Math.ceil(f); h++) counts[h % 24] += 1
+  }
+  return counts.map(c => +(c / Math.max(1, days)).toFixed(2))
+}
+function schedAggHoursByDayOfWeek(entries: SchedEntry[]): { labels: string[]; data: number[] } {
+  const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  const buckets = new Array(7).fill(0)
+  for (const e of entries) {
+    if (e.entry_type !== 'shift') continue
+    const dow = (schedFromIsoDate(e.schedule_date).getDay() + 6) % 7
+    buckets[dow] += schedShiftDurationHours(e.start_time, e.end_time)
+  }
+  return { labels, data: buckets.map(v => +v.toFixed(1)) }
+}
+function schedAggHeatmap(entries: SchedEntry[]): number[][] {
+  const grid: number[][] = Array.from({ length: 7 }, () => new Array(24).fill(0))
+  const dayCounts = new Array(7).fill(0)
+  const seenDates = new Set<string>()
+  for (const e of entries) {
+    if (!seenDates.has(e.schedule_date)) {
+      const dow = (schedFromIsoDate(e.schedule_date).getDay() + 6) % 7
+      dayCounts[dow] += 1; seenDates.add(e.schedule_date)
+    }
+    if (e.entry_type !== 'shift') continue
+    const dow = (schedFromIsoDate(e.schedule_date).getDay() + 6) % 7
+    let s = schedParseTime(e.start_time); let f = schedParseTime(e.end_time)
+    if (f <= s) f += 24
+    for (let h = Math.floor(s); h < Math.ceil(f); h++) grid[dow][h % 24] += 1
+  }
+  return grid.map((row, dow) => row.map(v => dayCounts[dow] ? +(v / dayCounts[dow]).toFixed(2) : 0))
+}
+function schedAggShiftLengthDist(entries: SchedEntry[]): { labels: string[]; data: number[] } {
+  const bins = [4, 6, 8, 10, 12, 24]; const labels = ['<4h', '4-6h', '6-8h', '8-10h', '10-12h', '12+h']
+  const counts = new Array(bins.length).fill(0)
+  for (const e of entries) {
+    if (e.entry_type !== 'shift') continue
+    const h = schedShiftDurationHours(e.start_time, e.end_time)
+    let i = bins.findIndex(b => h <= b); if (i < 0) i = bins.length - 1
+    counts[i] += 1
+  }
+  return { labels, data: counts }
+}
+function schedAggHoursPerDriver(entries: SchedEntry[], drivers: SchedDriver[]): Array<{ id: number; name: string; fn: string; hours: number }> {
+  const map = new Map<number, number>()
+  for (const d of drivers) map.set(d.id, 0)
+  for (const e of entries) {
+    if (e.entry_type !== 'shift' || !map.has(e.driver_id)) continue
+    map.set(e.driver_id, (map.get(e.driver_id) || 0) + schedShiftDurationHours(e.start_time, e.end_time))
+  }
+  return [...map.entries()].map(([id, hours]) => {
+    const d = drivers.find(x => x.id === id)
+    return { id, name: d?.name || `#${id}`, fn: d?.function || '', hours: +hours.toFixed(1) }
+  })
+}
+function schedAggFunctionBreakdown(entries: SchedEntry[], drivers: SchedDriver[]): { labels: string[]; data: number[] } {
+  const drvFn = new Map(drivers.map(d => [d.id, d.function || 'Unknown']))
+  const buckets = new Map<string, number>()
+  for (const e of entries) {
+    if (e.entry_type !== 'shift') continue
+    const fn = drvFn.get(e.driver_id) || 'Unknown'
+    buckets.set(fn, (buckets.get(fn) || 0) + schedShiftDurationHours(e.start_time, e.end_time))
+  }
+  const arr = [...buckets.entries()].sort((a, b) => b[1] - a[1])
+  return { labels: arr.map(x => x[0]), data: arr.map(x => +x[1].toFixed(1)) }
+}
+function schedAggOffReasons(entries: SchedEntry[]): { labels: string[]; data: number[] } {
+  const buckets = new Map<string, number>()
+  for (const e of entries) {
+    if (e.entry_type !== 'off') continue
+    const r = e.off_reason || 'unknown'
+    buckets.set(r, (buckets.get(r) || 0) + 1)
+  }
+  const arr = [...buckets.entries()].sort((a, b) => b[1] - a[1])
+  return { labels: arr.map(x => x[0]), data: arr.map(x => x[1]) }
+}
+function schedAggYardUtilization(entries: SchedEntry[], drivers: SchedDriver[]): { labels: string[]; data: number[] } {
+  const drvYard = new Map<number, string[]>()
+  for (const d of drivers) {
+    const list = String(d.irh_yard_number || '—').split(',').map(s => s.trim()).filter(Boolean)
+    drvYard.set(d.id, list.length ? list : ['—'])
+  }
+  const buckets = new Map<string, number>()
+  for (const e of entries) {
+    if (e.entry_type !== 'shift') continue
+    const yards = drvYard.get(e.driver_id) || ['—']
+    const h = schedShiftDurationHours(e.start_time, e.end_time) / yards.length
+    for (const y of yards) buckets.set(y, (buckets.get(y) || 0) + h)
+  }
+  const arr = [...buckets.entries()].sort((a, b) => b[1] - a[1])
+  return { labels: arr.map(x => x[0]), data: arr.map(x => +x[1].toFixed(1)) }
+}
+function schedBucketByWeek(entries: SchedEntry[], weeks: number): { labels: string[]; buckets: SchedEntry[][] } {
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const bkts: SchedEntry[][] = new Array(weeks).fill(null).map(() => [])
+  const labels: string[] = []
+  for (let i = weeks - 1; i >= 0; i--) {
+    const start = schedAddDays(today, -7 * (i + 1) + 1)
+    labels.push(start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))
+  }
+  for (const e of entries) {
+    const d = schedFromIsoDate(e.schedule_date)
+    const diffDays = Math.floor((today.getTime() - d.getTime()) / 86_400_000)
+    if (diffDays < 0) continue
+    const wIdx = weeks - 1 - Math.floor(diffDays / 7)
+    if (wIdx >= 0 && wIdx < weeks) bkts[wIdx].push(e)
+  }
+  return { labels, buckets: bkts }
+}
+function schedAggWeeklyTotals(entries: SchedEntry[], weeks: number): { labels: string[]; data: number[] } {
+  const { labels, buckets } = schedBucketByWeek(entries, weeks)
+  return {
+    labels,
+    data: buckets.map(b => +b.filter(e => e.entry_type === 'shift')
+      .reduce((s, e) => s + schedShiftDurationHours(e.start_time, e.end_time), 0).toFixed(1)),
+  }
+}
+function schedAggOvernightByWeek(entries: SchedEntry[], weeks: number): { labels: string[]; data: number[] } {
+  const { labels, buckets } = schedBucketByWeek(entries, weeks)
+  return {
+    labels,
+    data: buckets.map(b => b.filter(e =>
+      e.entry_type === 'shift' && e.end_time && e.start_time && e.end_time < e.start_time,
+    ).length),
+  }
 }
 
 // ── Export helpers ─────────────────────────────────────────────────────────────
@@ -174,6 +355,13 @@ export function ReportsApp() {
   // Populated after running Dispatch History so job type filter is dynamic
   const [knownJobTypes, setKnownJobTypes] = useState<string[]>([])
 
+  // Scheduler analytics state
+  const [schedPreset, setSchedPreset] = useState('30')
+  const [schedFrom, setSchedFrom] = useState(quarterStart)
+  const [schedTo, setSchedTo] = useState(todayStr)
+  const [schedCards, setSchedCards] = useState<Set<string>>(() => new Set(SCHED_CARD_DEFS.map(c => c.id)))
+  const [schedExportFilter, setSchedExportFilter] = useState<Set<string>>(new Set())
+
   const [hiddenCols,    setHiddenCols]    = useState<Set<string>>(new Set())
   const [showColPicker, setShowColPicker] = useState(false)
   const colsInitializedRef = useRef(false)
@@ -187,6 +375,9 @@ export function ReportsApp() {
     setHiddenCols(new Set())
     setShowColPicker(false)
     colsInitializedRef.current = false
+    if (id === 'scheduler-analytics') {
+      setSchedCards(new Set(SCHED_CARD_DEFS.map(c => c.id)))
+    }
   }
 
   function toggleCol(id: string) {
@@ -209,6 +400,9 @@ export function ReportsApp() {
         ))
         colsInitializedRef.current = true
       }
+      if (selected === 'scheduler-analytics') {
+        setSchedExportFilter(new Set(res.sections.map(s => s.title)))
+      }
       setResult(res)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load report')
@@ -227,8 +421,9 @@ export function ReportsApp() {
       case 'impound-inventory':    return fetchImpoundInventory()
       case 'impound-disposition':  return fetchImpoundDisposition()
       case 'dispatch-history':     return fetchDispatch()
-      case 'maintenance-history':  return fetchMaintenance()
-      case 'equipment-requests':   return fetchEquipment()
+      case 'maintenance-history':   return fetchMaintenance()
+      case 'equipment-requests':    return fetchEquipment()
+      case 'scheduler-analytics':  return fetchSchedulerAnalytics()
       default: throw new Error('Unknown report')
     }
   }
@@ -752,21 +947,215 @@ export function ReportsApp() {
     }
   }
 
+  async function fetchSchedulerAnalytics(): Promise<ReportResult> {
+    const today = new Date()
+    const todayIso = schedToIsoDate(today)
+    let from: string, days: number
+
+    if (schedPreset === 'this-week') {
+      const monday = schedStartOfWeek(today)
+      from = schedToIsoDate(monday)
+      days = Math.max(1, Math.round((today.getTime() - monday.getTime()) / 86_400_000) + 1)
+    } else if (schedPreset === 'this-month') {
+      const first = new Date(today.getFullYear(), today.getMonth(), 1)
+      from = schedToIsoDate(first)
+      days = Math.max(1, Math.round((today.getTime() - first.getTime()) / 86_400_000) + 1)
+    } else if (schedPreset === 'custom') {
+      from = schedFrom
+      const sD = schedFromIsoDate(schedFrom); const eD = schedFromIsoDate(schedTo)
+      days = Math.max(1, Math.round((eD.getTime() - sD.getTime()) / 86_400_000) + 1)
+    } else {
+      const n = Number(schedPreset)
+      from = schedToIsoDate(schedAddDays(today, -n))
+      days = n
+    }
+    const to = schedPreset === 'custom' ? schedTo : todayIso
+
+    const [{ data: entData, error: entErr }, { data: drvData, error: drvErr }] = await Promise.all([
+      supabase
+        .from('scheduler_driver_schedule')
+        .select('driver_id, schedule_date, entry_type, start_time, end_time, off_reason')
+        .gte('schedule_date', from)
+        .lte('schedule_date', to),
+      supabase
+        .from('drivers')
+        .select('id, name, function, irh_yard_number')
+        .eq('active', true),
+    ])
+    if (entErr) throw new Error(entErr.message)
+    if (drvErr) throw new Error(drvErr.message)
+
+    const entries = (entData ?? []) as SchedEntry[]
+    const drivers = (drvData ?? []) as SchedDriver[]
+
+    // Week-based cards need at least 4 weeks of history
+    const extDays = Math.max(days, 28)
+    let extEntries = entries
+    if (extDays > days) {
+      const extFrom = schedToIsoDate(schedAddDays(today, -extDays))
+      const { data: extData, error: extErr } = await supabase
+        .from('scheduler_driver_schedule')
+        .select('driver_id, schedule_date, entry_type, start_time, end_time, off_reason')
+        .gte('schedule_date', extFrom)
+        .lte('schedule_date', todayIso)
+      if (extErr) throw new Error(extErr.message)
+      extEntries = (extData ?? []) as SchedEntry[]
+    }
+
+    const weeks = Math.max(4, Math.ceil(extDays / 7))
+    const sections: Section[] = []
+
+    if (schedCards.has('coverage-hour')) {
+      const data = schedAggHoursByHourOfDay(entries, days)
+      const hourLabels = Array.from({ length: 24 }, (_, h) => `${(h % 12) || 12}${h < 12 ? 'a' : 'p'}`)
+      sections.push({
+        title: 'Coverage by Hour',
+        columns: [{ id: 'hour', label: 'Hour' }, { id: 'avg_drivers', label: 'Avg Drivers on Duty' }],
+        rows: hourLabels.map((lbl, i) => ({ hour: lbl, avg_drivers: data[i] })),
+      })
+    }
+
+    if (schedCards.has('coverage-day')) {
+      const { labels, data } = schedAggHoursByDayOfWeek(entries)
+      sections.push({
+        title: 'Hours by Day of Week',
+        columns: [{ id: 'day', label: 'Day' }, { id: 'hours', label: 'Total Hours' }],
+        rows: labels.map((lbl, i) => ({ day: lbl, hours: data[i] })),
+      })
+    }
+
+    if (schedCards.has('coverage-heatmap')) {
+      const grid = schedAggHeatmap(entries)
+      const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+      const hourCols: Col[] = [
+        { id: 'day', label: 'Day' },
+        ...Array.from({ length: 24 }, (_, h) => ({ id: `h${h}`, label: `${(h % 12) || 12}${h < 12 ? 'a' : 'p'}` })),
+      ]
+      sections.push({
+        title: 'Coverage Heatmap',
+        columns: hourCols,
+        rows: dayNames.map((day, dow) => ({
+          day,
+          ...Object.fromEntries(Array.from({ length: 24 }, (_, h) => [`h${h}`, grid[dow][h]])),
+        })),
+      })
+    }
+
+    if (schedCards.has('shift-length')) {
+      const { labels, data } = schedAggShiftLengthDist(entries)
+      sections.push({
+        title: 'Shift Length Distribution',
+        columns: [{ id: 'length', label: 'Shift Length' }, { id: 'count', label: 'Count' }],
+        rows: labels.map((lbl, i) => ({ length: lbl, count: data[i] })),
+      })
+    }
+
+    if (schedCards.has('top-drivers') || schedCards.has('bottom-drivers')) {
+      const allDriverHours = schedAggHoursPerDriver(entries, drivers)
+      if (schedCards.has('top-drivers')) {
+        const top = [...allDriverHours].filter(x => x.hours > 0).sort((a, b) => b.hours - a.hours).slice(0, 10)
+        sections.push({
+          title: 'Top 10 Drivers by Hours',
+          columns: [{ id: 'name', label: 'Driver' }, { id: 'fn', label: 'Function' }, { id: 'hours', label: 'Hours' }],
+          rows: top.map(x => ({ name: x.name, fn: x.fn, hours: x.hours })),
+        })
+      }
+      if (schedCards.has('bottom-drivers')) {
+        const bottom = [...allDriverHours].sort((a, b) => a.hours - b.hours).slice(0, 10)
+        sections.push({
+          title: 'Bottom 10 Drivers by Hours',
+          columns: [{ id: 'name', label: 'Driver' }, { id: 'fn', label: 'Function' }, { id: 'hours', label: 'Hours' }],
+          rows: bottom.map(x => ({ name: x.name, fn: x.fn, hours: x.hours })),
+        })
+      }
+    }
+
+    if (schedCards.has('function-breakdown')) {
+      const { labels, data } = schedAggFunctionBreakdown(entries, drivers)
+      sections.push({
+        title: 'Hours by Function',
+        columns: [{ id: 'fn', label: 'Function' }, { id: 'hours', label: 'Hours' }],
+        rows: labels.map((lbl, i) => ({ fn: lbl, hours: data[i] })),
+      })
+    }
+
+    if (schedCards.has('week-over-week')) {
+      const { labels, data } = schedAggWeeklyTotals(extEntries, weeks)
+      sections.push({
+        title: 'Week-over-Week Hours',
+        columns: [{ id: 'week', label: 'Week of' }, { id: 'hours', label: 'Total Hours' }],
+        rows: labels.map((lbl, i) => ({ week: lbl, hours: data[i] })),
+      })
+    }
+
+    if (schedCards.has('off-reasons')) {
+      const { labels, data } = schedAggOffReasons(entries)
+      sections.push({
+        title: 'Off-Day Reasons',
+        columns: [{ id: 'reason', label: 'Reason' }, { id: 'count', label: 'Count' }],
+        rows: labels.map((lbl, i) => ({ reason: lbl, count: data[i] })),
+      })
+    }
+
+    if (schedCards.has('yard-utilization')) {
+      const { labels, data } = schedAggYardUtilization(entries, drivers)
+      sections.push({
+        title: 'Yard Utilization',
+        columns: [{ id: 'yard', label: 'Yard' }, { id: 'hours', label: 'Hours' }],
+        rows: labels.map((lbl, i) => ({ yard: lbl, hours: data[i] })),
+      })
+    }
+
+    if (schedCards.has('overnight-trend')) {
+      const { labels, data } = schedAggOvernightByWeek(extEntries, weeks)
+      sections.push({
+        title: 'Overnight Shifts by Week',
+        columns: [{ id: 'week', label: 'Week of' }, { id: 'count', label: 'Overnight Shifts' }],
+        rows: labels.map((lbl, i) => ({ week: lbl, count: data[i] })),
+      })
+    }
+
+    if (!sections.length) {
+      return { sections: [{ title: 'Scheduler Analytics', columns: [], rows: [] }], summaryLines: ['No analytics selected.'] }
+    }
+
+    const totalShifts = entries.filter(e => e.entry_type === 'shift').length
+    const totalHrs = +entries
+      .filter(e => e.entry_type === 'shift')
+      .reduce((s, e) => s + schedShiftDurationHours(e.start_time, e.end_time), 0)
+      .toFixed(1)
+
+    return {
+      sections,
+      summaryLines: [
+        `${totalShifts} shifts · ${totalHrs}h total · ${sections.length} analytics card${sections.length !== 1 ? 's' : ''}`,
+        sections.length > 1 ? `Excel export includes ${sections.length} sheets: ${sections.map(s => s.title).join(', ')}` : '',
+      ].filter(Boolean),
+    }
+  }
+
   // ── Download ─────────────────────────────────────────────────────────────────
 
-  function handleCSV() {
-    if (!result) return
-    const sections = result.sections.map((sec, i) =>
+  function getSectionsForExport(): Section[] {
+    if (!result) return []
+    let sections = result.sections
+    if (selected === 'scheduler-analytics' && schedExportFilter.size > 0) {
+      sections = sections.filter(s => schedExportFilter.has(s.title))
+    }
+    return sections.map((sec, i) =>
       i === 0 ? { ...sec, columns: sec.columns.filter(c => !hiddenCols.has(c.id)) } : sec
     )
+  }
+
+  function handleCSV() {
+    const sections = getSectionsForExport()
+    if (!sections.length) return
     downloadCSV(`${selected}-${todayStr()}.csv`, sections)
   }
 
   async function handleXLSX() {
-    if (!result) return
-    const sections = result.sections.map((sec, i) =>
-      i === 0 ? { ...sec, columns: sec.columns.filter(c => !hiddenCols.has(c.id)) } : sec
-    )
+    const sections = getSectionsForExport()
+    if (!sections.length) return
     await downloadXLSX(`${selected}-${todayStr()}.xlsx`, sections)
   }
 
@@ -829,15 +1218,50 @@ export function ReportsApp() {
           marginBottom: '1.25rem',
           display: 'flex', flexWrap: 'wrap', gap: '0.875rem', alignItems: 'flex-end',
         }}>
-          {/* Date range — all reports */}
-          <label style={labelSt}>
-            From
-            <input type="date" style={inputSt} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-          </label>
-          <label style={labelSt}>
-            To
-            <input type="date" style={inputSt} value={dateTo} onChange={e => setDateTo(e.target.value)} />
-          </label>
+          {/* Date range — standard reports */}
+          {selected !== 'scheduler-analytics' && (
+            <>
+              <label style={labelSt}>
+                From
+                <input type="date" style={inputSt} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+              </label>
+              <label style={labelSt}>
+                To
+                <input type="date" style={inputSt} value={dateTo} onChange={e => setDateTo(e.target.value)} />
+              </label>
+            </>
+          )}
+
+          {/* Date range — scheduler analytics */}
+          {selected === 'scheduler-analytics' && (
+            <>
+              <label style={labelSt}>
+                Date Range
+                <select style={inputSt} value={schedPreset} onChange={e => setSchedPreset(e.target.value)}>
+                  <option value="this-week">This week</option>
+                  <option value="7">Last 7 days</option>
+                  <option value="14">Two weeks</option>
+                  <option value="this-month">This month</option>
+                  <option value="30">Last 30 days</option>
+                  <option value="60">Last 60 days</option>
+                  <option value="90">Last 90 days</option>
+                  <option value="custom">Custom range</option>
+                </select>
+              </label>
+              {schedPreset === 'custom' && (
+                <>
+                  <label style={labelSt}>
+                    From
+                    <input type="date" style={inputSt} value={schedFrom} onChange={e => setSchedFrom(e.target.value)} />
+                  </label>
+                  <label style={labelSt}>
+                    To
+                    <input type="date" style={inputSt} value={schedTo} onChange={e => setSchedTo(e.target.value)} />
+                  </label>
+                </>
+              )}
+            </>
+          )}
 
           {/* Yard — driver safety */}
           {selected === 'driver-safety' && (
@@ -973,6 +1397,54 @@ export function ReportsApp() {
           </button>
         </div>
 
+        {/* Scheduler card selection */}
+        {selected === 'scheduler-analytics' && (
+          <div style={{
+            background: 'rgb(var(--surface-container))',
+            border: '1px solid rgb(var(--outline))',
+            borderRadius: '0.75rem',
+            padding: '1rem 1.25rem',
+            marginBottom: '1.25rem',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <span style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'rgb(var(--on-surface-muted))' }}>
+                Analytics to export
+              </span>
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button
+                  onClick={() => setSchedCards(new Set(SCHED_CARD_DEFS.map(c => c.id)))}
+                  style={{ fontSize: '0.72rem', color: 'rgb(var(--primary))', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Select all
+                </button>
+                <button
+                  onClick={() => setSchedCards(new Set())}
+                  style={{ fontSize: '0.72rem', color: 'rgb(var(--on-surface-muted))', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.375rem' }}>
+              {SCHED_CARD_DEFS.map(card => (
+                <label key={card.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem', color: 'rgb(var(--on-surface))', cursor: 'pointer', userSelect: 'none' as const }}>
+                  <input
+                    type="checkbox"
+                    checked={schedCards.has(card.id)}
+                    onChange={() => setSchedCards(prev => {
+                      const next = new Set(prev)
+                      if (next.has(card.id)) next.delete(card.id); else next.add(card.id)
+                      return next
+                    })}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  {card.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Error */}
         {error && (
           <div style={{ padding: '0.75rem 1rem', background: 'rgb(var(--error) / 0.1)', border: '1px solid rgb(var(--error) / 0.3)', borderRadius: '0.5rem', color: 'rgb(var(--error))', fontSize: '0.875rem', marginBottom: '1rem' }}>
@@ -993,8 +1465,8 @@ export function ReportsApp() {
                 ))}
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0, alignItems: 'center' }}>
-                {/* Column picker */}
-                <div style={{ position: 'relative' }}>
+                {/* Column picker — hidden for scheduler analytics */}
+                <div style={{ position: 'relative', display: selected === 'scheduler-analytics' ? 'none' : undefined }}>
                   <button
                     onClick={() => setShowColPicker(v => !v)}
                     style={{
@@ -1111,7 +1583,56 @@ export function ReportsApp() {
               </table>
             </div>
 
-            {primarySection.rows.length > 0 && result.sections.length > 1 && (
+            {/* Scheduler analytics: per-section export selection */}
+            {selected === 'scheduler-analytics' && result.sections.length > 0 && (
+              <div style={{
+                marginTop: '1rem',
+                background: 'rgb(var(--surface-container))',
+                border: '1px solid rgb(var(--outline))',
+                borderRadius: '0.75rem',
+                padding: '0.875rem 1.125rem',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.625rem' }}>
+                  <span style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'rgb(var(--on-surface-muted))' }}>
+                    Include in export ({schedExportFilter.size} of {result.sections.length} selected)
+                  </span>
+                  <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <button
+                      onClick={() => setSchedExportFilter(new Set(result.sections.map(s => s.title)))}
+                      style={{ fontSize: '0.72rem', color: 'rgb(var(--primary))', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      All
+                    </button>
+                    <button
+                      onClick={() => setSchedExportFilter(new Set())}
+                      style={{ fontSize: '0.72rem', color: 'rgb(var(--on-surface-muted))', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      None
+                    </button>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '0.375rem' }}>
+                  {result.sections.map(sec => (
+                    <label key={sec.title} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem', color: 'rgb(var(--on-surface))', cursor: 'pointer', userSelect: 'none' as const }}>
+                      <input
+                        type="checkbox"
+                        checked={schedExportFilter.has(sec.title)}
+                        onChange={() => setSchedExportFilter(prev => {
+                          const next = new Set(prev)
+                          if (next.has(sec.title)) next.delete(sec.title); else next.add(sec.title)
+                          return next
+                        })}
+                        style={{ cursor: 'pointer' }}
+                      />
+                      <span>{sec.title}</span>
+                      <span style={{ fontSize: '0.72rem', color: 'rgb(var(--on-surface-muted))' }}>({sec.rows.length})</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {primarySection.rows.length > 0 && result.sections.length > 1 && selected !== 'scheduler-analytics' && (
               <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: 'rgb(var(--on-surface-muted))' }}>
                 Showing {primarySection.title} · Excel download includes all {result.sections.length} sheets
               </div>
