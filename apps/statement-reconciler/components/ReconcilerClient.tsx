@@ -22,8 +22,18 @@ const VENDORS = [
   { key: 'unitedpacific', label: 'United Pacific' },
   { key: 'whelen',        label: 'Whelen' },
   { key: 'wisupply',      label: 'WI Supply' },
-  { key: 'zips',          label: 'Zips (OCR)' },
-  { key: 'stmt_unknown',  label: 'Unknown Vendor' },
+  { key: 'zips',              label: 'Zips (OCR)' },
+  { key: 'cohensteel',        label: 'Cohen Steel Supply' },
+  { key: 'mcfarlandford',     label: 'McFarland Ford' },
+  { key: 'rochestertruck',    label: 'Rochester Truck' },
+  { key: 'fastenerwarehouse', label: 'Fastener Warehouse' },
+  { key: 'berubes',           label: "Berube's Truck Accessories" },
+  { key: 'americantextile',   label: 'American Textile Mills' },
+  { key: 'hewsco',            label: 'Hews Company LLC' },
+  { key: 'terminalsupply',    label: 'Terminal Supply Co.' },
+  { key: 'burkeoil',          label: 'Dennis K Burke Inc' },
+  { key: 'cummins',           label: 'Cummins Inc' },
+  { key: 'stmt_unknown',      label: 'Unknown Vendor' },
 ]
 
 type JobStatus = 'pending' | 'running' | 'done' | 'error'
@@ -247,12 +257,12 @@ export function ReconcilerClient() {
                 </div>
 
                 <div>
-                  <label className="form-label" htmlFor="stmt-files">Vendor Statement (.pdf)</label>
+                  <label className="form-label" htmlFor="stmt-files">Vendor Statement (.pdf or .xlsx)</label>
                   <input
                     id="stmt-files"
                     type="file"
                     className="form-input"
-                    accept=".pdf"
+                    accept=".pdf,.xlsx"
                     multiple
                     onChange={e => setStmtFiles(e.target.files)}
                     style={{ padding: '0.4rem 0.75rem', cursor: 'pointer' }}
