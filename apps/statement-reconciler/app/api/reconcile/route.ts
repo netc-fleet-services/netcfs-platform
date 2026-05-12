@@ -56,13 +56,20 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Upload statement PDFs
+  // Upload statement files (PDF or XLSX)
+  const stmtExts: string[] = []
   for (let i = 0; i < stmtFiles.length; i++) {
+    const isXlsx = stmtFiles[i].name.toLowerCase().endsWith('.xlsx')
+    const ext = isXlsx ? 'xlsx' : 'pdf'
+    const contentType = isXlsx
+      ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      : 'application/pdf'
+    stmtExts.push(ext)
     const bytes = await stmtFiles[i].arrayBuffer()
     const { error } = await sb.storage.from(BUCKET).upload(
-      `${jobId}/statement_${i}.pdf`,
+      `${jobId}/statement_${i}.${ext}`,
       Buffer.from(bytes),
-      { contentType: 'application/pdf' },
+      { contentType },
     )
     if (error) {
       await sb.from('reconciliation_jobs').update({ status: 'error', error_message: `Upload failed: ${error.message}` }).eq('id', jobId)
@@ -92,6 +99,7 @@ export async function POST(request: NextRequest) {
         vendor_key:      vendorKey,
         qb_file_count:   qbFiles.length,
         stmt_file_count: stmtFiles.length,
+        stmt_exts:       stmtExts.join(','),
       },
     }),
   })

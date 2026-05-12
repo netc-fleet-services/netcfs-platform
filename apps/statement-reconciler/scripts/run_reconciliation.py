@@ -30,6 +30,8 @@ JOB_ID          = os.environ["JOB_ID"]
 VENDOR_KEY      = os.environ["VENDOR_KEY"]
 QB_FILE_COUNT   = int(os.environ.get("QB_FILE_COUNT", "1"))
 STMT_FILE_COUNT = int(os.environ.get("STMT_FILE_COUNT", "1"))
+_exts_raw       = os.environ.get("STMT_FILE_EXTS", "")
+STMT_FILE_EXTS  = _exts_raw.split(",") if _exts_raw else ["pdf"] * STMT_FILE_COUNT
 BUCKET          = "reconciliation-files"
 
 sb: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -65,8 +67,9 @@ def main() -> None:
 
             stmt_paths: list[str] = []
             for i in range(STMT_FILE_COUNT):
-                p = os.path.join(tmp, f"statement_{i}.pdf")
-                download_file(f"{JOB_ID}/statement_{i}.pdf", p)
+                ext = STMT_FILE_EXTS[i] if i < len(STMT_FILE_EXTS) else "pdf"
+                p = os.path.join(tmp, f"statement_{i}.{ext}")
+                download_file(f"{JOB_ID}/statement_{i}.{ext}", p)
                 stmt_paths.append(p)
 
             print(f"[{JOB_ID}] Parsing — vendor: {VENDOR_KEY}")
