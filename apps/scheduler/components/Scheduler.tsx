@@ -16,7 +16,7 @@ import {
 } from '../lib/db'
 import {
   addDays, dateRange, formatHours, fromIsoDate, shiftDurationHours, shortDateLabel,
-  sortDrivers, toIsoDate, weekDates, type SortKey,
+  sortDrivers, startOfWeek, toIsoDate, weekDates, type SortKey,
 } from '../lib/utils'
 import { SettingsProvider } from '../lib/settings'
 import { GridView } from './GridView'
@@ -31,6 +31,17 @@ import { ExportModal } from './ExportModal'
 
 type ViewMode = 'grid' | 'gantt'
 type TabId = 'drivers' | 'dispatchers' | 'stats' | 'historical' | 'settings'
+
+// Snap the anchor for week-aligned views. 7-day anchors at the Monday of the
+// week containing `d`; 14-day anchors a week earlier so the window covers the
+// previous week + the week containing `d`. Other view sizes pass through.
+function snapAnchor(d: Date, viewDays: number): Date {
+  if (viewDays === 7) return startOfWeek(d)
+  if (viewDays === 14) return addDays(startOfWeek(d), -7)
+  const out = new Date(d)
+  out.setHours(0, 0, 0, 0)
+  return out
+}
 
 interface BulkAction {
   driverIds: number[]
@@ -56,9 +67,7 @@ function SchedulerInner() {
   const [activeTab, setActiveTab] = useState<TabId>(APP_CONFIG.defaultTab)
   const [view, setView] = useState<ViewMode>('grid')
   const [viewDays, setViewDays] = useState(APP_CONFIG.defaultViewDays)
-  const [anchorDate, setAnchorDate] = useState<Date>(() => {
-    const d = new Date(); d.setHours(0, 0, 0, 0); return d
-  })
+  const [anchorDate, setAnchorDate] = useState<Date>(() => snapAnchor(new Date(), APP_CONFIG.defaultViewDays))
   const [showInactive, setShowInactive] = useState(false)
   const [company, setCompany] = useState<string>(APP_CONFIG.defaultCompany || '')
   const [yard, setYard] = useState<string>('')
@@ -106,6 +115,16 @@ function SchedulerInner() {
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null))
   }, [supabase])
+
+  // 7-day view locks to Mon–Sun of the current week; 14-day view locks to
+  // last Monday so the window covers last week + this week. Snap the anchor
+  // whenever the user switches into one of those views.
+  useEffect(() => {
+    setAnchorDate(prev => {
+      const snapped = snapAnchor(prev, viewDays)
+      return snapped.getTime() === prev.getTime() ? prev : snapped
+    })
+  }, [viewDays])
 
   // ---- Active functions for current tab ---------------------------------
   const activeFunctions = useMemo<string[] | null>(() => {
@@ -380,7 +399,8 @@ function SchedulerInner() {
   }
   function shiftWindow(deltaDays: number) { setAnchorDate(prev => addDays(prev, deltaDays)) }
   function goToToday() {
-    const d = new Date(); d.setHours(0, 0, 0, 0); setAnchorDate(d)
+    const d = new Date(); d.setHours(0, 0, 0, 0)
+    setAnchorDate(snapAnchor(d, viewDays))
   }
   function handleTabChange(next: TabId) {
     if (next === activeTab) return
@@ -440,7 +460,10 @@ function SchedulerInner() {
                 type="date"
                 className="week-jump"
                 value={isoStart}
-                onChange={e => { if (e.target.value) setAnchorDate(fromIsoDate(e.target.value)) }}
+                onChange={e => {
+                  if (!e.target.value) return
+                  setAnchorDate(snapAnchor(fromIsoDate(e.target.value), viewDays))
+                }}
               />
             </div>
             <div className="week-nav__title">
