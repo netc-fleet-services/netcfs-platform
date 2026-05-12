@@ -13,7 +13,7 @@ const TRANSPORT_URL   = process.env.NEXT_PUBLIC_TRANSPORT_URL   || 'https://netc
 const INSPECTIONS_URL = process.env.NEXT_PUBLIC_INSPECTIONS_URL || 'https://netcfs-platform-inspections.vercel.app'
 const SWAPS_URL       = process.env.NEXT_PUBLIC_SWAPS_URL       || 'https://netcfs-platform-swaps.vercel.app'
 const IMPOUNDS_URL    = process.env.NEXT_PUBLIC_IMPOUNDS_URL    || 'https://netcfs-platform-impounds.vercel.app'
-const RECONCILER_URL  = process.env.NEXT_PUBLIC_RECONCILER_URL  || 'https://netcfs-platform-reconciler.vercel.app'
+const RECONCILER_URL  = process.env.NEXT_PUBLIC_RECONCILER_URL  || 'https://netcfs-platform-statement-reconcile.vercel.app'
 
 type BaseItem = { label: string; baseUrl: string; requiredModule?: string; icon: React.ReactNode }
 
