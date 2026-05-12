@@ -1,0 +1,52 @@
+name: Run Fullbay/QB Reconciliation
+
+on:
+  repository_dispatch:
+    types: [run-fb-reconciliation]
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/statement-reconciler/requirements-fb.txt
+
+      - name: Install dependencies
+        run: pip install -r apps/statement-reconciler/requirements-fb.txt
+
+      - name: Download input files from Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          JOB_ID: ${{ github.event.client_payload.job_id }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          url  = os.environ['SUPABASE_URL'].rstrip('/')
+          key  = os.environ['SUPABASE_SERVICE_ROLE_KEY']
+          job  = os.environ['JOB_ID']
+          hdrs = {'apikey': key, 'Authorization': f'Bearer {key}'}
+
+          for fname, dest in [('fullbay.csv', '/tmp/fullbay.csv'), ('quickbooks.xlsx', '/tmp/quickbooks.xlsx')]:
+              r = requests.get(f"{url}/storage/v1/object/fb-reconciliation-files/{job}/{fname}", headers=hdrs)
+              r.raise_for_status()
+              with open(dest, 'wb') as f:
+                  f.write(r.content)
+          print("Files downloaded.")
+          EOF
+
+      - name: Run reconciliation
+        env:
+          JOB_ID: ${{ github.event.client_payload.job_id }}
+          FULLBAY_FILE: /tmp/fullbay.csv
+          QB_FILE: /tmp/quickbooks.xlsx
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python apps/statement-reconciler/scripts/fb_reconcile.py

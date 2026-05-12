@@ -17,12 +17,15 @@
         "NEXT_PUBLIC_IMPOUNDS_URL",
         "NEXT_PUBLIC_RECONCILER_URL",
         "NEXT_PUBLIC_SCHEDULER_URL",
+        "NEXT_PUBLIC_FULLBAY_WIP_URL",
         "SUPABASE_SERVICE_ROLE_KEY",
         "SYNC_WORKFLOW",
         "SYNC_BRANCH",
         "MARKETCHECK_API_KEY",
         "GITHUB_PAT",
-        "GITHUB_REPO"
+        "GITHUB_REPO",
+        "FULLBAY_EMAIL",
+        "FULLBAY_PASSWORD"
       ]
     },
     "dev": {

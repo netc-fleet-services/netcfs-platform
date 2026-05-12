@@ -4,13 +4,14 @@ import { useEffect, useState } from 'react'
 import { getSupabaseBrowserClient } from '@netcfs/auth/client'
 import { ROLE_PERMISSIONS, type UserRole } from '@netcfs/auth/types'
 
-const FLEET_URL       = process.env.NEXT_PUBLIC_FLEET_URL       || 'https://netcfs-platform-fleet.vercel.app'
-const TRANSPORT_URL   = process.env.NEXT_PUBLIC_TRANSPORT_URL   || 'https://netcfs-platform-transport.vercel.app'
-const INSPECTIONS_URL = process.env.NEXT_PUBLIC_INSPECTIONS_URL || 'https://netcfs-platform-inspections.vercel.app'
-const SWAPS_URL       = process.env.NEXT_PUBLIC_SWAPS_URL       || 'https://netcfs-platform-swaps.vercel.app'
-const IMPOUNDS_URL    = process.env.NEXT_PUBLIC_IMPOUNDS_URL    || 'https://netcfs-platform-impounds.vercel.app'
-const RECONCILER_URL  = process.env.NEXT_PUBLIC_RECONCILER_URL  || 'https://netcfs-platform-statement-reconcile.vercel.app'
-const SCHEDULER_URL   = process.env.NEXT_PUBLIC_SCHEDULER_URL   || 'https://netcfs-platform-scheduler.vercel.app'
+const FLEET_URL        = process.env.NEXT_PUBLIC_FLEET_URL        || 'https://netcfs-platform-fleet.vercel.app'
+const TRANSPORT_URL    = process.env.NEXT_PUBLIC_TRANSPORT_URL    || 'https://netcfs-platform-transport.vercel.app'
+const INSPECTIONS_URL  = process.env.NEXT_PUBLIC_INSPECTIONS_URL  || 'https://netcfs-platform-inspections.vercel.app'
+const SWAPS_URL        = process.env.NEXT_PUBLIC_SWAPS_URL        || 'https://netcfs-platform-swaps.vercel.app'
+const IMPOUNDS_URL     = process.env.NEXT_PUBLIC_IMPOUNDS_URL     || 'https://netcfs-platform-impounds.vercel.app'
+const RECONCILER_URL   = process.env.NEXT_PUBLIC_RECONCILER_URL   || 'https://netcfs-platform-statement-reconcile.vercel.app'
+const SCHEDULER_URL    = process.env.NEXT_PUBLIC_SCHEDULER_URL    || 'https://netcfs-platform-scheduler.vercel.app'
+const FULLBAY_WIP_URL  = process.env.NEXT_PUBLIC_FULLBAY_WIP_URL  || 'https://netcfs-platform-fullbay-wip.vercel.app'
 
 const ALL_MODULES = [
   {
@@ -110,6 +111,19 @@ const ALL_MODULES = [
       </svg>
     ),
     color: '#10b981',
+  },
+  {
+    id: 'fullbay-wip',
+    label: 'Fullbay WIP',
+    description: 'Weekly Work In Progress snapshot — open SOs by shop with cost totals',
+    baseUrl: FULLBAY_WIP_URL,
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M18 20V10M12 20V4M6 20v-6" />
+        <circle cx="18" cy="7" r="3" />
+      </svg>
+    ),
+    color: '#f97316',
   },
   {
     id: 'reports',
