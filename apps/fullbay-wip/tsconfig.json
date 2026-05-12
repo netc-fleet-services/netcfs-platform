@@ -1,0 +1,14 @@
+{
+  "extends": "@netcfs/config/tsconfig/nextjs.json",
+  "compilerOptions": {
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@netcfs/auth": ["../../packages/auth/src/index.ts"],
+      "@netcfs/auth/*": ["../../packages/auth/src/*"],
+      "@/*": ["./*"]
+    },
+    "isolatedModules": true
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}

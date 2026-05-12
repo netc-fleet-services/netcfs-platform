@@ -29,8 +29,8 @@ export const ROLE_LABELS: Record<UserRole, string> = {
 }
 
 export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
-  admin:           ['fleet', 'transport', 'inspections', 'swaps', 'reports', 'admin', 'impounds', 'statement-reconciler', 'scheduler'],
-  shop_manager:    ['fleet', 'scheduler'],
+  admin:           ['fleet', 'transport', 'inspections', 'swaps', 'reports', 'admin', 'impounds', 'statement-reconciler', 'scheduler', 'fullbay-wip'],
+  shop_manager:    ['fleet', 'scheduler', 'fullbay-wip'],
   dispatcher:      ['fleet', 'transport', 'inspections', 'swaps', 'reports', 'impounds', 'scheduler'],
   mechanic:        ['fleet', 'inspections'],
   driver:          ['fleet'],

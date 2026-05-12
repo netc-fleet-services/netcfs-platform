@@ -1,0 +1,65 @@
+name: Run Fullbay WIP Report
+
+on:
+  # Monday at 12:00 UTC (7 AM ET / 8 AM ET depending on DST)
+  schedule:
+    - cron: '0 12 * * 1'
+
+  repository_dispatch:
+    types: [run-wip]
+
+jobs:
+  wip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/fullbay-wip/requirements-wip.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r apps/fullbay-wip/requirements-wip.txt
+          python -m playwright install chromium --with-deps
+
+      - name: Resolve run ID
+        id: resolve_run
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          DISPATCH_RUN_ID: ${{ github.event.client_payload.run_id }}
+        run: |
+          python - <<'EOF'
+          import os, requests, uuid
+          url      = os.environ['SUPABASE_URL'].rstrip('/')
+          key      = os.environ['SUPABASE_SERVICE_ROLE_KEY']
+          hdrs     = {'apikey': key, 'Authorization': f'Bearer {key}',
+                      'Content-Type': 'application/json', 'Prefer': 'return=minimal'}
+
+          run_id = os.environ.get('DISPATCH_RUN_ID', '').strip()
+          if not run_id:
+              run_id = str(uuid.uuid4())
+              r = requests.post(f"{url}/rest/v1/wip_runs",
+                                json={'id': run_id, 'status': 'pending'}, headers=hdrs)
+              r.raise_for_status()
+              print(f"Created wip_run: {run_id}")
+          else:
+              print(f"Using dispatched run_id: {run_id}")
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"RUN_ID={run_id}\n")
+          EOF
+
+      - name: Run WIP report
+        env:
+          RUN_ID: ${{ steps.resolve_run.outputs.RUN_ID }}
+          FULLBAY_EMAIL: ${{ secrets.FULLBAY_EMAIL }}
+          FULLBAY_PASSWORD: ${{ secrets.FULLBAY_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python apps/fullbay-wip/scripts/wip_run.py
