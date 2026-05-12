@@ -1,113 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Sidebar, type NavItem } from '@netcfs/ui'
 import { ThemeToggle } from '@netcfs/ui'
 import { getSupabaseBrowserClient } from '@netcfs/auth/client'
 import type { UserProfile } from '@netcfs/auth/types'
-import { ROLE_PERMISSIONS, ROLE_LABELS } from '@netcfs/auth/types'
-
-const FLEET_URL       = process.env.NEXT_PUBLIC_FLEET_URL       || 'https://netcfs-platform-fleet.vercel.app'
-const TRANSPORT_URL   = process.env.NEXT_PUBLIC_TRANSPORT_URL   || 'https://netcfs-platform-transport.vercel.app'
-const INSPECTIONS_URL = process.env.NEXT_PUBLIC_INSPECTIONS_URL || 'https://netcfs-platform-inspections.vercel.app'
-const SWAPS_URL       = process.env.NEXT_PUBLIC_SWAPS_URL       || 'https://netcfs-platform-swaps.vercel.app'
-const IMPOUNDS_URL    = process.env.NEXT_PUBLIC_IMPOUNDS_URL    || 'https://netcfs-platform-impounds.vercel.app'
-const RECONCILER_URL  = process.env.NEXT_PUBLIC_RECONCILER_URL  || 'https://netcfs-platform-statement-reconcile.vercel.app'
-
-type BaseItem = { label: string; baseUrl: string; requiredModule?: string; icon: React.ReactNode }
-
-const BASE_NAV: BaseItem[] = [
-  {
-    label: 'Home',
-    baseUrl: '/',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-        <polyline points="9 22 9 12 15 12 15 22" />
-      </svg>
-    ),
-  },
-  {
-    label: 'Maintenance Tracker',
-    baseUrl: FLEET_URL,
-    requiredModule: 'fleet',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <rect x="1" y="3" width="15" height="13" rx="2" />
-        <path d="M16 8h4l3 4v4h-7V8z" />
-        <circle cx="5.5" cy="18.5" r="2.5" />
-        <circle cx="18.5" cy="18.5" r="2.5" />
-      </svg>
-    ),
-  },
-  {
-    label: 'Dispatch Board',
-    baseUrl: TRANSPORT_URL,
-    requiredModule: 'transport',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M3 12h18M3 6h18M3 18h18" />
-      </svg>
-    ),
-  },
-  {
-    label: 'Safety',
-    baseUrl: INSPECTIONS_URL,
-    requiredModule: 'inspections',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M9 11l3 3L22 4" />
-        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-      </svg>
-    ),
-  },
-  {
-    label: 'Swap Optimizer',
-    baseUrl: SWAPS_URL,
-    requiredModule: 'swaps',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M7 16V4m0 0L3 8m4-4 4 4" />
-        <path d="M17 8v12m0 0 4-4m-4 4-4-4" />
-      </svg>
-    ),
-  },
-  {
-    label: 'Impound Tracker',
-    baseUrl: IMPOUNDS_URL,
-    requiredModule: 'impounds',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <rect x="3" y="11" width="18" height="11" rx="2" />
-        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-      </svg>
-    ),
-  },
-  {
-    label: 'Statement Reconciler',
-    baseUrl: RECONCILER_URL,
-    requiredModule: 'statement-reconciler',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-        <polyline points="14 2 14 8 20 8" />
-        <line x1="9" y1="13" x2="15" y2="13" />
-        <line x1="9" y1="17" x2="12" y2="17" />
-      </svg>
-    ),
-  },
-  {
-    label: 'Reports',
-    baseUrl: '/reports',
-    requiredModule: 'reports',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M18 20V10M12 20V4M6 20v-6" />
-      </svg>
-    ),
-  },
-]
+import { ROLE_LABELS } from '@netcfs/auth/types'
 
 interface Props {
   profile: UserProfile
@@ -117,114 +15,105 @@ interface Props {
 export function DashboardShell({ profile, children }: Props) {
   const router = useRouter()
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
-  const [ssoTokens, setSsoTokens] = useState<{ access_token: string; refresh_token: string } | null>(null)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-
-  useEffect(() => {
-    getSupabaseBrowserClient().auth.getSession().then(({ data: { session } }) => {
-      if (session) setSsoTokens({ access_token: session.access_token, refresh_token: session.refresh_token })
-    })
-  }, [])
-
-  function makeSsoHref(baseUrl: string): string {
-    if (!baseUrl.startsWith('http') || !ssoTokens) return baseUrl
-    const url = new URL(`${baseUrl}/auth/sso`)
-    url.searchParams.set('access_token',  ssoTokens.access_token)
-    url.searchParams.set('refresh_token', ssoTokens.refresh_token)
-    return url.toString()
-  }
-
-  const allowedModules = ROLE_PERMISSIONS[profile.role] ?? []
-  const visibleNav: NavItem[] = BASE_NAV
-    .filter(item => !item.requiredModule || allowedModules.includes(item.requiredModule))
-    .map(item => ({ label: item.label, href: makeSsoHref(item.baseUrl), icon: item.icon }))
+  const [menuOpen, setMenuOpen] = useState(false)
 
   function toggleTheme() {
     const next = theme === 'dark' ? 'light' : 'dark'
-    const themeClass = next === 'dark' ? 'theme-midnight' : 'theme-daylight'
+    document.documentElement.className = next === 'dark' ? 'theme-midnight' : 'theme-daylight'
     setTheme(next)
-    document.documentElement.className = themeClass
     localStorage.setItem('theme', next === 'dark' ? 'midnight' : 'daylight')
   }
 
   async function handleSignOut() {
-    const supabase = getSupabaseBrowserClient()
-    await supabase.auth.signOut()
+    setMenuOpen(false)
+    await getSupabaseBrowserClient().auth.signOut()
     router.push('/login')
     router.refresh()
   }
 
-  const Logo = (
-    <div style={{ padding: '0 0.25rem' }}>
-      <img src="/logo-main.png" alt="NETC Fleet Services" className="logo-light" style={{ height: 28, width: 'auto', display: 'block' }} />
-      <img src="/logo-email.png" alt="NETC Fleet Services" className="logo-dark" style={{ height: 28, width: 'auto', display: 'block' }} />
-    </div>
-  )
-
-  const UserFooter = (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.25rem 0.75rem' }}>
-        <div style={{
-          width: 30, height: 30, borderRadius: '50%',
-          backgroundColor: 'var(--primary-container)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '0.75rem', fontWeight: 700,
-          color: 'var(--on-primary-container)', flexShrink: 0,
-        }}>
-          {(profile.full_name ?? profile.email).charAt(0).toUpperCase()}
-        </div>
-        <div style={{ overflow: 'hidden' }}>
-          <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--on-surface)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {profile.full_name ?? profile.email}
-          </div>
-          <div style={{ fontSize: '0.68rem', color: 'var(--on-surface-muted)', textTransform: 'capitalize' }}>
-            {ROLE_LABELS[profile.role]}
-          </div>
-        </div>
-      </div>
-      <div style={{ display: 'flex', gap: '0.375rem' }}>
-        <ThemeToggle theme={theme} onToggle={toggleTheme} />
-        <button onClick={handleSignOut} className="btn-ghost" style={{ flex: 1, fontSize: '0.75rem' }}>
-          Sign out
-        </button>
-      </div>
-    </div>
-  )
+  const initial = (profile.full_name ?? profile.email).charAt(0).toUpperCase()
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
-      {/* Mobile backdrop */}
-      <div
-        className={`sidebar-backdrop${sidebarOpen ? ' open' : ''}`}
-        onClick={() => setSidebarOpen(false)}
-      />
+    <div style={{ minHeight: '100vh', backgroundColor: 'var(--surface)' }}>
+      <header style={{
+        background: 'rgb(var(--surface-container))',
+        borderBottom: '1px solid rgb(var(--outline))',
+        position: 'sticky',
+        top: 0,
+        zIndex: 30,
+      }}>
+        <div style={{
+          maxWidth: 1200,
+          margin: '0 auto',
+          padding: '0 1.5rem',
+          height: '3.75rem',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '1rem',
+        }}>
+          {/* Logo + title */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+            <img src="/logo-main.png" alt="NETC Fleet Services" className="logo-light" style={{ height: 32, width: 'auto', display: 'block' }} />
+            <img src="/logo-email.png" alt="NETC Fleet Services" className="logo-dark" style={{ height: 32, width: 'auto', display: 'block' }} />
+            <span style={{ fontWeight: 700, fontSize: '1rem', color: 'rgb(var(--on-surface))', letterSpacing: '-0.01em', whiteSpace: 'nowrap' }}>
+              NETC Fleet Services Apps Portal
+            </span>
+          </div>
 
-      <Sidebar
-        items={visibleNav}
-        logo={Logo}
-        footer={UserFooter}
-        mobileOpen={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-      />
+          <div style={{ flex: 1 }} />
 
-      <main style={{ flex: 1, overflow: 'auto', backgroundColor: 'var(--surface)', minWidth: 0 }}>
-        {/* Mobile-only top bar */}
-        <div className="sidebar-mobile-topbar">
-          <button
-            className="sidebar-hamburger"
-            onClick={() => setSidebarOpen(v => !v)}
-            aria-label="Open navigation"
-          >
-            ☰
-          </button>
-          <div style={{ padding: '0 0.25rem' }}>
-            <img src="/logo-main.png" alt="NETC Fleet Services" className="logo-light" style={{ height: 24, width: 'auto', display: 'block' }} />
-            <img src="/logo-email.png" alt="NETC Fleet Services" className="logo-dark" style={{ height: 24, width: 'auto', display: 'block' }} />
+          {/* Right side */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <ThemeToggle theme={theme} onToggle={toggleTheme} />
+
+            {/* User menu */}
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={() => setMenuOpen(v => !v)}
+                style={{
+                  width: '2rem', height: '2rem', borderRadius: '50%',
+                  background: 'rgb(var(--primary-container))',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '0.8rem', fontWeight: 700,
+                  color: 'rgb(var(--on-primary-container))',
+                  border: 'none', cursor: 'pointer',
+                }}
+              >
+                {initial}
+              </button>
+
+              {menuOpen && (
+                <>
+                  <div
+                    style={{ position: 'fixed', inset: 0, zIndex: 40 }}
+                    onClick={() => setMenuOpen(false)}
+                  />
+                  <div className="user-menu-dropdown" style={{ zIndex: 50 }}>
+                    <div className="user-menu-header">
+                      <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'rgb(var(--on-surface))', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {profile.full_name ?? profile.email}
+                      </div>
+                      <div style={{ fontSize: '0.7rem', color: 'rgb(var(--on-surface-muted))', marginTop: 2 }}>
+                        {ROLE_LABELS[profile.role]}
+                      </div>
+                    </div>
+                    <button className="user-menu-item danger" onClick={handleSignOut}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                        <polyline points="16 17 21 12 16 7" />
+                        <line x1="21" y1="12" x2="9" y2="12" />
+                      </svg>
+                      Sign Out
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
+      </header>
 
-        {children}
-      </main>
+      <main>{children}</main>
     </div>
   )
 }
