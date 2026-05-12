@@ -1,0 +1,3 @@
+{
+  "ignoreCommand": "git fetch --deepen=1 2>/dev/null; ! git diff --name-only HEAD^ HEAD | grep -qE '^(apps/scheduler|packages)/'"
+}

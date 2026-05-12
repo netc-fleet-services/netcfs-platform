@@ -10,6 +10,7 @@ const INSPECTIONS_URL = process.env.NEXT_PUBLIC_INSPECTIONS_URL || 'https://netc
 const SWAPS_URL       = process.env.NEXT_PUBLIC_SWAPS_URL       || 'https://netcfs-platform-swaps.vercel.app'
 const IMPOUNDS_URL    = process.env.NEXT_PUBLIC_IMPOUNDS_URL    || 'https://netcfs-platform-impounds.vercel.app'
 const RECONCILER_URL  = process.env.NEXT_PUBLIC_RECONCILER_URL  || 'https://netcfs-platform-statement-reconcile.vercel.app'
+const SCHEDULER_URL   = process.env.NEXT_PUBLIC_SCHEDULER_URL   || 'https://netcfs-platform-scheduler.vercel.app'
 
 const ALL_MODULES = [
   {
@@ -77,6 +78,23 @@ const ALL_MODULES = [
       </svg>
     ),
     color: '#fb923c',
+  },
+  {
+    id: 'scheduler',
+    label: 'Driver Scheduler',
+    description: 'Live multi-dispatcher driver shift scheduling and coverage',
+    baseUrl: SCHEDULER_URL,
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="3" y="4" width="18" height="18" rx="2" />
+        <line x1="16" y1="2" x2="16" y2="6" />
+        <line x1="8" y1="2" x2="8" y2="6" />
+        <line x1="3" y1="10" x2="21" y2="10" />
+        <rect x="7" y="14" width="4" height="3" />
+        <rect x="13" y="14" width="4" height="3" />
+      </svg>
+    ),
+    color: '#38bdf8',
   },
   {
     id: 'statement-reconciler',
