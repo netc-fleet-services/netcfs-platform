@@ -374,7 +374,8 @@ function tablePrintDocTemplate({
   thead { display: table-header-group; }
   .toolbar { margin: 8px 0 14px; }
   .toolbar button { padding: 6px 12px; font: inherit; cursor: pointer; }
-  @media print { .toolbar { display: none; } }
+  @media print { .toolbar { display: none; } @page { margin: 0.4in; } html, body { height: auto; } }
+  .page { transform-origin: top left; }
   .cov { margin-top: 16px; page-break-inside: avoid; }
   .cov h2 { font-size: 12pt; margin: 0 0 4px; }
   .cov-blurb { font-size: 8pt; color: #555; margin: 0 0 8px; }
@@ -388,21 +389,61 @@ function tablePrintDocTemplate({
 </style>
 </head>
 <body>
-  <header>
-    <h1>${escapeHtml(title)}</h1>
-    <div class="subtitle">${escapeHtml(subtitle)}</div>
-  </header>
   <div class="toolbar">
     <button type="button" onclick="window.print()">Print</button>
     <button type="button" onclick="window.close()">Close</button>
   </div>
-  <table>
-    <thead>${headerRow}</thead>
-    <tbody>${bodyRows}</tbody>
-  </table>
-  ${coverageHtml || ''}
+  <main class="page">
+    <header>
+      <h1>${escapeHtml(title)}</h1>
+      <div class="subtitle">${escapeHtml(subtitle)}</div>
+    </header>
+    <table>
+      <thead>${headerRow}</thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+    ${coverageHtml || ''}
+  </main>
+  ${fitOnePageScript(colCount)}
 </body>
 </html>`
+}
+
+// Scales the printable container down (never up) so the whole schedule lands on
+// one printed page. Uses CSS `zoom` rather than `transform: scale` because
+// Chromium pagination respects zoom's layout dimensions, while transformed
+// elements keep their pre-transform bounding box for page-break purposes.
+// Paper choice mirrors the @page rule above: letter landscape for ≤7 columns,
+// tabloid (11×17) landscape for wider ranges.
+function fitOnePageScript(colCount: number): string {
+  const isLarge = colCount > 7
+  const pageWidthIn = isLarge ? 17 : 11
+  const pageHeightIn = isLarge ? 11 : 8.5
+  const marginIn = 0.4
+  return `<script>
+(function(){
+  var DPI = 96;
+  var availW = (${pageWidthIn} - 2 * ${marginIn}) * DPI;
+  var availH = (${pageHeightIn} - 2 * ${marginIn}) * DPI;
+  function fit(){
+    var el = document.querySelector('.page');
+    if (!el) return;
+    el.style.zoom = '';
+    // Force a reflow so scrollWidth/Height reflect the un-zoomed layout.
+    void el.offsetHeight;
+    var w = el.scrollWidth;
+    var h = el.scrollHeight;
+    if (!w || !h) return;
+    var s = Math.min(1, availW / w, availH / h);
+    // Leave a tiny safety margin so rounding can't push us onto a 2nd page.
+    s = s * 0.98;
+    if (s < 1) el.style.zoom = String(s);
+  }
+  window.addEventListener('load', fit);
+  window.addEventListener('beforeprint', fit);
+  window.addEventListener('resize', fit);
+})();
+</script>`
 }
 
 function openPrintWindow(html: string) {
@@ -539,7 +580,8 @@ function ganttPrintDocTemplate({
   .gx-bar--off   { background: #fee2e2; border: 1px solid #b91c1c; color: #b91c1c; font-weight: 700; text-align: center; }
   .toolbar { margin: 8px 0 14px; }
   .toolbar button { padding: 6px 12px; font: inherit; cursor: pointer; }
-  @media print { .toolbar { display: none; } }
+  @media print { .toolbar { display: none; } @page { margin: 0.4in; } html, body { height: auto; } }
+  .page { transform-origin: top left; }
   .cov { margin-top: 16px; page-break-inside: avoid; }
   .cov h2 { font-size: 12pt; margin: 0 0 4px; }
   .cov-blurb { font-size: 8pt; color: #555; margin: 0 0 8px; }
@@ -553,20 +595,23 @@ function ganttPrintDocTemplate({
 </style>
 </head>
 <body>
-  <header>
-    <h1>${escapeHtml(title)}</h1>
-    <div class="subtitle">${escapeHtml(subtitle)}</div>
-  </header>
   <div class="toolbar">
     <button type="button" onclick="window.print()">Print</button>
     <button type="button" onclick="window.close()">Close</button>
   </div>
-  <div class="gx-head">
-    <div class="gx-head__driver">Driver</div>
-    <div class="gx-axis">${axisLabels}</div>
-  </div>
-  ${rows}
-  ${coverageHtml || ''}
+  <main class="page">
+    <header>
+      <h1>${escapeHtml(title)}</h1>
+      <div class="subtitle">${escapeHtml(subtitle)}</div>
+    </header>
+    <div class="gx-head">
+      <div class="gx-head__driver">Driver</div>
+      <div class="gx-axis">${axisLabels}</div>
+    </div>
+    ${rows}
+    ${coverageHtml || ''}
+  </main>
+  ${fitOnePageScript(colCount)}
 </body>
 </html>`
 }
