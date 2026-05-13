@@ -11,7 +11,8 @@ const SWAPS_URL        = process.env.NEXT_PUBLIC_SWAPS_URL        || 'https://ne
 const IMPOUNDS_URL     = process.env.NEXT_PUBLIC_IMPOUNDS_URL     || 'https://netcfs-platform-impounds.vercel.app'
 const RECONCILER_URL   = process.env.NEXT_PUBLIC_RECONCILER_URL   || 'https://netcfs-platform-statement-reconcile.vercel.app'
 const SCHEDULER_URL    = process.env.NEXT_PUBLIC_SCHEDULER_URL    || 'https://netcfs-platform-scheduler.vercel.app'
-const FULLBAY_WIP_URL  = process.env.NEXT_PUBLIC_FULLBAY_WIP_URL  || 'https://netcfs-platform-fullbay-wip.vercel.app'
+const FULLBAY_WIP_URL         = process.env.NEXT_PUBLIC_FULLBAY_WIP_URL         || 'https://netcfs-platform-fullbay-wip.vercel.app'
+const QUOTE_CALCULATOR_URL    = process.env.NEXT_PUBLIC_QUOTE_CALCULATOR_URL    || 'https://netcfs-platform-quote-calculator.vercel.app'
 
 const ALL_MODULES = [
   {
@@ -111,6 +112,21 @@ const ALL_MODULES = [
       </svg>
     ),
     color: '#10b981',
+  },
+  {
+    id: 'quote-calculator',
+    label: 'Quote Calculator',
+    description: 'Generate towing quotes with GraphHopper routing and PDF export',
+    baseUrl: QUOTE_CALCULATOR_URL,
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="2" y="3" width="20" height="14" rx="2" />
+        <line x1="8" y1="21" x2="16" y2="21" />
+        <line x1="12" y1="17" x2="12" y2="21" />
+        <path d="M7 8h2m2 0h2m2 0h2M7 11h2m2 0h2m2 0h2M7 14h10" />
+      </svg>
+    ),
+    color: '#ffc700',
   },
   {
     id: 'fullbay-wip',
