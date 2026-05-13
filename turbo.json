@@ -25,7 +25,9 @@
         "GITHUB_PAT",
         "GITHUB_REPO",
         "FULLBAY_EMAIL",
-        "FULLBAY_PASSWORD"
+        "FULLBAY_PASSWORD",
+        "GRAPHHOPPER_API_KEY",
+        "NEXT_PUBLIC_QUOTE_CALCULATOR_URL"
       ]
     },
     "dev": {
