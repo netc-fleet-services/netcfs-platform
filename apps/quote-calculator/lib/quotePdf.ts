@@ -1,5 +1,4 @@
-import jsPDF from 'jspdf'
-import autoTable from 'jspdf-autotable'
+import type jsPDF from 'jspdf'
 import type { QuoteBreakdown, QuoteInputs, ServiceRate } from './types'
 
 interface QuotePDFArgs {
@@ -23,8 +22,12 @@ const PAGE_W = 612
 const MARGIN = 48
 const CONTENT_W = PAGE_W - MARGIN * 2
 
-function buildQuotePDF({ service, inputs, quote, callNum, yardName }: QuotePDFArgs): { doc: jsPDF; filename: string } {
-  const doc = new jsPDF({ unit: 'pt', format: 'letter' })
+async function buildQuotePDF({ service, inputs, quote, callNum, yardName }: QuotePDFArgs): Promise<{ doc: jsPDF; filename: string }> {
+  const [{ default: JsPDF }, { default: autoTable }] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+  ])
+  const doc = new JsPDF({ unit: 'pt', format: 'letter' }) as unknown as jsPDF
   const now = new Date()
   const date = now.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
   const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
@@ -181,13 +184,13 @@ function buildQuotePDF({ service, inputs, quote, callNum, yardName }: QuotePDFAr
   return { doc, filename }
 }
 
-export function downloadQuotePDF(args: QuotePDFArgs) {
-  const { doc, filename } = buildQuotePDF(args)
+export async function downloadQuotePDF(args: QuotePDFArgs): Promise<void> {
+  const { doc, filename } = await buildQuotePDF(args)
   doc.save(filename)
 }
 
-export function generateQuotePDFBlob(args: QuotePDFArgs): { blob: Blob; filename: string } {
-  const { doc, filename } = buildQuotePDF(args)
+export async function generateQuotePDFBlob(args: QuotePDFArgs): Promise<{ blob: Blob; filename: string }> {
+  const { doc, filename } = await buildQuotePDF(args)
   return { blob: doc.output('blob'), filename }
 }
 

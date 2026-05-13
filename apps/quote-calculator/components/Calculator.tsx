@@ -230,7 +230,7 @@ function QuoteCallFlow({ rates, fuelSurcharge }: { rates: ServiceRate[]; fuelSur
       inputs, breakdown: quote, total: quote.total,
     })
     if (error) { setSaveState('error'); return }
-    downloadQuotePDF({ service: selectedService, inputs, quote, yardName })
+    await downloadQuotePDF({ service: selectedService, inputs, quote, yardName })
     setSaveState('saved')
   }
 
@@ -250,7 +250,7 @@ function QuoteCallFlow({ rates, fuelSurcharge }: { rates: ServiceRate[]; fuelSur
 
   const shareQuote = async () => {
     if (!selectedService || !quote) return
-    const { blob, filename } = generateQuotePDFBlob({ service: selectedService, inputs, quote, yardName })
+    const { blob, filename } = await generateQuotePDFBlob({ service: selectedService, inputs, quote, yardName })
     const file = new File([blob], filename, { type: 'application/pdf' })
     const nav = navigator as Navigator & { canShare?: (data: { files: File[] }) => boolean }
     if (nav.share && nav.canShare?.({ files: [file] })) {
@@ -259,7 +259,7 @@ function QuoteCallFlow({ rates, fuelSurcharge }: { rates: ServiceRate[]; fuelSur
         return
       } catch { /* fall through */ }
     }
-    downloadQuotePDF({ service: selectedService, inputs, quote, yardName })
+    await downloadQuotePDF({ service: selectedService, inputs, quote, yardName })
     const subject = encodeURIComponent(`NETC Towing Quote — ${selectedService.name}`)
     const body = encodeURIComponent(`Please find attached your towing quote.\n\nService: ${selectedService.name}\nEstimate: ${formatMoney(quote.totalLow)} – ${formatMoney(quote.totalHigh)}\n\n— NETC Fleet Services`)
     window.location.href = `mailto:${customerEmail || ''}?subject=${subject}&body=${body}`
@@ -521,7 +521,7 @@ function LookupCallFlow({ rates, fuelSurcharge }: { rates: ServiceRate[]; fuelSu
       inputs, breakdown: quote, total: quote.total,
     })
     if (error) { setSaveState('error'); return }
-    downloadQuotePDF({ service: selected, inputs, quote, callNum: job?.tb_call_num, yardName: job?.yard_id ?? undefined })
+    await downloadQuotePDF({ service: selected, inputs, quote, callNum: job?.tb_call_num, yardName: job?.yard_id ?? undefined })
     setSaveState('saved')
   }
 
