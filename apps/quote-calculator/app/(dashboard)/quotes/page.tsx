@@ -38,10 +38,10 @@ export default function QuotesPage() {
     })()
   }, [])
 
-  const reDownload = (row: QuoteRow) => {
+  const reDownload = async (row: QuoteRow) => {
     const rate = rates.find((r) => r.id === row.service_rate_id)
     if (!rate) { alert('Original service rate not found (may have been deleted).'); return }
-    downloadQuotePDF({ service: rate, inputs: row.inputs, quote: row.breakdown, callNum: row.tb_call_num, yardName: row.inputs.yard_id })
+    await downloadQuotePDF({ service: rate, inputs: row.inputs, quote: row.breakdown, callNum: row.tb_call_num, yardName: row.inputs.yard_id })
   }
 
   return (
