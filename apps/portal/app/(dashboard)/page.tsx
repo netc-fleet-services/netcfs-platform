@@ -4,7 +4,10 @@ import { type UserRole } from '@netcfs/auth/types'
 import { AppTilesClient } from '@/components/AppTilesClient'
 
 function getGreeting(): string {
-  const hour = new Date().getHours()
+  const hour = parseInt(
+    new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }),
+    10,
+  )
   if (hour < 12) return 'Good morning'
   if (hour < 17) return 'Good afternoon'
   return 'Good evening'
