@@ -5,12 +5,16 @@
 ```
 netcfs-platform/
 ├── apps/
-│   ├── portal/          Next.js app — home dashboard & auth
-│   ├── fleet/           Next.js app — truck/maintenance tracker
-│   ├── transport/       Next.js app — dispatch board
-│   ├── inspections/     Next.js app — safety scores & DVIRs
-│   ├── swaps/           Next.js app — lifecycle cost calculator
-│   └── impounds/        Next.js app — impound inventory
+│   ├── portal/                Next.js app — home dashboard & auth
+│   ├── fleet/                 Next.js app — truck/maintenance tracker
+│   ├── transport/             Next.js app — dispatch board
+│   ├── inspections/           Next.js app — safety scores & DVIRs
+│   ├── swaps/                 Next.js app — lifecycle cost calculator
+│   ├── impounds/              Next.js app — impound inventory
+│   ├── quote-calculator/      Next.js app — towing quote builder & PDF export
+│   ├── scheduler/             Next.js app — driver shift scheduling
+│   ├── statement-reconciler/  Next.js app — vendor statement vs. QB reconciliation
+│   └── fullbay-wip/           Next.js app — weekly Fullbay WIP snapshot
 │
 ├── packages/
 │   ├── auth/            Supabase auth helpers + role/permission types
@@ -146,7 +150,7 @@ All apps deploy to **Vercel**. Each app is a separate Vercel project pointed at 
 
 ## Key Design Decisions
 
-**One Supabase project for all apps** — Simplifies auth (one session cookie works everywhere) and allows cross-app queries. RLS ensures each app's data is still isolated at the row level.
+**One Supabase project for all apps** — Simplifies auth (one session cookie works everywhere across all ten apps) and allows cross-app queries. RLS ensures each app's data is still isolated at the row level.
 
 **Python for data sync, not Next.js API routes** — Sync jobs run on a schedule, need Playwright for browser automation, and have no user-facing latency requirements. Python is better suited than Node for this. GitHub Actions provides the scheduler.
 
