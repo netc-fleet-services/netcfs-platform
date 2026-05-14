@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(grep -E \"\\\\.\\(json|config|yml|yaml\\)$\")"
+      "Bash(grep -E \"\\\\.\\(json|config|yml|yaml\\)$\")",
+      "Bash(pnpm --filter @netcfs/fleet build)"
     ]
   }
 }
