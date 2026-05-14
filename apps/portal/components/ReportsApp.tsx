@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef } from 'react'
+import Link from 'next/link'
 import { getSupabaseBrowserClient } from '@netcfs/auth/client'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -1200,13 +1201,31 @@ export function ReportsApp() {
       <div style={{ flex: 1, padding: '1.5rem 1.75rem', overflow: 'auto', minWidth: 0 }}>
 
         {/* Header */}
-        <div style={{ marginBottom: '1.25rem' }}>
-          <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'rgb(var(--on-surface))' }}>
-            {selectedDef.label}
-          </h1>
-          <p style={{ margin: '0.25rem 0 0', fontSize: '0.8125rem', color: 'rgb(var(--on-surface-muted))' }}>
-            {selectedDef.description}
-          </p>
+        <div style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'rgb(var(--on-surface))' }}>
+              {selectedDef.label}
+            </h1>
+            <p style={{ margin: '0.25rem 0 0', fontSize: '0.8125rem', color: 'rgb(var(--on-surface-muted))' }}>
+              {selectedDef.description}
+            </p>
+          </div>
+          <Link
+            href="/"
+            style={{
+              flexShrink: 0,
+              display: 'inline-block',
+              padding: '0.375rem 0.75rem',
+              border: '1px solid rgb(var(--outline-variant))',
+              borderRadius: '0.375rem',
+              background: 'rgb(var(--surface-container))',
+              color: 'rgb(var(--on-surface))',
+              fontSize: '0.8125rem',
+              textDecoration: 'none',
+            }}
+          >
+            ← Back to portal
+          </Link>
         </div>
 
         {/* Filter bar */}
