@@ -231,7 +231,7 @@ try:
 
     # ── Step 4: Build result_json and update run ──────────────────────────────
     shops_list = [
-        {'shop': row['Shop'], 'total_cost': round(float(row['Total Cost of Parts'].replace('$', '').replace(',', '')), 2)}
+        {'shop': row['Shop'], 'total_cost': round(float(row['Total Cost of Parts']), 2)}
         for _, row in summary.iterrows()
     ]
 
