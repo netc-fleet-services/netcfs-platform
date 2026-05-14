@@ -1,6 +1,6 @@
 # Database
 
-All data lives in a single **Supabase (Postgres)** project shared across all six apps.
+All data lives in a single **Supabase (Postgres)** project shared across all ten apps.
 
 ## Connection
 
@@ -351,5 +351,65 @@ All schema changes go through numbered SQL files in `supabase/migrations/`. File
 | `20260424_trucks_rls_shop_manager.sql` | Adds shop_manager write permissions to `trucks` table |
 | `20260427_truck_notes_rls.sql` | RLS policies for `truck_notes` |
 | `20260428_dvir_manual_override.sql` | Adds `manually_overridden` column to `dvir_logs` |
+| `20260505_pm_schedules.sql` | Creates `pm_schedules` table for truck preventive maintenance scheduling |
+| `20260507_jobs_job_type.sql` | Adds `job_type` column to `jobs` |
+| `20260511_impound_stock_number.sql` | Adds `stock_number` column to `impounds` |
+| `20260511_reconciliation_jobs.sql` | Creates `reconciliation_jobs` table for statement reconciler runs |
+| `20260511_truck_updated_at_reminder.sql` | Adds reminder logic trigger to `trucks` |
+| `20260512_scheduler.sql` | Creates `scheduler_driver_schedule` table for shift planning |
+| `20260512_wip_runs.sql` | Creates `wip_runs` table for Fullbay WIP report history |
+| `20260512_fb_reconciliation_jobs.sql` | Creates `fb_reconciliation_jobs` table for Fullbay vs. QB reconciliation |
+| `20260513_scheduler_extras.sql` | Adds off-reason and notes columns to `scheduler_driver_schedule` |
 
 > **Rule**: Never edit an existing migration file. Always add a new one.
+
+---
+
+## Tables Added by Newer Apps
+
+The following tables were introduced after the initial six apps. Full column-level documentation will be added as schemas stabilize.
+
+### service_rates
+Service rate cards used by the quote calculator. Each row defines one billable service (e.g., Heavy Duty Towing) with its rate structure. Managed via Supabase table editor by admins.
+
+Key columns: `id`, `slug`, `category`, `name`, `hourly_rate`, `minimum_hours`, `flat_rate`, `hookup_fee`, `per_mile_rate`, `travel_per_mile_rate`, `travel_hourly_rate`, `parts_applicable`, `notes`, `sort_order`, `active`
+
+### pricing_config
+Key-value table storing pricing constants for the quote calculator: credit card fee percentage, escort markup, time/distance uncertainty for range estimates, and fuel surcharge formula parameters. Editable by non-developers via the Supabase table editor without touching code.
+
+Key columns: `key` (text, primary key), `value` (float8)
+
+### fuel_prices
+Fuel price data used to calculate the current fuel surcharge. Updated automatically by an external Make integration.
+
+Key columns: `date`, `location`, `product`, `total`
+
+### quotes
+Saved quote records from the quote calculator. Each row stores the inputs, the full line-item breakdown, and the final total.
+
+Key columns: `id`, `job_id`, `tb_call_num`, `service_rate_id`, `service_slug`, `service_name`, `inputs` (jsonb), `breakdown` (jsonb), `total`, `created_at`
+
+### yards
+Yard/location records used by the quote calculator as the starting point for route estimation.
+
+Key columns: `id`, `short`, `addr`, `zip`
+
+### scheduler_driver_schedule
+One row per driver per day in the scheduler. Stores shift start/end times or off-day entries.
+
+Key columns: `id`, `driver_id`, `date`, `entry_type` (`shift` | `off`), `start_time`, `end_time`, `off_reason`, `notes`, `created_at`
+
+### reconciliation_jobs
+Records of vendor statement reconciliation runs. Stores the uploaded file references, results summary, and per-line match/mismatch data.
+
+Key columns: `id`, `vendor`, `status`, `qb_count`, `statement_count`, `matched_count`, `mismatch_count`, `qb_total`, `statement_total`, `created_at`
+
+### fb_reconciliation_jobs
+Records of Fullbay vs. QuickBooks reconciliation runs.
+
+Key columns: `id`, `status`, `total_invoices`, `matched`, `fullbay_only`, `qb_only`, `variance`, `created_at`
+
+### wip_runs
+History of Fullbay WIP report runs. Each row represents one weekly snapshot.
+
+Key columns: `id`, `week_label`, `week_start`, `week_end`, `status`, `total_sos`, `total_cost`, `shops` (jsonb), `created_at`
