@@ -51,6 +51,7 @@
 
 /* ── Sizing ───────────────────────────────────────────────────── */
 .w-4 { width: 1rem; }
+.w-16 { width: 4rem; }
 .h-4 { height: 1rem; }
 .w-full { width: 100%; }
 .min-w-0 { min-width: 0px; }

@@ -37,6 +37,7 @@ export function Calculator() {
   const [rates, setRates] = useState<ServiceRate[]>([])
   const [ratesError, setRatesError] = useState<string | null>(null)
   const [fuelSurcharge, setFuelSurcharge] = useState<FuelSurchargeBasis | null>(null)
+  const [fuelOverride, setFuelOverride] = useState<string | null>(null)
 
   useEffect(() => {
     ;(async () => {
@@ -60,6 +61,13 @@ export function Calculator() {
       }
     })()
   }, [])
+
+  const effectiveSurcharge = useMemo<FuelSurchargeBasis | null>(() => {
+    if (!fuelSurcharge) return null
+    if (fuelOverride === null) return fuelSurcharge
+    const n = parseFloat(fuelOverride)
+    return { ...fuelSurcharge, percent: isFinite(n) && n >= 0 ? n : fuelSurcharge.percent }
+  }, [fuelSurcharge, fuelOverride])
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-5 pb-20 sm:px-6 sm:py-6">
@@ -89,15 +97,52 @@ export function Calculator() {
 
       {fuelSurcharge && (
         <div className="mb-6 rounded-md border border-outline-variant bg-surface-container p-3 text-xs text-on-surface-muted">
-          Fuel surcharge:{' '}
-          <span className="font-medium text-on-surface">{fuelSurcharge.percent.toFixed(2)}%</span>
-          {' '}· updated {fuelSurcharge.date}
+          {fuelOverride === null ? (
+            <div className="flex items-center justify-between gap-2">
+              <span>
+                Fuel surcharge:{' '}
+                <span className="font-medium text-on-surface">{fuelSurcharge.percent.toFixed(2)}%</span>
+                {' '}· updated {fuelSurcharge.date}
+              </span>
+              <button
+                type="button"
+                onClick={() => setFuelOverride(fuelSurcharge.percent.toFixed(2))}
+                className="rounded border border-outline-variant bg-surface-high px-2 py-0.5 transition hover:bg-surface-highest"
+              >
+                Override
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <span>
+                Fuel surcharge:{' '}
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  value={fuelOverride}
+                  onChange={(e) => setFuelOverride(e.target.value)}
+                  className="w-16 rounded border border-outline-variant bg-surface-high px-2 py-0.5 text-on-surface outline-none focus:border-primary"
+                />
+                %{' '}
+                <span>(calculated: {fuelSurcharge.percent.toFixed(2)}%)</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setFuelOverride(null)}
+                className="transition hover:text-on-surface"
+              >
+                ↺ Reset
+              </button>
+            </div>
+          )}
         </div>
       )}
 
       {mode === 'quote'
-        ? <QuoteCallFlow rates={rates} fuelSurcharge={fuelSurcharge} />
-        : <LookupCallFlow rates={rates} fuelSurcharge={fuelSurcharge} />
+        ? <QuoteCallFlow rates={rates} fuelSurcharge={effectiveSurcharge} />
+        : <LookupCallFlow rates={rates} fuelSurcharge={effectiveSurcharge} />
       }
     </main>
   )
