@@ -26,6 +26,42 @@ NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 ```
 
+### apps/quote-calculator — additional
+
+```env
+NEXT_PUBLIC_GRAPHHOPPER_KEY=your-graphhopper-key    # Route estimation
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key     # Server API routes (fuel surcharge, pricing config)
+```
+
+### apps/fleet — additional
+
+```env
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key     # Notification API routes
+RESEND_API_KEY=re_...                               # Email delivery (PM alerts, inspection notifications)
+NOTIFY_FROM_EMAIL=noreply@yourdomain.com            # Optional; defaults to noreply@netruckcenter.com
+CRON_SECRET=any-random-string                       # Optional; authenticates Vercel Cron requests
+```
+
+### apps/impounds — additional
+
+```env
+MARKETCHECK_API_KEY=your-marketcheck-key            # Vehicle valuation estimates
+GITHUB_PAT=ghp_...                                  # Dispatch sync-towbook.yml from the UI
+```
+
+### apps/fullbay-wip — additional
+
+```env
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+GITHUB_PAT=ghp_...                                  # Dispatch WIP sync workflow from the UI
+```
+
+### apps/statement-reconciler — additional
+
+```env
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
 ### apps/inspections — additional
 
 ```env
@@ -62,6 +98,10 @@ This starts all six Next.js apps in parallel via Turborepo:
 | inspections | http://localhost:3003 |
 | swaps | http://localhost:3004 |
 | impounds | http://localhost:3005 |
+| quote-calculator | http://localhost:3006 |
+| scheduler | http://localhost:3007 |
+| statement-reconciler | http://localhost:3008 |
+| fullbay-wip | http://localhost:3009 |
 
 ## Run a Single App
 
@@ -69,9 +109,13 @@ This starts all six Next.js apps in parallel via Turborepo:
 pnpm --filter @netcfs/portal dev
 pnpm --filter @netcfs/fleet dev
 pnpm --filter @netcfs/transport dev
-pnpm --filter @netcfs/safety dev        # inspections app
+pnpm --filter @netcfs/safety dev              # inspections app
 pnpm --filter @netcfs/swaps dev
 pnpm --filter @netcfs/impounds dev
+pnpm --filter @netcfs/quote-calculator dev
+pnpm --filter @netcfs/scheduler dev
+pnpm --filter @netcfs/statement-reconciler dev
+pnpm --filter @netcfs/fullbay-wip dev
 ```
 
 ## Build
