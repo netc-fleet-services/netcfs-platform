@@ -7,6 +7,7 @@ import {
   calculateQuote,
   formatMoney,
   type FuelSurchargeBasis,
+  type PricingConfig,
 } from '@/lib/pricingEngine'
 import { downloadQuotePDF, generateQuotePDFBlob } from '@/lib/quotePdf'
 import { AddressField } from '@/components/AddressField'
@@ -38,6 +39,7 @@ export function Calculator() {
   const [ratesError, setRatesError] = useState<string | null>(null)
   const [fuelSurcharge, setFuelSurcharge] = useState<FuelSurchargeBasis | null>(null)
   const [fuelOverride, setFuelOverride] = useState<string | null>(null)
+  const [pricingConfig, setPricingConfig] = useState<PricingConfig | null>(null)
 
   useEffect(() => {
     ;(async () => {
@@ -59,6 +61,14 @@ export function Calculator() {
       if (body.percent > 0 && body.basis) {
         setFuelSurcharge({ percent: body.percent, date: body.basis.date, location: body.basis.location, product: body.basis.product, fuelTotal: body.basis.total })
       }
+    })()
+  }, [])
+
+  useEffect(() => {
+    ;(async () => {
+      const res = await fetch('/api/pricing-config')
+      if (!res.ok) return
+      setPricingConfig(await res.json())
     })()
   }, [])
 
@@ -141,8 +151,8 @@ export function Calculator() {
       )}
 
       {mode === 'quote'
-        ? <QuoteCallFlow rates={rates} fuelSurcharge={effectiveSurcharge} />
-        : <LookupCallFlow rates={rates} fuelSurcharge={effectiveSurcharge} />
+        ? <QuoteCallFlow rates={rates} fuelSurcharge={effectiveSurcharge} pricingConfig={pricingConfig} />
+        : <LookupCallFlow rates={rates} fuelSurcharge={effectiveSurcharge} pricingConfig={pricingConfig} />
       }
     </main>
   )
@@ -152,7 +162,7 @@ export function Calculator() {
 
 const LOAD_UNLOAD_OPTIONS = Array.from({ length: 9 }, (_, i) => i * 0.25)
 
-function QuoteCallFlow({ rates, fuelSurcharge }: { rates: ServiceRate[]; fuelSurcharge: FuelSurchargeBasis | null }) {
+function QuoteCallFlow({ rates, fuelSurcharge, pricingConfig }: { rates: ServiceRate[]; fuelSurcharge: FuelSurchargeBasis | null; pricingConfig: PricingConfig | null }) {
   const [yards, setYards]               = useState<Yard[]>([])
   const [yardId, setYardId]             = useState('')
   const [pickupAddress, setPickupAddress] = useState('')
@@ -236,8 +246,8 @@ function QuoteCallFlow({ rates, fuelSurcharge }: { rates: ServiceRate[]; fuelSur
   }, [selectedService, isIdleService, route, loadUnload, extraHours, extraCharge, idleHours, yardId, pickupAddress, dropAddress, extraStopsKey, extraStops, equipment, customerName, customerPhone, customerEmail, operatorNotes, isTransport, permitCost, escortEnabled, escortCost])
 
   const quote = useMemo(
-    () => selectedService && route ? calculateQuote(selectedService, inputs, fuelSurcharge, creditCardFee) : null,
-    [selectedService, route, inputs, fuelSurcharge, creditCardFee],
+    () => selectedService && route && pricingConfig ? calculateQuote(selectedService, inputs, pricingConfig, fuelSurcharge, creditCardFee) : null,
+    [selectedService, route, pricingConfig, inputs, fuelSurcharge, creditCardFee],
   )
 
   const canEstimate = yardId && pickupAddress.trim() && dropAddress.trim() && serviceSlug && !!selectedService
@@ -475,7 +485,7 @@ function QuoteCallFlow({ rates, fuelSurcharge }: { rates: ServiceRate[]; fuelSur
           <QuoteBreakdownDisplay quote={quote} />
           <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm">
             <input type="checkbox" checked={creditCardFee} onChange={(e) => setCreditCardFee(e.target.checked)} className="h-4 w-4 accent-primary" />
-            <span>Paying by credit card (+3.5% processing fee)</span>
+            <span>Paying by credit card (+{pricingConfig?.credit_card_fee_percent.toFixed(1) ?? '…'}% processing fee)</span>
           </label>
           <div className="mt-5 flex flex-wrap items-center gap-2">
             <button type="button" onClick={saveQuote} disabled={saveState === 'saving'} className="min-h-[44px] rounded-md bg-primary px-4 py-2 font-medium text-on-primary transition hover:brightness-110 disabled:opacity-50">
@@ -498,7 +508,7 @@ function QuoteCallFlow({ rates, fuelSurcharge }: { rates: ServiceRate[]; fuelSur
 
 // ─── Look at a Call ───────────────────────────────────────────────────────────
 
-function LookupCallFlow({ rates, fuelSurcharge }: { rates: ServiceRate[]; fuelSurcharge: FuelSurchargeBasis | null }) {
+function LookupCallFlow({ rates, fuelSurcharge, pricingConfig }: { rates: ServiceRate[]; fuelSurcharge: FuelSurchargeBasis | null; pricingConfig: PricingConfig | null }) {
   const [callInput, setCallInput] = useState('')
   const [lookupState, setLookupState] = useState<'idle' | 'loading' | 'error'>('idle')
   const [lookupError, setLookupError] = useState<string | null>(null)
@@ -510,7 +520,7 @@ function LookupCallFlow({ rates, fuelSurcharge }: { rates: ServiceRate[]; fuelSu
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
 
   const selected = useMemo(() => rates.find((r) => r.slug === selectedSlug) ?? null, [rates, selectedSlug])
-  const quote = useMemo(() => selected ? calculateQuote(selected, inputs, fuelSurcharge, creditCardFee) : null, [selected, inputs, fuelSurcharge, creditCardFee])
+  const quote = useMemo(() => selected && pricingConfig ? calculateQuote(selected, inputs, pricingConfig, fuelSurcharge, creditCardFee) : null, [selected, pricingConfig, inputs, fuelSurcharge, creditCardFee])
 
   const lookupJob = async () => {
     const value = callInput.trim()
@@ -660,7 +670,7 @@ function LookupCallFlow({ rates, fuelSurcharge }: { rates: ServiceRate[]; fuelSu
           <QuoteBreakdownDisplay quote={quote} />
           <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm">
             <input type="checkbox" checked={creditCardFee} onChange={(e) => setCreditCardFee(e.target.checked)} className="h-4 w-4 accent-primary" />
-            <span>Paying by credit card (+3.5% processing fee)</span>
+            <span>Paying by credit card (+{pricingConfig?.credit_card_fee_percent.toFixed(1) ?? '…'}% processing fee)</span>
           </label>
           <div className="mt-5 flex items-center gap-3">
             <button type="button" onClick={saveQuote} disabled={saveState === 'saving'} className="rounded-md bg-primary px-4 py-2 font-medium text-on-primary transition hover:brightness-110 disabled:opacity-50">
