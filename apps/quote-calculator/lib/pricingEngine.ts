@@ -12,9 +12,12 @@ export interface FuelSurchargeBasis {
   fuelTotal: number
 }
 
-export const CREDIT_CARD_FEE_PERCENT = 3.5
-export const TIME_UNCERTAINTY_HOURS = 20 / 60
-export const MILES_UNCERTAINTY = 15
+export interface PricingConfig {
+  credit_card_fee_percent: number
+  escort_markup_percent: number
+  time_uncertainty_hours: number
+  miles_uncertainty: number
+}
 
 interface CoreResult {
   lines: QuoteLine[]
@@ -24,6 +27,7 @@ interface CoreResult {
 function computeLines(
   rate: ServiceRate,
   inputs: QuoteInputs,
+  config: PricingConfig,
   fuelSurcharge: FuelSurchargeBasis | null | undefined,
   creditCardFee: boolean | undefined,
 ): CoreResult {
@@ -97,15 +101,17 @@ function computeLines(
 
   const escortCost = inputs.escort_cost ?? 0
   if (escortCost > 0) {
-    const marked = round2(escortCost * 1.25)
-    lines.push({ label: 'Escort fee', detail: `${money(escortCost)} + 25%`, amount: marked })
+    const markupPct = config.escort_markup_percent
+    const marked = round2(escortCost * (1 + markupPct / 100))
+    lines.push({ label: 'Escort fee', detail: `${money(escortCost)} + ${markupPct}%`, amount: marked })
   }
 
   if (creditCardFee) {
+    const fee = config.credit_card_fee_percent
     const subtotal = lines.reduce((sum, l) => sum + l.amount, 0)
-    const amount = round2(subtotal * (CREDIT_CARD_FEE_PERCENT / 100))
+    const amount = round2(subtotal * (fee / 100))
     if (amount > 0) {
-      lines.push({ label: 'Credit card fee', detail: `${CREDIT_CARD_FEE_PERCENT.toFixed(2)}% processing fee`, amount })
+      lines.push({ label: 'Credit card fee', detail: `${fee.toFixed(2)}% processing fee`, amount })
     }
   }
 
@@ -116,10 +122,11 @@ function computeLines(
 export function calculateQuote(
   rate: ServiceRate,
   inputs: QuoteInputs,
+  config: PricingConfig,
   fuelSurcharge?: FuelSurchargeBasis | null,
   creditCardFee?: boolean,
 ): QuoteBreakdown {
-  const base = computeLines(rate, inputs, fuelSurcharge, creditCardFee)
+  const base = computeLines(rate, inputs, config, fuelSurcharge, creditCardFee)
 
   const isIdleRate = rate.travel_hourly_rate !== null
   const shift = (hoursDelta: number, milesDelta: number): QuoteInputs => {
@@ -135,8 +142,10 @@ export function calculateQuote(
     return adj
   }
 
-  const low = computeLines(rate, shift(-TIME_UNCERTAINTY_HOURS, -MILES_UNCERTAINTY), fuelSurcharge, creditCardFee)
-  const high = computeLines(rate, shift(TIME_UNCERTAINTY_HOURS, MILES_UNCERTAINTY), fuelSurcharge, creditCardFee)
+  const t = config.time_uncertainty_hours
+  const m = config.miles_uncertainty
+  const low = computeLines(rate, shift(-t, -m), config, fuelSurcharge, creditCardFee)
+  const high = computeLines(rate, shift(t, m), config, fuelSurcharge, creditCardFee)
 
   return { lines: base.lines, total: base.total, totalLow: low.total, totalHigh: high.total }
 }
