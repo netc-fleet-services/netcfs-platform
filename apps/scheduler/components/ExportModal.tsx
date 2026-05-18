@@ -4,14 +4,7 @@ import { useEffect, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { APP_CONFIG } from '../lib/config'
 import type { Driver, ScheduleEntry } from '../lib/types'
-import { useOptimizerConfig } from '../lib/settings'
 import { listDrivers, listScheduleBetween } from '../lib/db'
-import {
-  computeGaps,
-  filterSupplyDrivers,
-  getBaseline,
-  suggestionText,
-} from '../lib/optimizer'
 import {
   addDays,
   dateRange,
@@ -51,7 +44,6 @@ export function ExportModal({
   driverSort,
   onClose,
 }: Props) {
-  const opt = useOptimizerConfig()
   const [output, setOutput] = useState<Output>('print')
   const [tab, setTab] = useState<Tab>(defaultTab)
   const [format, setFormat] = useState<Format>(defaultFormat)
@@ -79,10 +71,9 @@ export function ExportModal({
         const csv = buildCsv(data)
         downloadCsv(`${tab}-schedule_${start}_${n}d${yard ? `_yard-${yard}` : ''}.csv`, csv)
       } else {
-        const coverageHtml = await buildCoverageBlock(supabase, opt, data)
         const html = format === 'gantt'
-          ? buildGanttDoc({ ...data, coverageHtml })
-          : buildTableDoc({ ...data, coverageHtml })
+          ? buildGanttDoc(data)
+          : buildTableDoc(data)
         openPrintWindow(html)
       }
       onClose()
@@ -248,47 +239,9 @@ async function loadScheduleData(
   return { tab, sorted, entries, dates, byKey, days, tabLabel, title, subtitle, isoStart, isoEnd }
 }
 
-async function buildCoverageBlock(
-  supabase: SupabaseClient,
-  opt: ReturnType<typeof useOptimizerConfig> | (typeof APP_CONFIG.optimizer),
-  data: ScheduleData,
-): Promise<string> {
-  if (data.tab !== 'drivers') return ''
-  const towingDrivers = filterSupplyDrivers(data.sorted, opt)
-  if (!towingDrivers.length) return ''
-
-  let baseline
-  try { baseline = await getBaseline(supabase) } catch (err) {
-    console.warn('Optimizer baseline load failed:', err)
-    return ''
-  }
-
-  const isoStart = toIsoDate(data.dates[0])
-  const isoEnd = toIsoDate(data.dates[data.dates.length - 1])
-  const gaps = computeGaps(data.entries, towingDrivers, baseline, isoStart, isoEnd, opt)
-  const under = gaps.filter(g => g.status === 'under').sort((a, b) => a.gap - b.gap).slice(0, opt.topUnderstaffedCount)
-  const over = gaps.filter(g => g.status === 'over').sort((a, b) => b.gap - a.gap).slice(0, opt.topOverstaffedCount)
-  if (!under.length && !over.length) return ''
-
-  const li = (g: typeof under[number]) => `<li>${escapeHtml(suggestionText(g))}</li>`
-  const underBlock = under.length
-    ? `<div class="cov-col"><h3 class="cov-col-title cov-col-title--under">Understaffed</h3><ul>${under.map(li).join('')}</ul></div>`
-    : ''
-  const overBlock = over.length
-    ? `<div class="cov-col"><h3 class="cov-col-title cov-col-title--over">Overstaffed</h3><ul>${over.map(li).join('')}</ul></div>`
-    : ''
-
-  return `
-    <section class="cov">
-      <h2>Coverage notes</h2>
-      <p class="cov-blurb">Compared to historical call volume (LDT + HDT only). Copart batch dispatches are spread across 8 AM–4 PM in the baseline.</p>
-      <div class="cov-cols">${underBlock}${overBlock}</div>
-    </section>`
-}
-
 // ---------- Table format ----------
 
-function buildTableDoc({ title, subtitle, sorted, dates, byKey, days, coverageHtml }: ScheduleData & { coverageHtml: string }): string {
+function buildTableDoc({ title, subtitle, sorted, dates, byKey, days }: ScheduleData): string {
   const headerRow = `
     <tr>
       <th class="col-driver">Driver</th>
@@ -317,7 +270,7 @@ function buildTableDoc({ title, subtitle, sorted, dates, byKey, days, coverageHt
     return `<tr>${driverCell}${dayCells}</tr>`
   }).join('')
 
-  return tablePrintDocTemplate({ title, subtitle, headerRow, bodyRows, colCount: days, coverageHtml })
+  return tablePrintDocTemplate({ title, subtitle, headerRow, bodyRows, colCount: days })
 }
 
 function renderTableCell(entries: ScheduleEntry[]): string {
@@ -340,9 +293,9 @@ function renderTableCell(entries: ScheduleEntry[]): string {
 }
 
 function tablePrintDocTemplate({
-  title, subtitle, headerRow, bodyRows, colCount, coverageHtml,
+  title, subtitle, headerRow, bodyRows, colCount,
 }: {
-  title: string; subtitle: string; headerRow: string; bodyRows: string; colCount: number; coverageHtml: string
+  title: string; subtitle: string; headerRow: string; bodyRows: string; colCount: number
 }): string {
   return `<!doctype html>
 <html lang="en">
@@ -376,16 +329,6 @@ function tablePrintDocTemplate({
   .toolbar button { padding: 6px 12px; font: inherit; cursor: pointer; }
   @media print { .toolbar { display: none; } @page { margin: 0.4in; } html, body { height: auto; } }
   .page { transform-origin: top left; }
-  .cov { margin-top: 16px; page-break-inside: avoid; }
-  .cov h2 { font-size: 12pt; margin: 0 0 4px; }
-  .cov-blurb { font-size: 8pt; color: #555; margin: 0 0 8px; }
-  .cov-cols { display: flex; gap: 16px; }
-  .cov-col { flex: 1; }
-  .cov-col-title { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.6px; margin: 0 0 4px; }
-  .cov-col-title--under { color: #b91c1c; }
-  .cov-col-title--over  { color: #1d4ed8; }
-  .cov ul { margin: 0; padding-left: 18px; font-size: 9pt; }
-  .cov li { margin-bottom: 2px; }
 </style>
 </head>
 <body>
@@ -402,7 +345,6 @@ function tablePrintDocTemplate({
       <thead>${headerRow}</thead>
       <tbody>${bodyRows}</tbody>
     </table>
-    ${coverageHtml || ''}
   </main>
   ${fitOnePageScript(colCount)}
 </body>
@@ -465,7 +407,7 @@ function openPrintWindow(html: string) {
 
 // ---------- Gantt format ----------
 
-function buildGanttDoc({ title, subtitle, sorted, dates, byKey, days, coverageHtml }: ScheduleData & { coverageHtml: string }): string {
+function buildGanttDoc({ title, subtitle, sorted, dates, byKey, days }: ScheduleData): string {
   const totalHours = days * 24
   const weekStartMs = dates[0].getTime()
 
@@ -541,13 +483,13 @@ function buildGanttDoc({ title, subtitle, sorted, dates, byKey, days, coverageHt
       </div>`
   }).join('')
 
-  return ganttPrintDocTemplate({ title, subtitle, axisLabels, rows, colCount: days, coverageHtml })
+  return ganttPrintDocTemplate({ title, subtitle, axisLabels, rows, colCount: days })
 }
 
 function ganttPrintDocTemplate({
-  title, subtitle, axisLabels, rows, colCount, coverageHtml,
+  title, subtitle, axisLabels, rows, colCount,
 }: {
-  title: string; subtitle: string; axisLabels: string; rows: string; colCount: number; coverageHtml: string
+  title: string; subtitle: string; axisLabels: string; rows: string; colCount: number
 }): string {
   return `<!doctype html>
 <html lang="en">
@@ -582,16 +524,6 @@ function ganttPrintDocTemplate({
   .toolbar button { padding: 6px 12px; font: inherit; cursor: pointer; }
   @media print { .toolbar { display: none; } @page { margin: 0.4in; } html, body { height: auto; } }
   .page { transform-origin: top left; }
-  .cov { margin-top: 16px; page-break-inside: avoid; }
-  .cov h2 { font-size: 12pt; margin: 0 0 4px; }
-  .cov-blurb { font-size: 8pt; color: #555; margin: 0 0 8px; }
-  .cov-cols { display: flex; gap: 16px; }
-  .cov-col { flex: 1; }
-  .cov-col-title { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.6px; margin: 0 0 4px; }
-  .cov-col-title--under { color: #b91c1c; }
-  .cov-col-title--over  { color: #1d4ed8; }
-  .cov ul { margin: 0; padding-left: 18px; font-size: 9pt; }
-  .cov li { margin-bottom: 2px; }
 </style>
 </head>
 <body>
@@ -609,7 +541,6 @@ function ganttPrintDocTemplate({
       <div class="gx-axis">${axisLabels}</div>
     </div>
     ${rows}
-    ${coverageHtml || ''}
   </main>
   ${fitOnePageScript(colCount)}
 </body>
