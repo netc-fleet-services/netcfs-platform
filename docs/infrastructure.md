@@ -24,7 +24,7 @@ Single reference for anyone taking over maintenance of the platform. Covers ever
 
 ### One project, all apps
 
-All six apps connect to the **same Supabase project**. There is one Postgres database, one Auth tenant, and one Storage namespace shared across the platform. This simplifies auth (one session cookie works in every app) and lets apps query across tables.
+All ten apps connect to the **same Supabase project**. There is one Postgres database, one Auth tenant, and one Storage namespace shared across the platform. This simplifies auth (one session cookie works in every app) and lets apps query across tables.
 
 ### Credentials
 
@@ -79,7 +79,7 @@ Each app is a **separate Vercel project** pointing at its subdirectory of this m
 
 Set these in each project at **Vercel Dashboard → project → Settings → Environment Variables**.
 
-#### All six projects
+#### All ten projects
 
 | Variable | Purpose |
 |----------|---------|

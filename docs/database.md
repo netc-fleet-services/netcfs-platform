@@ -228,7 +228,7 @@ Daily miles driven per driver, aggregated from Samsara trip data.
 | driver_name | text | Denormalized |
 | log_date | date | |
 | miles | numeric | Total miles for the day |
-| source | text | `samsara` |
+| source | text | `samsara` (driver-login GPS) \| `samsara_vehicle` (vehicle GPS, non-interstate) \| `towbook_estimate` (haversine fallback) |
 | created_at | timestamptz | |
 
 **Unique constraint**: `(driver_id, log_date)`
@@ -412,4 +412,4 @@ Key columns: `id`, `status`, `total_invoices`, `matched`, `fullbay_only`, `qb_on
 ### wip_runs
 History of Fullbay WIP report runs. Each row represents one weekly snapshot.
 
-Key columns: `id`, `week_label`, `week_start`, `week_end`, `status`, `total_sos`, `total_cost`, `shops` (jsonb), `created_at`
+Key columns: `id` (uuid, also used as storage folder prefix), `status` (`pending` | `running` | `done` | `error`), `week_label` (text, e.g. `"2026-05-11 to 2026-05-17"`), `summary_file_path` (text), `detail_file_path` (text), `result_json` (jsonb — `{week_label, total_so_count, grand_total, shops: [{shop, total_cost}]}`), `error_message` (text), `created_at`
