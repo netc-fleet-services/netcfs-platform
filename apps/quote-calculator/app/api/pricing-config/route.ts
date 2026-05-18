@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 const KEYS = [
   'credit_card_fee_percent',
   'escort_markup_percent',
-  'time_uncertainty_hours',
+  'time_uncertainty_minutes',
   'miles_uncertainty',
 ] as const
 
@@ -37,5 +37,10 @@ export async function GET() {
     )
   }
 
-  return NextResponse.json(config as Record<ConfigKey, number>)
+  return NextResponse.json({
+    credit_card_fee_percent: config.credit_card_fee_percent!,
+    escort_markup_percent: config.escort_markup_percent!,
+    time_uncertainty_hours: config.time_uncertainty_minutes! / 60,
+    miles_uncertainty: config.miles_uncertainty!,
+  })
 }
