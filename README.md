@@ -27,7 +27,11 @@ pnpm dev        # starts all apps
 Run a single app:
 
 ```bash
+pnpm --filter @netcfs/portal dev                  # portal
+pnpm --filter @netcfs/fleet dev                   # fleet
+pnpm --filter @netcfs/transport dev               # transport
 pnpm --filter @netcfs/safety dev                  # inspections
+pnpm --filter @netcfs/swaps dev                   # swaps
 pnpm --filter @netcfs/impounds dev                # impounds
 pnpm --filter @netcfs/quote-calculator dev        # quote calculator
 pnpm --filter @netcfs/scheduler dev               # scheduler
@@ -54,6 +58,11 @@ pnpm --filter @netcfs/fullbay-wip dev             # fullbay WIP
 | [Swaps](docs/apps/swaps.md) | Lifecycle cost calculator |
 | [Impounds](docs/apps/impounds.md) | Impound inventory, TowBook sync, photos |
 | [Scheduler](docs/apps/scheduler.md) | Shift scheduling, multi-user editing, analytics |
+| [Quote Calculator](docs/apps/quote-calculator.md) | Pricing engine, fuel surcharge, PDF export |
+| [Statement Reconciler](docs/apps/statement-reconciler.md) | Vendor statement matching, Fullbay reconciliation |
+| [Fullbay WIP](docs/apps/fullbay-wip.md) | Weekly WIP snapshot, shop cost summary |
+| [Adding an App](docs/apps/adding-an-app.md) | Step-by-step guide for integrating a new app |
+| [Suggested Prompts](docs/suggested-prompts.md) | Claude Code prompt templates for common tasks |
 
 ## Tech Stack
 

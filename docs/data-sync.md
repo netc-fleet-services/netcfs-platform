@@ -11,9 +11,13 @@ External data enters the platform through Python scripts triggered by GitHub Act
 | Sync Samsara PM | `sync-samsara-pm.yml` | Daily 07:00 UTC | inspections |
 | Backfill Samsara | `backfill-samsara.yml` | Manual (`workflow_dispatch`) | inspections |
 | Compute Safety Scores | `compute-safety-scores.yml` | Daily 07:00 UTC + quarterly + manual | inspections |
+| Diagnose Safety | `diagnose-safety.yml` | Manual | inspections |
 | Sync TowBook Jobs | `sync-calls.yml` | Every 15 min | transport |
 | Sync TowBook Impounds | `sync-towbook.yml` | Every 4 hours + manual | impounds |
-| Diagnose Safety | `diagnose-safety.yml` | Manual | inspections |
+| Sync Impound Keys | `sync-keys.yml` | Daily 14:00 UTC | impounds |
+| Run Reconciliation | `run-reconciliation.yml` | `repository_dispatch` (`run-reconciliation`) | statement-reconciler |
+| Run Fullbay Reconciliation | `run-fb-reconciliation.yml` | `repository_dispatch` (`run-fb-reconciliation`) | statement-reconciler |
+| Run Fullbay WIP Report | `run-wip.yml` | Monday 12:00 UTC + `repository_dispatch` + manual | fullbay-wip |
 
 All workflows run on `ubuntu-latest` and use the following secrets from the GitHub repository:
 
@@ -23,8 +27,10 @@ SUPABASE_SERVICE_KEY
 SAMSARA_API_KEY
 TOWBOOK_USER
 TOWBOOK_PASS
-GEOCODIO_KEY          (optional — transport only)
-GITHUB_PAT            (workflow scope — used by BackfillTrigger UI)
+FULLBAY_EMAIL          (fullbay-wip only)
+FULLBAY_PASSWORD       (fullbay-wip only)
+GEOCODIO_KEY           (optional — transport only)
+GITHUB_PAT             (workflow scope — used by BackfillTrigger UI and reconciler/WIP triggers)
 ```
 
 ---
@@ -69,10 +75,15 @@ Process:
 **Source**: Samsara Trips API, DVIR Stream API  
 **Destination**: `mileage_logs`, `dvir_logs` tables
 
-**Mileage sync:**
-1. Fetches all trips from the previous calendar day
-2. Groups miles by driver via vehicle-assignment reverse mapping (see DVIR matching below)
-3. Upserts to `mileage_logs` on conflict `(driver_id, log_date)`
+**Mileage sync — three passes:**
+
+**Pass 1 — Driver-login GPS** (`source: 'samsara'`): For drivers with `samsara_driver_id` set who are logged into the Samsara driver app. Fetches their driver-vehicle assignments and pulls actual GPS trip miles per assignment window.
+
+**Pass 2 — Vehicle GPS** (`source: 'samsara_vehicle'`): For non-interstate drivers who are assigned to vehicles in Samsara but don't log into the driver app. Fetches GPS trips directly from the vehicle and resolves the driver via TowBook job `truck_and_equipment` matching (same three-strategy lookup as the safety events sync: towbook_name → unit number → description keywords). Skips driver-days already covered by Pass 1.
+
+**Pass 3 — TowBook haversine estimate** (`source: 'towbook_estimate'`): Fallback for any driver-day not covered by GPS. Calculates round-trip distance from job coordinates (yard → pickup → drop → yard) using the route_cache for exact road miles when available, otherwise straight-line × 1.25. Skips driver-days covered by Passes 1 or 2.
+
+All three passes upsert to `mileage_logs` on conflict `(driver_id, log_date)`.
 
 **DVIR sync:**
 
@@ -183,6 +194,46 @@ Process:
 10. Preserves manual fields on UPDATE: notes, sell flag, estimated_value, sales_description, needs_detail, needs_mechanic, estimated_repair_cost
 
 **Why CSV export instead of scraping the table**: TowBook renders the impound grid as a JavaScript (w2ui) component, not a plain HTML table. `querySelectorAll('table tbody tr')` returns nothing. The CSV export is the only reliable way to get the full dataset.
+
+---
+
+---
+
+## Statement Reconciler Workflows
+
+The reconciler workflows are triggered on-demand from the app UI (not on a schedule).
+
+### run_reconciliation.py — Vendor Statement Reconciliation
+
+**Trigger**: `repository_dispatch` event `run-reconciliation`, fired by the app's `/api/reconcile-trigger` route.
+
+1. Downloads vendor statement and QuickBooks export from Supabase Storage
+2. Runs the vendor-specific parser (`reconciler/parsers/<vendor>.py`) to extract invoice/amount pairs
+3. Normalizes invoice numbers (strips leading zeros and dashes) to handle format differences between TowBook and QuickBooks
+4. Matches on normalized invoice number; flags amount discrepancies
+5. Writes per-line results back to Supabase and updates `reconciliation_jobs` status to `done` or `error`
+
+### fb_reconcile.py — Fullbay vs. QuickBooks Reconciliation
+
+**Trigger**: `repository_dispatch` event `run-fb-reconciliation`.
+
+Same pattern but compares Fullbay invoice exports against QuickBooks. Results go to `fb_reconciliation_jobs`.
+
+---
+
+## Fullbay WIP Workflow
+
+### wip_run.py — Weekly WIP Snapshot
+
+**Trigger**: Monday 12:00 UTC cron, `repository_dispatch` event `run-wip`, or manual `workflow_dispatch`.
+
+1. Logs into Fullbay via Playwright (headless Chromium)
+2. Navigates to Reports → Work In Progress → WIP Details; sets today's date and selects all shop locations
+3. Downloads the WIP CSV using session cookies from the browser
+4. Filters to service orders open during the **previous** Mon–Sun week (created ≤ Sunday AND (not completed OR completed ≥ Monday))
+5. Produces a summary CSV (parts cost by shop) and a detail CSV (all matching SOs)
+6. Uploads both to Supabase Storage bucket `wip-reports` under `{run_id}/`
+7. Updates the `wip_runs` row with `status: done` and `result_json` (shop totals)
 
 ---
 
