@@ -40,6 +40,7 @@ export function Calculator() {
   const [fuelSurcharge, setFuelSurcharge] = useState<FuelSurchargeBasis | null>(null)
   const [fuelOverride, setFuelOverride] = useState<string | null>(null)
   const [pricingConfig, setPricingConfig] = useState<PricingConfig | null>(null)
+  const [pricingConfigError, setPricingConfigError] = useState<string | null>(null)
 
   useEffect(() => {
     ;(async () => {
@@ -67,7 +68,11 @@ export function Calculator() {
   useEffect(() => {
     ;(async () => {
       const res = await fetch('/api/pricing-config')
-      if (!res.ok) return
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setPricingConfigError(body.error ?? `Pricing config unavailable (${res.status})`)
+        return
+      }
       setPricingConfig(await res.json())
     })()
   }, [])
@@ -102,6 +107,12 @@ export function Calculator() {
       {ratesError && (
         <div className="mb-6 rounded-md bg-error-container p-4 text-error">
           Couldn&apos;t load rates: {ratesError}
+        </div>
+      )}
+
+      {pricingConfigError && (
+        <div className="mb-6 rounded-md bg-error-container p-4 text-error">
+          Pricing config error — quotes cannot be calculated: {pricingConfigError}
         </div>
       )}
 
@@ -713,7 +724,8 @@ function ServicePicker({ rates, selectedSlug, onSelect }: { rates: ServiceRate[]
     if (!selectedSlug) return
     const selectedCat = rates.find((r) => r.slug === selectedSlug)?.category
     if (selectedCat && selectedCat !== category) setCategory(selectedCat)
-  }, [selectedSlug, rates, category])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSlug, rates])
 
   const services = useMemo(() => rates.filter((r) => r.category === category), [rates, category])
 
