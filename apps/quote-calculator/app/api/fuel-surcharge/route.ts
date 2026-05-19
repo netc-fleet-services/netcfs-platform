@@ -6,22 +6,22 @@ export const dynamic = 'force-dynamic'
 // All keys must be present in the pricing_config Supabase table.
 // If any are missing the endpoint returns 503 — populate the table before deploying.
 const FUEL_KEYS = [
-  'fuel_min_price',
-  'fuel_max_price',
-  'fuel_base_percent',
-  'fuel_step_price',
-  'fuel_step_percent',
-  'fuel_max_percent',
+  'fuel_surcharge_min_price',
+  'fuel_surcharge_max_price',
+  'fuel_surcharge_base_percent',
+  'fuel_surcharge_increment_price',
+  'fuel_surcharge_increment_percent',
+  'fuel_surcharge_max_percent',
 ] as const
 
 type FuelKey = (typeof FUEL_KEYS)[number]
 type FuelCfg = Record<FuelKey, number>
 
 function surchargePercent(total: number, cfg: FuelCfg): number {
-  if (total < cfg.fuel_min_price) return 0
-  if (total >= cfg.fuel_max_price) return cfg.fuel_max_percent
-  const tier = Math.floor((total - cfg.fuel_min_price) / cfg.fuel_step_price)
-  return cfg.fuel_base_percent + tier * cfg.fuel_step_percent
+  if (total < cfg.fuel_surcharge_min_price) return 0
+  if (total >= cfg.fuel_surcharge_max_price) return cfg.fuel_surcharge_max_percent
+  const tier = Math.floor((total - cfg.fuel_surcharge_min_price) / cfg.fuel_surcharge_increment_price)
+  return cfg.fuel_surcharge_base_percent + tier * cfg.fuel_surcharge_increment_percent
 }
 
 export async function GET() {

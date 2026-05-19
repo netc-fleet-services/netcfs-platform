@@ -38,14 +38,14 @@ Pricing constants are stored in the `pricing_config` Supabase table (key-value p
 |-----|---------|
 | `credit_card_fee_percent` | Credit card processing surcharge (%) |
 | `escort_markup_percent` | Markup applied to escort sub-contractor cost (%) |
-| `time_uncertainty_hours` | ±range added to time estimate (hours) |
+| `time_uncertainty_minutes` | ±range added to time estimate (minutes) |
 | `miles_uncertainty` | ±range added to distance estimate (miles) |
-| `fuel_min_price` | Fuel price below which surcharge is 0% |
-| `fuel_max_price` | Fuel price above which surcharge is capped |
-| `fuel_base_percent` | Surcharge at the minimum fuel price threshold |
-| `fuel_step_price` | Price increment per surcharge step |
-| `fuel_step_percent` | Surcharge % added per step |
-| `fuel_max_percent` | Maximum fuel surcharge cap |
+| `fuel_surcharge_min_price` | Fuel price below which surcharge is 0% |
+| `fuel_surcharge_max_price` | Fuel price above which surcharge is capped |
+| `fuel_surcharge_base_percent` | Surcharge at the minimum fuel price threshold (%) |
+| `fuel_surcharge_increment_price` | Price increment per surcharge tier ($) |
+| `fuel_surcharge_increment_percent` | Surcharge % added per tier |
+| `fuel_surcharge_max_percent` | Maximum fuel surcharge cap (%) |
 
 ## Database
 
