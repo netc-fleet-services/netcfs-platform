@@ -1,22 +1,46 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Driver, ScheduleEntry } from '../lib/types'
 import { listScheduleBetween } from '../lib/db'
-import { addDays, formatHours, formatTime12, fromIsoDate, shiftDurationHours, toIsoDate } from '../lib/utils'
+import { useSettings } from '../lib/settings'
+import {
+  addDays, formatHours, formatName, formatTime12, fromIsoDate, shiftDurationHours,
+  toIsoDate, weekDates,
+} from '../lib/utils'
 
 interface Props {
   supabase: SupabaseClient
   driver: Driver
   onClose: () => void
+  // When provided, an "Edit driver/dispatcher" button opens the editor.
+  onEdit?: (driver: Driver) => void
+  // Called after a hide so the caller can refresh its driver list.
+  onChanged?: () => void
 }
 
-export function DriverDetailModal({ supabase, driver, onClose }: Props) {
-  const [past7, setPast7] = useState<ScheduleEntry[]>([])
-  const [future7, setFuture7] = useState<ScheduleEntry[]>([])
+export function DriverDetailModal({ supabase, driver, onClose, onEdit, onChanged }: Props) {
+  const { hideDriver } = useSettings()
+  const [thisWeek, setThisWeek] = useState<ScheduleEntry[]>([])
+  const [nextWeek, setNextWeek] = useState<ScheduleEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [hiding, setHiding] = useState(false)
+
+  // Calendar weeks (Mon–Sun), matching the rest of the scheduler.
+  const { thisWk, nextWk, isoStart, isoEnd } = useMemo(() => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const t = weekDates(today)
+    const n = weekDates(addDays(today, 7))
+    return {
+      thisWk: t,
+      nextWk: n,
+      isoStart: toIsoDate(t[0]),
+      isoEnd: toIsoDate(n[n.length - 1]),
+    }
+  }, [])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
@@ -26,17 +50,15 @@ export function DriverDetailModal({ supabase, driver, onClose }: Props) {
 
   useEffect(() => {
     let alive = true
-    const today = new Date()
-    const past = toIsoDate(addDays(today, -7))
-    const future = toIsoDate(addDays(today, 7))
-    const todayIso = toIsoDate(today)
+    const thisSet = new Set(thisWk.map(toIsoDate))
+    const nextSet = new Set(nextWk.map(toIsoDate))
 
-    listScheduleBetween(supabase, past, future)
+    listScheduleBetween(supabase, isoStart, isoEnd)
       .then(entries => {
         if (!alive) return
-        const filtered = entries.filter(e => e.driver_id === driver.id)
-        setPast7(filtered.filter(e => e.schedule_date < todayIso))
-        setFuture7(filtered.filter(e => e.schedule_date >= todayIso))
+        const mine = entries.filter(e => e.driver_id === driver.id)
+        setThisWeek(mine.filter(e => thisSet.has(e.schedule_date)))
+        setNextWeek(mine.filter(e => nextSet.has(e.schedule_date)))
       })
       .catch(err => {
         if (!alive) return
@@ -45,7 +67,26 @@ export function DriverDetailModal({ supabase, driver, onClose }: Props) {
       .finally(() => { if (alive) setLoading(false) })
 
     return () => { alive = false }
-  }, [supabase, driver.id])
+  }, [supabase, driver.id, isoStart, isoEnd, thisWk, nextWk])
+
+  async function handleHide() {
+    const ok = window.confirm(
+      `Hide ${formatName(driver.name) || 'this driver'}?\n\n` +
+      `They’ll be removed from every schedule, stat and export view. ` +
+      `You can unhide them under Settings → Hidden drivers.`,
+    )
+    if (!ok) return
+    setHiding(true)
+    try {
+      await hideDriver(driver.id)
+      onChanged?.()
+      onClose()
+    } catch (err) {
+      console.error('Hide driver failed:', err)
+      setError(err instanceof Error ? err.message : 'Couldn’t hide.')
+      setHiding(false)
+    }
+  }
 
   return (
     <div className="modal modal--wide" role="dialog" aria-modal="true">
@@ -53,13 +94,34 @@ export function DriverDetailModal({ supabase, driver, onClose }: Props) {
       <div className="modal__panel modal__panel--wide">
         <header className="modal__header">
           <div>
-            <h2>{driver.name || '(unnamed)'}</h2>
+            <h2>{formatName(driver.name) || '(unnamed)'}</h2>
             <div className="muted">
               #{driver.irh_driver_number || driver.id} · {driver.function || '—'}
               {driver.irh_yard_number ? ` · yard ${driver.irh_yard_number}` : ''}
+              {driver.active === false ? ' · inactive' : ''}
             </div>
           </div>
-          <button type="button" className="sched-btn sched-btn--ghost modal__close" onClick={onClose} aria-label="Close">×</button>
+          <div className="modal__header-actions">
+            {onEdit && (
+              <button
+                type="button"
+                className="sched-btn sched-btn--primary"
+                onClick={() => onEdit(driver)}
+              >
+                Edit driver/dispatcher
+              </button>
+            )}
+            <button
+              type="button"
+              className="sched-btn sched-btn--danger"
+              onClick={handleHide}
+              disabled={hiding}
+              title="Remove from all views (unhide later from Settings)"
+            >
+              {hiding ? 'Hiding…' : 'Hide'}
+            </button>
+            <button type="button" className="sched-btn sched-btn--ghost modal__close" onClick={onClose} aria-label="Close">×</button>
+          </div>
         </header>
         <div className="modal__body">
           {error ? (
@@ -67,14 +129,14 @@ export function DriverDetailModal({ supabase, driver, onClose }: Props) {
           ) : (
             <div className="driver-detail__grid">
               <div className="driver-detail__col">
-                <h3>Past 7 days</h3>
-                <DriverStats entries={loading ? null : past7} />
-                <DriverList entries={loading ? null : past7} />
+                <h3>This week</h3>
+                <DriverStats entries={loading ? null : thisWeek} />
+                <DriverList entries={loading ? null : thisWeek} />
               </div>
               <div className="driver-detail__col">
-                <h3>Upcoming 7 days</h3>
-                <DriverStats entries={loading ? null : future7} />
-                <DriverList entries={loading ? null : future7} />
+                <h3>Next week</h3>
+                <DriverStats entries={loading ? null : nextWeek} />
+                <DriverList entries={loading ? null : nextWeek} />
               </div>
             </div>
           )}

@@ -688,28 +688,62 @@
 .timeline { display: flex; flex-direction: column; }
 .timeline__axis {
   position: relative;
-  height: 28px;
+  height: 38px;
   margin-left: 220px;
   border-bottom: 1px solid var(--sched-border);
-  background: var(--sched-surface-2);
+  background-color: var(--sched-surface-2);
+  /* Same zebra period as the row tracks so alternate-hour shading lines up
+     top to bottom. Hour lines themselves are the .tl-tick borders. */
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.03) 0,
+    rgba(255, 255, 255, 0.03) calc(100% / 36),
+    transparent calc(100% / 36),
+    transparent calc(100% / 18)
+  );
+  overflow: hidden;
 }
 .tl-tick {
   position: absolute;
   top: 0;
   bottom: 0;
-  border-left: 1px dashed var(--sched-border);
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
   pointer-events: none;
 }
+.tl-tick--major    { border-left-color: rgba(255, 255, 255, 0.18); }
+.tl-tick--noon     { border-left: 1px solid var(--sched-accent); }
 .tl-tick--midnight { border-left: 2px solid var(--sched-accent); }
 .tl-tick__label {
   position: absolute;
   top: 4px;
-  left: 4px;
-  font-size: 10px;
+  left: 3px;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--sched-text-dim);
   white-space: nowrap;
 }
-.tl-tick--midnight .tl-tick__label { color: var(--sched-accent); font-weight: 600; }
+.tl-tick--major .tl-tick__label,
+.tl-tick--noon  .tl-tick__label {
+  color: var(--sched-text);
+  font-weight: 700;
+  font-size: 12px;
+}
+.tl-tick--midnight .tl-tick__label {
+  color: var(--sched-accent);
+  font-weight: 700;
+  font-size: 12px;
+}
+.tl-tick--prevday .tl-tick__label,
+.tl-tick--nextday .tl-tick__label { opacity: 0.45; }
+.tl-tick__count {
+  position: absolute;
+  top: 21px;
+  left: 3px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--sched-accent);
+  white-space: nowrap;
+}
 
 .timeline__rows {
   display: flex;
@@ -738,14 +772,25 @@
 .tl-row__meta { font-size: 11px; }
 .tl-row__track {
   position: relative;
-  background: var(--sched-surface);
-  background-image: repeating-linear-gradient(
-    to right,
-    transparent 0,
-    transparent calc(100% / 7.5 - 1px),
-    rgba(255, 255, 255, 0.03) calc(100% / 7.5 - 1px),
-    rgba(255, 255, 255, 0.03) calc(100% / 7.5)
-  );
+  background-color: var(--sched-surface);
+  /* Hour-aligned: a faint line at every hour, plus zebra-shaded alternate
+     hours so each hour is a traceable column under the axis labels.
+     Period = 100% / 36 (timeline spans 36 hours, -6h..+30h). */
+  background-image:
+    repeating-linear-gradient(
+      to right,
+      rgba(255, 255, 255, 0.07) 0,
+      rgba(255, 255, 255, 0.07) 1px,
+      transparent 1px,
+      transparent calc(100% / 36)
+    ),
+    repeating-linear-gradient(
+      to right,
+      rgba(255, 255, 255, 0.022) 0,
+      rgba(255, 255, 255, 0.022) calc(100% / 36),
+      transparent calc(100% / 36),
+      transparent calc(100% / 18)
+    );
 }
 .tl-midnight {
   position: absolute;
@@ -756,6 +801,25 @@
   opacity: 0.4;
   pointer-events: none;
   z-index: 1;
+}
+.tl-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid var(--sched-warn);
+  pointer-events: none;
+  z-index: 3;
+}
+.tl-now--axis::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: -5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sched-warn);
 }
 .tl-bar {
   position: absolute;
@@ -782,16 +846,10 @@
     var(--sched-warn) 100%);
   border-color: var(--sched-warn);
 }
-.tl-bar--prev {
-  background: var(--sched-surface-2);
-  border: 1px dashed var(--sched-border);
-  color: var(--sched-text-dim);
-  opacity: 0.75;
-  cursor: pointer;
-}
-.tl-bar--prev:hover { opacity: 1; }
-.tl-bar--prev .tl-bar__label { color: var(--sched-text-dim); font-weight: 500; }
-.tl-bar--prev .tl-bar__label small { color: var(--sched-accent); margin-right: 4px; }
+/* Carryover-from-previous-day bars look like normal shifts; only the small
+   "← prev" tag marks them. Not draggable, so use the pointer cursor. */
+.tl-bar--prev { cursor: pointer; }
+.tl-bar--prev .tl-bar__label small { margin-right: 4px; opacity: 0.9; }
 .tl-bar__label { font-weight: 600; color: #fff; }
 .tl-bar__label small { font-size: 9px; opacity: 0.85; }
 .tl-bar__notes { font-size: 10px; color: rgba(255, 255, 255, 0.85); text-overflow: ellipsis; overflow: hidden; }
@@ -1599,3 +1657,57 @@
 .settings-status { font-size: 12px; color: var(--sched-text-dim); }
 .settings-status--ok    { color: #10b981; }
 .settings-status--error { color: var(--sched-err); }
+
+/* ============================================================================
+   Clickable driver name → detail / edit / hide popup
+   ============================================================================ */
+.cell--driver-clickable,
+.gantt-row__driver--clickable { cursor: pointer; }
+.cell--driver-clickable:hover .driver-name,
+.gantt-row__driver--clickable:hover .driver-name { color: var(--sched-accent); }
+.cell--driver-clickable:focus-visible,
+.gantt-row__driver--clickable:focus-visible {
+  outline: 2px solid var(--sched-accent);
+  outline-offset: -2px;
+}
+
+/* Detail-modal header action buttons (Edit / Hide / close) */
+.modal__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Settings → Hidden drivers list */
+.hidden-drivers__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--sched-surface-2);
+  border: 1px solid var(--sched-border);
+  border-radius: var(--sched-radius-sm);
+}
+.hidden-drivers__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--sched-border);
+}
+.hidden-drivers__item:last-child { border-bottom: none; }
+.hidden-drivers__main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  font-size: 12px;
+}
+.hidden-drivers__name {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

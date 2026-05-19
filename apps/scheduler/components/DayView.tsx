@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Driver, ScheduleEntry } from '../lib/types'
 import {
-  addDays, escapeHtml, formatTime12, fromIsoDate, hoursToTimeStr, parseTimeToHours, toIsoDate,
+  addDays, escapeHtml, formatName, formatTime12, fromIsoDate, hoursToTimeStr, parseTimeToHours, toIsoDate,
 } from '../lib/utils'
 import { listScheduleBetween, upsertEntry } from '../lib/db'
 import { useOptimizerConfig } from '../lib/settings'
@@ -20,7 +20,8 @@ import {
 const TIMELINE_START_H = -6
 const TIMELINE_END_H = 30
 const TIMELINE_HOURS = TIMELINE_END_H - TIMELINE_START_H
-const TICK_INTERVAL_H = 4
+// One labeled tick per hour so the exact hour is readable from the top.
+const TICK_INTERVAL_H = 1
 
 interface Props {
   supabase: SupabaseClient
@@ -63,6 +64,7 @@ export function DayView({ supabase, isoDate, drivers, entries, activeTab, onChan
   })
   const [yesterdayOvernight, setYesterdayOvernight] = useState<ScheduleEntry[] | null>(null)
   const [baseline, setBaseline] = useState<Baseline | null>(null)
+  const [nowMs, setNowMs] = useState<number>(() => Date.now())
 
   const rowsRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<DragState | null>(null)
@@ -85,6 +87,20 @@ export function DayView({ supabase, isoDate, drivers, entries, activeTab, onChan
   useEffect(() => {
     try { localStorage.setItem('dayview.hideUfp', hideUfp ? '1' : '0') } catch { /* ignore */ }
   }, [hideUfp])
+
+  // Live "now" indicator — only when the open day is today. Re-tick each minute.
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 60_000)
+    return () => clearInterval(t)
+  }, [])
+  const now = new Date(nowMs)
+  const nowH = now.getHours() + now.getMinutes() / 60
+  const nowVisible =
+    toIsoDate(now) === isoDate && nowH >= TIMELINE_START_H && nowH <= TIMELINE_END_H
+  const nowLeftPct = nowVisible ? pctFromHours(nowH) : 0
+  const nowTitle = nowVisible
+    ? `Now · ${now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+    : ''
 
   // Yesterday's entries may already be in the parent's window. If so, reuse.
   useEffect(() => {
@@ -141,6 +157,41 @@ export function DayView({ supabase, isoDate, drivers, entries, activeTab, onChan
   const prevOvernight = (yesterdayOvernight || []).filter(e => !excludedDriverIds.has(e.driver_id))
 
   const combined = useMemo(() => [...todayEntries, ...prevOvernight], [todayEntries, prevOvernight])
+
+  // Each shift as a [start,end) interval in timeline-hours (today = 0..24,
+  // negative = carried over from the previous day). Drives the per-hour
+  // headcount shown on the axis.
+  const shiftIntervals = useMemo(() => {
+    const out: Array<{ driverId: number; start: number; end: number }> = []
+    for (const e of todayShifts) {
+      const s = parseTimeToHours(e.start_time)
+      let en = parseTimeToHours(e.end_time)
+      if (en <= s) en += 24
+      out.push({ driverId: e.driver_id, start: s, end: en })
+    }
+    for (const e of prevOvernight) {
+      out.push({
+        driverId: e.driver_id,
+        start: parseTimeToHours(e.start_time) - 24,
+        end: parseTimeToHours(e.end_time),
+      })
+    }
+    return out
+  }, [todayShifts, prevOvernight])
+
+  // Distinct drivers on shift at each labeled axis hour.
+  const headcountByTick = useMemo(() => {
+    const m = new Map<number, number>()
+    const firstTick = Math.ceil(TIMELINE_START_H / TICK_INTERVAL_H) * TICK_INTERVAL_H
+    for (let h = firstTick; h <= TIMELINE_END_H; h += TICK_INTERVAL_H) {
+      const ids = new Set<number>()
+      for (const iv of shiftIntervals) {
+        if (iv.start <= h && h < iv.end) ids.add(iv.driverId)
+      }
+      m.set(h, ids.size)
+    }
+    return m
+  }, [shiftIntervals])
 
   // Coverage strip cells
   const coverageData = useMemo(() => {
@@ -362,7 +413,7 @@ export function DayView({ supabase, isoDate, drivers, entries, activeTab, onChan
         </div>
         <div className="modal__body modal__body--no-pad">
           <div className="timeline">
-            <Axis />
+            <Axis counts={headcountByTick} nowVisible={nowVisible} nowLeftPct={nowLeftPct} nowTitle={nowTitle} />
             {coverageData.cells.length > 0 && (
               <div className="timeline__coverage">
                 {coverageData.cells.map(g => {
@@ -402,7 +453,15 @@ export function DayView({ supabase, isoDate, drivers, entries, activeTab, onChan
               {rows.map(([driverId, group]) => {
                 const driver = driversById.get(driverId)
                 if (!driver) return null
-                return <Row key={driverId} driver={driver} group={group} />
+                return (
+                  <Row
+                    key={driverId}
+                    driver={driver}
+                    group={group}
+                    nowLeftPct={nowVisible ? nowLeftPct : null}
+                    nowTitle={nowTitle}
+                  />
+                )
               })}
             </div>
           </div>
@@ -411,7 +470,7 @@ export function DayView({ supabase, isoDate, drivers, entries, activeTab, onChan
               <div className="tl-off-label">Also off today ({todayOffs.length}):</div>
               {todayOffs.map(e => {
                 const drv = driversById.get(e.driver_id)
-                const name = drv ? drv.name : `Driver #${e.driver_id}`
+                const name = drv ? formatName(drv.name) : `Driver #${e.driver_id}`
                 const reason = e.off_reason ? ` (${e.off_reason})` : ''
                 return <span key={e.id} className="tl-off-pill">{name}{reason}</span>
               })}
@@ -437,36 +496,70 @@ function earliestStartH(group: { todays: ScheduleEntry[]; prev: ScheduleEntry | 
   return 999
 }
 
-function Axis() {
+function Axis({
+  counts, nowVisible, nowLeftPct, nowTitle,
+}: {
+  counts: Map<number, number>
+  nowVisible: boolean
+  nowLeftPct: number
+  nowTitle: string
+}) {
   const ticks: React.ReactNode[] = []
   const firstTick = Math.ceil(TIMELINE_START_H / TICK_INTERVAL_H) * TICK_INTERVAL_H
   for (let h = firstTick; h <= TIMELINE_END_H; h += TICK_INTERVAL_H) {
     const leftPct = pctFromHours(h)
-    const isMidnight = h === 0 || h === 24
-    const cls = isMidnight ? 'tl-tick tl-tick--midnight' : 'tl-tick'
+    const dayHour = ((h % 24) + 24) % 24
+    const classes = ['tl-tick']
+    if (h === 0 || h === 24) classes.push('tl-tick--midnight')
+    else if (dayHour === 12) classes.push('tl-tick--noon')
+    else if (dayHour % 6 === 0) classes.push('tl-tick--major')
+    if (h < 0) classes.push('tl-tick--prevday')
+    else if (h > 24) classes.push('tl-tick--nextday')
+    const count = counts.get(h) ?? 0
     ticks.push(
-      <div key={h} className={cls} style={{ left: `${leftPct}%` }}>
+      <div key={h} className={classes.join(' ')} style={{ left: `${leftPct}%` }}>
         <span className="tl-tick__label">{formatTick(h)}</span>
+        {count > 0 && (
+          <span
+            className="tl-tick__count"
+            title={`${count} driver${count === 1 ? '' : 's'} on shift at ${hourLabel(dayHour)}`}
+          >
+            {count}
+          </span>
+        )}
       </div>,
     )
   }
-  return <div className="timeline__axis">{ticks}</div>
+  return (
+    <div className="timeline__axis">
+      {ticks}
+      {nowVisible && (
+        <div className="tl-now tl-now--axis" style={{ left: `${nowLeftPct}%` }} title={nowTitle} />
+      )}
+    </div>
+  )
 }
 
 function formatTick(h: number): string {
   const dayHour = ((h % 24) + 24) % 24
   const period = dayHour >= 12 ? 'p' : 'a'
   const h12 = dayHour % 12 === 0 ? 12 : dayHour % 12
-  if (h < 0) return `${h12}${period} ←`
-  if (h >= 24) return `${h12}${period} →`
+  // Prev/next-day hours are conveyed by tick styling, not an arrow.
   return `${h12}${period}`
 }
 
-function Row({ driver, group }: { driver: Driver; group: { todays: ScheduleEntry[]; prev: ScheduleEntry | null } }) {
+function Row({
+  driver, group, nowLeftPct, nowTitle,
+}: {
+  driver: Driver
+  group: { todays: ScheduleEntry[]; prev: ScheduleEntry | null }
+  nowLeftPct: number | null
+  nowTitle: string
+}) {
   return (
     <div className="tl-row">
       <div className="tl-row__driver">
-        <span className="tl-row__name">{driver.name}</span>
+        <span className="tl-row__name">{formatName(driver.name)}</span>
         <span className="muted tl-row__meta">
           #{driver.irh_driver_number || driver.id} · {driver.function || '—'}
           {driver.irh_yard_number ? ` · yard ${driver.irh_yard_number}` : ' · yard —'}
@@ -474,6 +567,9 @@ function Row({ driver, group }: { driver: Driver; group: { todays: ScheduleEntry
       </div>
       <div className="tl-row__track">
         <MidnightLines />
+        {nowLeftPct !== null && (
+          <div className="tl-now" style={{ left: `${nowLeftPct}%` }} title={nowTitle} />
+        )}
         {group.prev && <PrevDayBar driver={driver} entry={group.prev} />}
         {group.todays.map(e => <TodayBar key={e.id} driver={driver} entry={e} />)}
       </div>

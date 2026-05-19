@@ -19,6 +19,18 @@ interface SettingsContextValue {
   settings: SettingsState
   loaded: boolean
   setOptimizer: (next: OptimizerConfig) => Promise<void>
+  // Scheduler-scoped list of driver ids the user has hidden. Persisted in
+  // app_settings under the "ui" key (not on the shared drivers table).
+  hiddenDriverIds: number[]
+  hideDriver: (id: number) => Promise<void>
+  unhideDriver: (id: number) => Promise<void>
+}
+
+function parseHiddenIds(raw: unknown): number[] {
+  const r = (raw && typeof raw === 'object') ? raw as { hiddenDriverIds?: unknown } : {}
+  const arr = Array.isArray(r.hiddenDriverIds) ? r.hiddenDriverIds : []
+  const ids = arr.map(Number).filter(n => Number.isInteger(n))
+  return [...new Set(ids)].sort((a, b) => a - b)
 }
 
 const SettingsContext = createContext<SettingsContextValue | null>(null)
@@ -60,6 +72,7 @@ export function SettingsProvider({
   children: React.ReactNode
 }) {
   const [optimizer, setOptimizerState] = useState<OptimizerConfig>(defaultsForGroup('optimizer'))
+  const [hiddenDriverIds, setHiddenIdsState] = useState<number[]>([])
   const [loaded, setLoaded] = useState(false)
 
   // Initial fetch + realtime subscription for cross-tab sync.
@@ -71,6 +84,8 @@ export function SettingsProvider({
         if (!alive) return
         const opt = rows.find(r => r.key === 'optimizer')
         if (opt) setOptimizerState(mergeOptimizer(opt.value))
+        const ui = rows.find(r => r.key === 'ui')
+        if (ui) setHiddenIdsState(parseHiddenIds(ui.value))
       })
       .catch(err => console.warn('Settings load failed; using defaults.', err))
       .finally(() => { if (alive) setLoaded(true) })
@@ -84,6 +99,8 @@ export function SettingsProvider({
           if (!row?.key) return
           if (row.key === 'optimizer') {
             setOptimizerState(mergeOptimizer(row.value))
+          } else if (row.key === 'ui') {
+            setHiddenIdsState(parseHiddenIds(row.value))
           }
         })
       .subscribe()
@@ -99,11 +116,30 @@ export function SettingsProvider({
     setOptimizerState(next)
   }, [supabase])
 
+  const persistHidden = useCallback(async (ids: number[]) => {
+    const unique = [...new Set(ids)].filter(n => Number.isInteger(n)).sort((a, b) => a - b)
+    await upsertAppSetting(supabase, 'ui', { hiddenDriverIds: unique })
+    setHiddenIdsState(unique)
+  }, [supabase])
+
+  const hideDriver = useCallback(async (id: number) => {
+    if (hiddenDriverIds.includes(id)) return
+    await persistHidden([...hiddenDriverIds, id])
+  }, [persistHidden, hiddenDriverIds])
+
+  const unhideDriver = useCallback(async (id: number) => {
+    if (!hiddenDriverIds.includes(id)) return
+    await persistHidden(hiddenDriverIds.filter(x => x !== id))
+  }, [persistHidden, hiddenDriverIds])
+
   const value = useMemo<SettingsContextValue>(() => ({
     settings: { optimizer },
     loaded,
     setOptimizer,
-  }), [optimizer, loaded, setOptimizer])
+    hiddenDriverIds,
+    hideDriver,
+    unhideDriver,
+  }), [optimizer, loaded, setOptimizer, hiddenDriverIds, hideDriver, unhideDriver])
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>
 }

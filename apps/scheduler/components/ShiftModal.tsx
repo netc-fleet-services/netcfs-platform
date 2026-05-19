@@ -5,7 +5,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { APP_CONFIG } from '../lib/config'
 import type { Driver, ScheduleEntry } from '../lib/types'
 import { deleteEntry, upsertEntry } from '../lib/db'
-import { formatTime12, fromIsoDate } from '../lib/utils'
+import { formatName, formatTime12, fromIsoDate } from '../lib/utils'
 
 interface Props {
   supabase: SupabaseClient
@@ -140,7 +140,7 @@ export function ShiftModal({ supabase, driver, isoDate, entry, userId, onSaved, 
 
         <div className="modal__body">
           <div className="modal__context">
-            <strong>{driver.name}</strong>{' '}
+            <strong>{formatName(driver.name)}</strong>{' '}
             <span className="muted">
               #{driver.irh_driver_number || driver.id} · {driver.function || '—'}
             </span>

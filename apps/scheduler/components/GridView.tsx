@@ -5,6 +5,7 @@ import type { Driver, ScheduleEntry } from '../lib/types'
 import {
   categoryClass,
   formatHours,
+  formatName,
   formatTime12,
   formatYards,
   shiftDurationHours,
@@ -23,9 +24,10 @@ interface Props {
   onSortChange: (next: SortKey) => void
   onCellClick: (driver: Driver, isoDate: string, entry: ScheduleEntry | null) => void
   onHeaderClick: (isoDate: string) => void
+  onDriverClick?: (driver: Driver) => void
 }
 
-export function GridView({ drivers, entries, week, sortKey, onSortChange, onCellClick, onHeaderClick }: Props) {
+export function GridView({ drivers, entries, week, sortKey, onSortChange, onCellClick, onHeaderClick, onDriverClick }: Props) {
   const opt = useOptimizerConfig()
 
   const byKey = useMemo(() => {
@@ -98,6 +100,7 @@ export function GridView({ drivers, entries, week, sortKey, onSortChange, onCell
               byKey={byKey}
               excluded={isInExcludedYard(driver, opt)}
               onCellClick={onCellClick}
+              onDriverClick={onDriverClick}
             />
           ))}
         </div>
@@ -107,26 +110,38 @@ export function GridView({ drivers, entries, week, sortKey, onSortChange, onCell
 }
 
 function DriverRow({
-  driver, week, byKey, excluded, onCellClick,
+  driver, week, byKey, excluded, onCellClick, onDriverClick,
 }: {
   driver: Driver
   week: Date[]
   byKey: Map<string, ScheduleEntry[]>
   excluded: boolean
   onCellClick: (driver: Driver, isoDate: string, entry: ScheduleEntry | null) => void
+  onDriverClick?: (driver: Driver) => void
 }) {
   const isInactive = driver.active === false
   const weeklyHours = computeDriverWeekHours(driver.id, week, byKey)
+  const clickable = !!onDriverClick
 
   return (
     <div className="row">
       <div
-        className={`cell cell--driver ${isInactive ? 'is-inactive' : ''} ${excluded ? 'is-excluded-yard' : ''}`}
+        className={`cell cell--driver ${clickable ? 'cell--driver-clickable' : ''} ${isInactive ? 'is-inactive' : ''} ${excluded ? 'is-excluded-yard' : ''}`}
         data-driver-id={driver.id}
-        title={excluded ? 'Yard is excluded from towing-supply count (Settings → Excluded yards)' : undefined}
+        role={clickable ? 'button' : undefined}
+        tabIndex={clickable ? 0 : undefined}
+        onClick={clickable ? () => onDriverClick!(driver) : undefined}
+        onKeyDown={clickable ? e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onDriverClick!(driver) }
+        } : undefined}
+        title={
+          excluded
+            ? 'Yard is excluded from towing-supply count (Settings → Excluded yards)'
+            : clickable ? 'View stats · edit · hide' : undefined
+        }
       >
         <div className="driver-name">
-          {driver.name || '(unnamed)'}
+          {formatName(driver.name) || '(unnamed)'}
           {weeklyHours > 0 && (
             <span className="driver-hours" title="Scheduled this week">{formatHours(weeklyHours)}</span>
           )}

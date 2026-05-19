@@ -9,6 +9,10 @@ interface ListDriversOptions {
   yard?: string | string[] | null  // matches irh_yard_number; pass array to OR-match
   functions?: string[] | null
   applyExcludedNames?: boolean
+  // Driver ids the user has hidden in the Settings tab. Scheduler-scoped
+  // (stored in app_settings, not on the shared drivers table). Filtered out
+  // of every list except the Settings → Hidden drivers unhide screen.
+  hiddenIds?: number[] | null
 }
 
 const DRIVER_SELECT =
@@ -24,6 +28,7 @@ export async function listDrivers(
     yard = null,
     functions = null,
     applyExcludedNames = true,
+    hiddenIds = null,
   } = opts
 
   let q = supabase
@@ -43,16 +48,62 @@ export async function listDrivers(
 
   const { data, error } = await q
   if (error) throw error
-  const drivers = (data ?? []) as Driver[]
+  let drivers = (data ?? []) as Driver[]
 
-  if (!applyExcludedNames) return drivers
-  const excluded = new Set(
-    APP_CONFIG.excludedDriverNames
-      .map(n => n.trim().toLowerCase())
-      .filter(Boolean),
-  )
-  if (!excluded.size) return drivers
-  return drivers.filter(d => !excluded.has(String(d.name || '').trim().toLowerCase()))
+  if (applyExcludedNames) {
+    const excluded = new Set(
+      APP_CONFIG.excludedDriverNames
+        .map(n => n.trim().toLowerCase())
+        .filter(Boolean),
+    )
+    if (excluded.size) {
+      drivers = drivers.filter(
+        d => !excluded.has(String(d.name || '').trim().toLowerCase()),
+      )
+    }
+  }
+
+  if (hiddenIds && hiddenIds.length) {
+    const hide = new Set(hiddenIds)
+    drivers = drivers.filter(d => !hide.has(d.id))
+  }
+
+  return drivers
+}
+
+// Fetch specific drivers by id, ignoring active/hidden/excluded filters.
+// Backs the Settings → Hidden drivers list (the one place hidden drivers
+// must still be visible).
+export async function listDriversByIds(
+  supabase: SupabaseClient,
+  ids: number[],
+): Promise<Driver[]> {
+  if (!ids.length) return []
+  const { data, error } = await supabase
+    .from('drivers')
+    .select(DRIVER_SELECT)
+    .in('id', ids)
+    .order('name', { ascending: true })
+  if (error) throw error
+  return (data ?? []) as Driver[]
+}
+
+// Update an existing row in the shared `drivers` table. Identity fields
+// (name, irh numbers, company, yard, truck) live on a roster-synced table —
+// a future IRH sync may overwrite them. Returns the refreshed row.
+export async function updateDriver(
+  supabase: SupabaseClient,
+  id: number,
+  patch: Partial<Omit<Driver, 'id'>>,
+): Promise<Driver> {
+  const { data, error } = await supabase
+    .from('drivers')
+    .update(patch)
+    .eq('id', id)
+    .select(DRIVER_SELECT)
+    .single()
+  if (error) throw error
+  return data as Driver
 }
 
 // Backed by the scheduler_distinct_companies view (migration 7).

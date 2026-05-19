@@ -18,7 +18,7 @@ import {
   addDays, dateRange, formatHours, fromIsoDate, shiftDurationHours, shortDateLabel,
   sortDrivers, startOfWeek, toIsoDate, weekDates, type SortKey,
 } from '../lib/utils'
-import { SettingsProvider } from '../lib/settings'
+import { SettingsProvider, useSettings } from '../lib/settings'
 import { GridView } from './GridView'
 import { GanttView } from './GanttView'
 import { ShiftModal } from './ShiftModal'
@@ -28,6 +28,8 @@ import { CoveragePanel } from './CoveragePanel'
 import { HistoricalView } from './HistoricalView'
 import { AdminSettingsView } from './AdminSettingsView'
 import { ExportModal } from './ExportModal'
+import { DriverDetailModal } from './DriverDetailModal'
+import { DriverEditModal } from './DriverEditModal'
 
 type ViewMode = 'grid' | 'gantt'
 type TabId = 'drivers' | 'dispatchers' | 'stats' | 'historical' | 'settings'
@@ -62,6 +64,7 @@ export function Scheduler() {
 
 function SchedulerInner() {
   const supabase = useMemo(() => getSupabaseBrowserClient(), [])
+  const { hiddenDriverIds } = useSettings()
 
   // ---- View / filter state ----------------------------------------------
   const [activeTab, setActiveTab] = useState<TabId>(APP_CONFIG.defaultTab)
@@ -87,6 +90,8 @@ function SchedulerInner() {
   const [shiftModalTarget, setShiftModalTarget] = useState<{ driver: Driver; isoDate: string; entry: ScheduleEntry | null } | null>(null)
   const [dayViewIso, setDayViewIso] = useState<string | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
+  const [detailDriver, setDetailDriver] = useState<Driver | null>(null)
+  const [editDriver, setEditDriver] = useState<Driver | null>(null)
 
   // ---- Bulk actions / undo ----------------------------------------------
   const [lastBulkAction, setLastBulkAction] = useState<BulkAction | null>(null)
@@ -181,6 +186,7 @@ function SchedulerInner() {
           company: company || null,
           yard: yardFilterFor(yard),
           functions: activeFunctions,
+          hiddenIds: hiddenDriverIds,
         }),
         listScheduleBetween(supabase, isoRangeStart, isoRangeEnd),
       ])
@@ -190,7 +196,7 @@ function SchedulerInner() {
       setError(err instanceof Error ? err.message : String(err))
       console.error(err)
     }
-  }, [supabase, activeTab, showInactive, company, yard, yardFilterFor, activeFunctions, isoRangeStart, isoRangeEnd])
+  }, [supabase, activeTab, showInactive, company, yard, yardFilterFor, activeFunctions, isoRangeStart, isoRangeEnd, hiddenDriverIds])
 
   useEffect(() => { void reload() }, [reload])
 
@@ -575,6 +581,7 @@ function SchedulerInner() {
               onSortChange={setGridSort}
               onCellClick={handleCellClick}
               onHeaderClick={handleHeaderClick}
+              onDriverClick={setDetailDriver}
             />
           ) : (
             <GanttView
@@ -588,6 +595,7 @@ function SchedulerInner() {
               onChanged={reload}
               onBarClick={handleGanttBarClick}
               onAxisClick={handleHeaderClick}
+              onDriverClick={setDetailDriver}
             />
           )}
         </>
@@ -624,6 +632,25 @@ function SchedulerInner() {
             setDayViewIso(null)
             setShiftModalTarget({ driver, isoDate: entry.schedule_date, entry })
           }}
+        />
+      )}
+
+      {detailDriver && (
+        <DriverDetailModal
+          supabase={supabase}
+          driver={detailDriver}
+          onClose={() => setDetailDriver(null)}
+          onEdit={driver => { setDetailDriver(null); setEditDriver(driver) }}
+          onChanged={reload}
+        />
+      )}
+
+      {editDriver && (
+        <DriverEditModal
+          supabase={supabase}
+          driver={editDriver}
+          onClose={() => setEditDriver(null)}
+          onSaved={() => { setEditDriver(null); void reload() }}
         />
       )}
 

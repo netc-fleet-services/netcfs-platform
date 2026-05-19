@@ -119,6 +119,52 @@ export function categoryClass(fn: string | null): string {
   }
 }
 
+// Suffixes kept with the given name (not treated as the surname) when
+// flipping to "Last, First" display order.
+const NAME_SUFFIXES = new Set(['jr', 'jr.', 'sr', 'sr.', 'ii', 'iii', 'iv', 'v'])
+
+// Display a stored "First [Middle] Last [Suffix]" name as
+// "Last, First [Middle] [Suffix]". Names that already contain a comma,
+// single-token names, and blanks are returned unchanged. Used for every
+// on-screen / exported driver-name render; the raw value is still what's
+// stored and edited.
+export function formatName(name: string | null | undefined): string {
+  const raw = String(name ?? '').trim().replace(/\s+/g, ' ')
+  if (!raw || raw.includes(',')) return raw
+  const parts = raw.split(' ')
+  if (parts.length < 2) return raw
+  let suffix = ''
+  if (parts.length > 2 && NAME_SUFFIXES.has(parts[parts.length - 1].toLowerCase())) {
+    suffix = ` ${parts.pop()}`
+  }
+  const last = parts.pop()!
+  return `${last}, ${parts.join(' ')}${suffix}`
+}
+
+// Split a stored single `name` into first / last for two-box form editing.
+// Mirrors formatName: handles "Last, First", suffixes, single-token names.
+export function splitName(name: string | null | undefined): { first: string; last: string } {
+  const raw = String(name ?? '').trim().replace(/\s+/g, ' ')
+  if (!raw) return { first: '', last: '' }
+  if (raw.includes(',')) {
+    const [last, ...rest] = raw.split(',')
+    return { first: rest.join(',').trim(), last: last.trim() }
+  }
+  const parts = raw.split(' ')
+  if (parts.length < 2) return { first: raw, last: '' }
+  let suffix = ''
+  if (parts.length > 2 && NAME_SUFFIXES.has(parts[parts.length - 1].toLowerCase())) {
+    suffix = ` ${parts.pop()}`
+  }
+  const last = `${parts.pop()}${suffix}`
+  return { first: parts.join(' '), last }
+}
+
+// Recombine first + last back into the single stored "First Last" form.
+export function combineName(first: string, last: string): string {
+  return [first.trim(), last.trim()].filter(Boolean).join(' ')
+}
+
 // "1,6" -> "1 / 6"
 export function formatYards(value: string | null | undefined): string {
   if (!value) return ''
@@ -172,8 +218,10 @@ export function sortDrivers<T extends DriverLike>(
   sortKey: SortKey,
   ctx: { entries?: SchedLike[]; week?: Date[] } = {},
 ): T[] {
+  // Sort by display order (last name first) so the "Name" sort and every
+  // group tiebreaker match what's on screen.
   const byName = (a: T, b: T) =>
-    String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' })
+    formatName(a.name).localeCompare(formatName(b.name), undefined, { sensitivity: 'base' })
 
   const numericIfPossible = (v: string | null) => {
     const n = Number(v)

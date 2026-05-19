@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { OptimizerConfig } from '../lib/config'
 import { useSettings } from '../lib/settings'
-import { insertDriver, listDistinctYardNames } from '../lib/db'
+import { insertDriver, listDistinctYardNames, listDriversByIds } from '../lib/db'
+import type { Driver } from '../lib/types'
+import { combineName, formatName } from '../lib/utils'
 
 // Sensitivity presets — the UI shows one dropdown; on save we expand the
 // chosen preset back into the two threshold fields the optimizer reads.
@@ -51,8 +53,97 @@ export function AdminSettingsView({ supabase, onDriverAdded }: Props) {
   return (
     <div className="settings-view">
       <OptimizerForm />
+      <HiddenDriversForm supabase={supabase} onChanged={onDriverAdded} />
       <AddDriverForm supabase={supabase} onAdded={onDriverAdded} />
     </div>
+  )
+}
+
+function HiddenDriversForm({ supabase, onChanged }: { supabase: SupabaseClient; onChanged: () => void }) {
+  const { hiddenDriverIds, unhideDriver } = useSettings()
+  const [rows, setRows] = useState<Driver[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busyId, setBusyId] = useState<number | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    listDriversByIds(supabase, hiddenDriverIds)
+      .then(ds => { if (alive) setRows(ds) })
+      .catch(err => console.error("Couldn't load hidden drivers:", err))
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [supabase, hiddenDriverIds])
+
+  // Ids in settings but not (yet) resolved to a roster row — still let the
+  // user clear them so a stale id can't trap someone off the schedule.
+  const orphanIds = hiddenDriverIds.filter(id => !rows.some(r => r.id === id))
+
+  async function onUnhide(id: number) {
+    setBusyId(id)
+    try {
+      await unhideDriver(id)
+      onChanged()
+    } catch (err) {
+      console.error('Unhide failed:', err)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  return (
+    <section className="settings-form">
+      <h2>Hidden drivers / dispatchers</h2>
+      <p className="muted">
+        People you’ve hidden from the scheduler. They’re removed from every
+        schedule, stat and export view until you unhide them here. This is
+        scheduler-only and doesn’t affect other NETC apps.
+      </p>
+
+      {loading ? (
+        <p className="muted">Loading…</p>
+      ) : (hiddenDriverIds.length === 0) ? (
+        <p className="muted">No hidden drivers. Hide someone from their detail popup.</p>
+      ) : (
+        <ul className="hidden-drivers__list">
+          {rows.map(d => (
+            <li key={d.id} className="hidden-drivers__item">
+              <div className="hidden-drivers__main">
+                <span className="hidden-drivers__name">{formatName(d.name) || '(unnamed)'}</span>
+                <span className="muted">
+                  #{d.irh_driver_number || d.id} · {d.function || '—'}
+                  {d.active === false ? ' · inactive' : ''}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="sched-btn sched-btn--ghost"
+                onClick={() => onUnhide(d.id)}
+                disabled={busyId === d.id}
+              >
+                {busyId === d.id ? 'Unhiding…' : 'Unhide'}
+              </button>
+            </li>
+          ))}
+          {orphanIds.map(id => (
+            <li key={id} className="hidden-drivers__item">
+              <div className="hidden-drivers__main">
+                <span className="hidden-drivers__name">Driver #{id}</span>
+                <span className="muted">no longer in roster</span>
+              </div>
+              <button
+                type="button"
+                className="sched-btn sched-btn--ghost"
+                onClick={() => onUnhide(id)}
+                disabled={busyId === id}
+              >
+                {busyId === id ? 'Removing…' : 'Remove'}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }
 
@@ -208,7 +299,8 @@ function OptimizerForm() {
 }
 
 function AddDriverForm({ supabase, onAdded }: { supabase: SupabaseClient; onAdded: () => void }) {
-  const [name, setName] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
   const [fn, setFn] = useState('')
   const [company, setCompany] = useState('Interstate')
   const [irhNum, setIrhNum] = useState('')
@@ -226,13 +318,13 @@ function AddDriverForm({ supabase, onAdded }: { supabase: SupabaseClient; onAdde
   }, [supabase])
 
   function reset() {
-    setName(''); setFn(''); setCompany('Interstate'); setIrhNum('')
+    setFirstName(''); setLastName(''); setFn(''); setCompany('Interstate'); setIrhNum('')
     setIrhYard(''); setYard(''); setTruck('')
     setStatus(null)
   }
 
   const payload = useMemo(() => ({
-    name: name.trim(),
+    name: combineName(firstName, lastName),
     function: fn,
     Company: company.trim(),
     irh_driver_number: irhNum.trim(),
@@ -240,7 +332,7 @@ function AddDriverForm({ supabase, onAdded }: { supabase: SupabaseClient; onAdde
     yard: yard.trim(),
     truck: truck.trim(),
     active: true,
-  }), [name, fn, company, irhNum, irhYard, yard, truck])
+  }), [firstName, lastName, fn, company, irhNum, irhYard, yard, truck])
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -253,7 +345,7 @@ function AddDriverForm({ supabase, onAdded }: { supabase: SupabaseClient; onAdde
     setStatus({ text: 'Adding…' })
     try {
       const row = await insertDriver(supabase, payload)
-      setStatus({ text: `Added ${row.name} (#${row.irh_driver_number}).`, kind: 'ok' })
+      setStatus({ text: `Added ${formatName(row.name)} (#${row.irh_driver_number}).`, kind: 'ok' })
       reset()
       onAdded()
     } catch (err) {
@@ -276,9 +368,15 @@ function AddDriverForm({ supabase, onAdded }: { supabase: SupabaseClient; onAdde
         <legend>Identity</legend>
         <div className="settings-row settings-row--two">
           <label className="field">
-            <span>Name</span>
-            <input type="text" required autoComplete="off" value={name} onChange={e => setName(e.target.value)} />
+            <span>First name</span>
+            <input type="text" required autoComplete="off" value={firstName} onChange={e => setFirstName(e.target.value)} />
           </label>
+          <label className="field">
+            <span>Last name</span>
+            <input type="text" required autoComplete="off" value={lastName} onChange={e => setLastName(e.target.value)} />
+          </label>
+        </div>
+        <div className="settings-row settings-row--two">
           <label className="field">
             <span>Function</span>
             <select required value={fn} onChange={e => setFn(e.target.value)}>
@@ -291,12 +389,12 @@ function AddDriverForm({ supabase, onAdded }: { supabase: SupabaseClient; onAdde
               <option value="Office Manager">Office Manager</option>
             </select>
           </label>
-        </div>
-        <div className="settings-row settings-row--two">
           <label className="field">
             <span>Company</span>
             <input type="text" required value={company} onChange={e => setCompany(e.target.value)} />
           </label>
+        </div>
+        <div className="settings-row">
           <label className="field">
             <span>IRH driver number</span>
             <input type="text" required autoComplete="off" value={irhNum} onChange={e => setIrhNum(e.target.value)} />
