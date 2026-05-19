@@ -14,7 +14,8 @@ import {
 import { APP_CONFIG } from '../lib/config'
 import type { Driver, ScheduleEntry } from '../lib/types'
 import { listDrivers, listScheduleBetween } from '../lib/db'
-import { addDays, formatHours, formatTime12, fromIsoDate, shiftDurationHours, startOfWeek, toIsoDate } from '../lib/utils'
+import { addDays, formatHours, formatName, formatTime12, fromIsoDate, shiftDurationHours, startOfWeek, toIsoDate } from '../lib/utils'
+import { useSettings } from '../lib/settings'
 import { DriverDetailModal } from './DriverDetailModal'
 
 Chart.register(
@@ -80,6 +81,7 @@ function escapeHtml(s: string): string {
 }
 
 export function StatsView({ supabase }: Props) {
+  const { hiddenDriverIds } = useSettings()
   const [rangeDays, setRangeDays] = useState(30)
   const [scope, setScope] = useState<Scope>('all')
   const [drivers, setDrivers] = useState<Driver[]>([])
@@ -117,6 +119,7 @@ export function StatsView({ supabase }: Props) {
         includeInactive: false,
         company: APP_CONFIG.defaultCompany ?? null,
         functions: scopeFunctions,
+        hiddenIds: hiddenDriverIds,
       })
       const inScope = new Set(ds.map(d => d.id))
 
@@ -151,7 +154,7 @@ export function StatsView({ supabase }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [supabase, scope, rangeDays, cardOverrides])
+  }, [supabase, scope, rangeDays, cardOverrides, hiddenDriverIds])
 
   useEffect(() => { void refresh() }, [refresh])
 
@@ -512,6 +515,7 @@ export function StatsView({ supabase }: Props) {
         includeInactive: false,
         company: APP_CONFIG.defaultCompany ?? null,
         functions: scopeFunctions,
+        hiddenIds: hiddenDriverIds,
       })
       const inScope = new Set(ds.map(d => d.id))
       const data = (await listScheduleBetween(supabase, range.startIso, range.endIso))
@@ -666,6 +670,7 @@ export function StatsView({ supabase }: Props) {
           supabase={supabase}
           driver={driverDetail}
           onClose={() => setDriverDetail(null)}
+          onChanged={() => { void refresh() }}
         />
       )}
     </section>
@@ -807,7 +812,7 @@ function aggHoursPerDriver(entries: ScheduleEntry[], drivers: Driver[]): Array<{
   }
   return [...map.entries()].map(([id, hours]) => {
     const d = drivers.find(x => x.id === id)
-    return { id, name: d?.name || `#${id}`, hours: +hours.toFixed(1), driver: d }
+    return { id, name: formatName(d?.name) || `#${id}`, hours: +hours.toFixed(1), driver: d }
   })
 }
 

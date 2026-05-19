@@ -9,6 +9,7 @@ import {
   addDays,
   dateRange,
   escapeHtml,
+  formatName,
   formatTime12,
   fromIsoDate,
   shortDateLabel,
@@ -16,6 +17,7 @@ import {
   timeToHours,
   toIsoDate,
 } from '../lib/utils'
+import { useSettings } from '../lib/settings'
 
 type Output = 'print' | 'csv'
 type Format = 'table' | 'gantt'
@@ -44,6 +46,7 @@ export function ExportModal({
   driverSort,
   onClose,
 }: Props) {
+  const { hiddenDriverIds } = useSettings()
   const [output, setOutput] = useState<Output>('print')
   const [tab, setTab] = useState<Tab>(defaultTab)
   const [format, setFormat] = useState<Format>(defaultFormat)
@@ -66,7 +69,7 @@ export function ExportModal({
     const n = Math.max(1, Math.min(31, Number(days) || 7))
     setBusy(true)
     try {
-      const data = await loadScheduleData(supabase, { tab, isoStart: start, days: n, yard, yardFilterFor, driverSort })
+      const data = await loadScheduleData(supabase, { tab, isoStart: start, days: n, yard, yardFilterFor, driverSort, hiddenIds: hiddenDriverIds })
       if (output === 'csv') {
         const csv = buildCsv(data)
         downloadCsv(`${tab}-schedule_${start}_${n}d${yard ? `_yard-${yard}` : ''}.csv`, csv)
@@ -173,6 +176,7 @@ interface ScheduleDataInput {
   yard: string
   yardFilterFor: (display: string) => string[] | null
   driverSort?: (drivers: Driver[], opts: { entries: ScheduleEntry[]; week: Date[] }) => Driver[]
+  hiddenIds?: number[]
 }
 
 interface ScheduleData {
@@ -191,7 +195,7 @@ interface ScheduleData {
 
 async function loadScheduleData(
   supabase: SupabaseClient,
-  { tab, isoStart, days, yard, yardFilterFor, driverSort }: ScheduleDataInput,
+  { tab, isoStart, days, yard, yardFilterFor, driverSort, hiddenIds }: ScheduleDataInput,
 ): Promise<ScheduleData> {
   const tabDef = APP_CONFIG.tabs.find(t => t.id === tab)
   const functions = tabDef ? tabDef.functions : null
@@ -208,6 +212,7 @@ async function loadScheduleData(
       company: APP_CONFIG.defaultCompany ?? null,
       yard: yardFilter,
       functions,
+      hiddenIds: hiddenIds ?? null,
     }),
     listScheduleBetween(supabase, isoStart, isoEnd),
   ])
@@ -224,7 +229,7 @@ async function loadScheduleData(
     : drivers.slice().sort((a, b) => {
         const cmp = String(a.function || '').localeCompare(String(b.function || ''))
         if (cmp !== 0) return cmp
-        return String(a.name || '').localeCompare(String(b.name || ''))
+        return formatName(a.name).localeCompare(formatName(b.name))
       })
 
   const tabLabel = tab === 'dispatchers' ? 'Dispatcher' : 'Driver'
@@ -469,7 +474,7 @@ function buildGanttDoc({ title, subtitle, sorted, dates, byKey, days }: Schedule
     return `
       <div class="gx-row">
         <div class="gx-driver">
-          <div class="name">${escapeHtml(driver.name || '(unnamed)')}</div>
+          <div class="name">${escapeHtml(formatName(driver.name) || '(unnamed)')}</div>
           <div class="meta">
             <span>${escapeHtml(driver.function || '—')}</span>
             <span>#${escapeHtml(driver.irh_driver_number || driver.id)}</span>
@@ -560,7 +565,7 @@ function buildCsv({ sorted, dates, byKey }: ScheduleData): string {
       if (!list.length) continue
       for (const e of list) {
         rows.push([
-          d.name || '',
+          formatName(d.name),
           d.irh_driver_number || d.id,
           d.function || '',
           d.irh_yard_number || '',

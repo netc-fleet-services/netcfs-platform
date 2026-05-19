@@ -7,6 +7,7 @@ import {
   categoryClass,
   computeOffStartOverrides,
   formatHours,
+  formatName,
   formatTime12,
   formatTime12Compact,
   formatYards,
@@ -34,6 +35,7 @@ interface Props {
   onChanged: () => void
   onBarClick: (driver: Driver, entry: ScheduleEntry) => void
   onAxisClick: (isoDate: string) => void
+  onDriverClick?: (driver: Driver) => void
 }
 
 interface DragState {
@@ -51,7 +53,7 @@ interface DragState {
 }
 
 export function GanttView({
-  supabase, drivers, entries, week, viewDays, sortKey, onSortChange, onChanged, onBarClick, onAxisClick,
+  supabase, drivers, entries, week, viewDays, sortKey, onSortChange, onChanged, onBarClick, onAxisClick, onDriverClick,
 }: Props) {
   const opt = useOptimizerConfig()
   const totalHours = viewDays * 24 + GANTT_OVERFLOW_HOURS
@@ -304,6 +306,7 @@ export function GanttView({
               nowLeftPct={nowLeftPct}
               nowVisible={nowVisible}
               nowTitle={nowTitle}
+              onDriverClick={onDriverClick}
             />
           )
         })}
@@ -313,7 +316,7 @@ export function GanttView({
 }
 
 function GanttRow({
-  driver, weekStartMs, entries, hours, viewDays, totalHours, excluded, offStartByEntryId, nowLeftPct, nowVisible, nowTitle,
+  driver, weekStartMs, entries, hours, viewDays, totalHours, excluded, offStartByEntryId, nowLeftPct, nowVisible, nowTitle, onDriverClick,
 }: {
   driver: Driver
   weekStartMs: number
@@ -326,17 +329,29 @@ function GanttRow({
   nowLeftPct: number
   nowVisible: boolean
   nowTitle: string
+  onDriverClick?: (driver: Driver) => void
 }) {
   const isInactive = driver.active === false
+  const clickable = !!onDriverClick
   return (
     <div className="gantt-row">
       <div
-        className={`gantt-row__driver ${isInactive ? 'is-inactive' : ''} ${excluded ? 'is-excluded-yard' : ''}`}
+        className={`gantt-row__driver ${clickable ? 'gantt-row__driver--clickable' : ''} ${isInactive ? 'is-inactive' : ''} ${excluded ? 'is-excluded-yard' : ''}`}
         data-driver-id={driver.id}
-        title={excluded ? 'Yard is excluded from towing-supply count (Settings → Excluded yards)' : undefined}
+        role={clickable ? 'button' : undefined}
+        tabIndex={clickable ? 0 : undefined}
+        onClick={clickable ? e => { e.stopPropagation(); onDriverClick!(driver) } : undefined}
+        onKeyDown={clickable ? e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onDriverClick!(driver) }
+        } : undefined}
+        title={
+          excluded
+            ? 'Yard is excluded from towing-supply count (Settings → Excluded yards)'
+            : clickable ? 'View stats · edit · hide' : undefined
+        }
       >
         <div className="driver-name">
-          {driver.name || '(unnamed)'}
+          {formatName(driver.name) || '(unnamed)'}
           {hours > 0 && <span className="driver-hours" title="Scheduled this week">{formatHours(hours)}</span>}
         </div>
         <div className="driver-meta">
