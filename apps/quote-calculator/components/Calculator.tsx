@@ -38,6 +38,7 @@ export function Calculator() {
   const [rates, setRates] = useState<ServiceRate[]>([])
   const [ratesError, setRatesError] = useState<string | null>(null)
   const [fuelSurcharge, setFuelSurcharge] = useState<FuelSurchargeBasis | null>(null)
+  const [fuelSurchargeError, setFuelSurchargeError] = useState<string | null>(null)
   const [fuelOverride, setFuelOverride] = useState<string | null>(null)
   const [pricingConfig, setPricingConfig] = useState<PricingConfig | null>(null)
   const [pricingConfigError, setPricingConfigError] = useState<string | null>(null)
@@ -57,8 +58,15 @@ export function Calculator() {
   useEffect(() => {
     ;(async () => {
       const res = await fetch('/api/fuel-surcharge')
-      if (!res.ok) return
-      const body = await res.json()
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setFuelSurchargeError(`Fuel surcharge unavailable: ${body.error ?? res.status}`)
+        return
+      }
+      if (body.reason) {
+        setFuelSurchargeError(`Fuel surcharge unavailable: ${body.reason}`)
+        return
+      }
       if (body.percent > 0 && body.basis) {
         setFuelSurcharge({ percent: body.percent, date: body.basis.date, location: body.basis.location, product: body.basis.product, fuelTotal: body.basis.total })
       }
@@ -113,6 +121,12 @@ export function Calculator() {
       {pricingConfigError && (
         <div className="mb-6 rounded-md bg-error-container p-4 text-error">
           Pricing config error — quotes cannot be calculated: {pricingConfigError}
+        </div>
+      )}
+
+      {fuelSurchargeError && (
+        <div className="mb-6 rounded-md bg-error-container p-4 text-error">
+          {fuelSurchargeError}
         </div>
       )}
 
