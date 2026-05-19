@@ -98,7 +98,49 @@ function fmtMin(min: number): string {
 
 // ── Layout computation ────────────────────────────────────────────────────────
 
+const LANE_INSET = 4   // px padding top/bottom inside a row
+const LANE_GAP   = 2   // px gap between lanes
+const MIN_LANE_H = 28  // minimum bar height in px
+
 interface Layout { job: Job; startMin: number; durationMin: number; transitMinsBefore: number }
+interface LaneLayout extends Layout { lane: number; numLanes: number }
+
+function assignLanes(
+  layout: Layout[],
+  drag: { jobId: string; previewMin: number } | null,
+): LaneLayout[] {
+  if (!layout.length) return []
+  const items = layout
+    .map((l, i) => {
+      const start = drag?.jobId === l.job.id ? drag.previewMin : l.startMin
+      return { i, start, end: start + l.durationMin }
+    })
+    .sort((a, b) => a.start - b.start)
+
+  const laneEnds: number[] = []
+  const lanes = new Array<number>(layout.length)
+  for (const { i, start, end } of items) {
+    let lane = laneEnds.findIndex(e => e <= start)
+    if (lane === -1) { lane = laneEnds.length; laneEnds.push(end) }
+    else laneEnds[lane] = end
+    lanes[i] = lane
+  }
+  const numLanes = Math.max(1, laneEnds.length)
+  return layout.map((l, i) => ({ ...l, lane: lanes[i], numLanes }))
+}
+
+function laneRowH(numLanes: number): number {
+  return Math.max(ROW_H, LANE_INSET * 2 + numLanes * MIN_LANE_H + (numLanes - 1) * LANE_GAP)
+}
+function barTop(lane: number, numLanes: number): number {
+  const rh = laneRowH(numLanes)
+  const lh = (rh - LANE_INSET * 2 - (numLanes - 1) * LANE_GAP) / numLanes
+  return Math.round(LANE_INSET + lane * (lh + LANE_GAP))
+}
+function barH(numLanes: number): number {
+  const rh = laneRowH(numLanes)
+  return Math.floor((rh - LANE_INSET * 2 - (numLanes - 1) * LANE_GAP) / numLanes)
+}
 
 function buildLayout(
   jobs: Job[],
@@ -600,6 +642,9 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
         {visibleDrivers.map(driver => {
           const driverJobs = assignedByDriver[driver.id] ?? []
           const layout     = buildLayout(driverJobs, order, startOverrides)
+          const laneLayout = assignLanes(layout, timeDrag)
+          const numLanes   = laneLayout[0]?.numLanes ?? 1
+          const rowH       = laneRowH(numLanes)
           const isTarget   = dragging && dragFrom !== driver.id
           const totalH     = driverTotalHours[driver.id] ?? 0
           const overCap    = totalH > 8
@@ -611,7 +656,7 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
               <div style={{
                 width: NAME_W, flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '0 8px', background: C.cd, borderRight: '1px solid ' + C.bd, height: ROW_H,
+                padding: '0 8px', background: C.cd, borderRight: '1px solid ' + C.bd, height: rowH,
               }}>
                 <div style={{ overflow: 'hidden' }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: C.tx, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -638,7 +683,7 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
                 onDragOver={handleDragOver}
                 onDrop={handleDropOnDriver(driver.id)}
                 style={{
-                  position: 'relative', flex: 1, height: ROW_H,
+                  position: 'relative', flex: 1, height: rowH,
                   background: isTarget ? 'rgba(59,130,246,0.05)' : 'transparent',
                   transition: 'background 0.1s',
                 }}
@@ -653,9 +698,9 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
                 ))}
 
                 {/* Transit indicators between consecutive bars */}
-                {layout.map(({ job: j, startMin, transitMinsBefore }, idx) => {
+                {laneLayout.map(({ job: j, startMin, transitMinsBefore }, idx) => {
                   if (idx === 0 || transitMinsBefore < 2) return null
-                  const prev = layout[idx - 1]
+                  const prev = laneLayout[idx - 1]
                   const prevEndMin = prev.startMin + prev.durationMin
                   const activeStart = timeDrag?.jobId === j.id ? timeDrag.previewMin : startMin
                   const gapMin = activeStart - prevEndMin
@@ -687,7 +732,7 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
                 })}
 
                 {/* Job bars */}
-                {layout.map(({ job: j, startMin, durationMin }, idx) => {
+                {laneLayout.map(({ job: j, startMin, durationMin, lane }, idx) => {
                   const activeStart = timeDrag?.jobId === j.id ? timeDrag.previewMin : startMin
                   const leftPct     = minToPct(activeStart)
                   const widthPct    = Math.max(0.4, durationMin / TOTAL_MIN * 100)
@@ -714,7 +759,7 @@ export function PlanningBoard({ jobs, drivers, onJobUpdate, onSyncTowBook, syncS
                       title={`${j.tbAccount || j.tbCallNum} · ${pu} → ${dr} · ${isFinite(dur) ? fH(dur) : '--'}`}
                       style={{
                         position: 'absolute',
-                        top: 6, height: ROW_H - 12,
+                        top: barTop(lane, numLanes), height: barH(numLanes),
                         left: `${leftPct}%`, width: `${widthPct}%`, minWidth: 8,
                         background: col + '28',
                         border: '1px solid ' + col,
