@@ -189,17 +189,46 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
 
   async function handleUpdateWaitingOn(truckId: string, waitingOn: string) {
     const { error } = await supabase.from('trucks').update({ waiting_on: waitingOn || null }).eq('id', truckId)
-    if (error) alert(error.message)
-    else fetchTrucks()
+    if (error) {
+      alert(error.message)
+    } else {
+      fetchTrucks()
+      if (waitingOn) {
+        fetch('/api/notify-notes', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            truckId,
+            changeType: 'waiting_on',
+            newValue:   waitingOn,
+            changedBy:  profile?.email || profile?.id || 'Unknown',
+          }),
+        }).catch(() => {/* swallow — notification is best-effort */})
+      }
+    }
   }
 
   async function handleAddNote(truck: Truck, noteType: string, body: string) {
+    const changedBy = profile?.email || profile?.id || 'Unknown'
     const { error } = await supabase.from('truck_notes').insert({
       truck_id: truck.id, note_type: noteType, body,
-      created_by: profile?.email || profile?.id || 'Unknown',
+      created_by: changedBy,
     })
-    if (error) alert(error.message)
-    else fetchTrucks()
+    if (error) {
+      alert(error.message)
+    } else {
+      fetchTrucks()
+      fetch('/api/notify-notes', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          truckId:    truck.id,
+          changeType: noteType,
+          newValue:   body,
+          changedBy,
+        }),
+      }).catch(() => {/* swallow — notification is best-effort */})
+    }
   }
 
   async function handleSyncJobStatus() {
