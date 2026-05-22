@@ -497,10 +497,10 @@
   display: block;
   text-transform: uppercase;
   color: var(--sched-text-dim);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
 }
-.gantt__day-dom { display: block; color: var(--sched-text); font-size: 12px; font-weight: 600; margin-top: 1px; }
+.gantt__day-dom { display: block; color: var(--sched-text); font-size: 14px; font-weight: 600; margin-top: 1px; }
 
 .gantt__body { flex: 1; overflow-y: auto; min-height: 300px; }
 .gantt-row {

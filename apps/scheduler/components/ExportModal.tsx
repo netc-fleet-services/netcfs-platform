@@ -9,11 +9,9 @@ import {
   addDays,
   dateRange,
   escapeHtml,
-  formatHours,
   formatName,
   formatTime12,
   fromIsoDate,
-  shiftDurationHours,
   shortDateLabel,
   startOfWeek,
   timeToHours,
@@ -257,7 +255,6 @@ function buildTableDoc({ title, subtitle, sorted, dates, byKey, days }: Schedule
           <div class="dow">${d.toLocaleDateString(undefined, { weekday: 'short' })}</div>
           <div class="dom">${d.getMonth() + 1}/${d.getDate()}</div>
         </th>`).join('')}
-      <th class="col-total">Total</th>
     </tr>`
 
   const bodyRows = sorted.map(driver => {
@@ -270,17 +267,12 @@ function buildTableDoc({ title, subtitle, sorted, dates, byKey, days }: Schedule
           <span>yard ${escapeHtml(driver.irh_yard_number || driver.yard || '—')}</span>
         </div>
       </td>`
-    let weekHours = 0
     const dayCells = dates.map(d => {
       const iso = toIsoDate(d)
       const list = byKey.get(`${driver.id}|${iso}`) || []
-      for (const e of list) {
-        if (e.entry_type === 'shift') weekHours += shiftDurationHours(e.start_time, e.end_time)
-      }
       return `<td>${renderTableCell(list)}</td>`
     }).join('')
-    const totalCell = `<td class="col-total">${formatHours(weekHours)}</td>`
-    return `<tr>${driverCell}${dayCells}${totalCell}</tr>`
+    return `<tr>${driverCell}${dayCells}</tr>`
   }).join('')
 
   return tablePrintDocTemplate({ title, subtitle, headerRow, bodyRows, colCount: days })
@@ -316,19 +308,20 @@ function tablePrintDocTemplate({
 <meta charset="utf-8">
 <title>${escapeHtml(title)}</title>
 <style>
-  @page { size: ${colCount > 7 ? '11in 17in' : 'letter'} landscape; margin: 0.4in; }
+  /* margin: 0 leaves the browser no room to print its own header/footer
+     (date, "about:blank" URL, page number); body padding restores the margin. */
+  @page { size: ${colCount > 7 ? '11in 17in' : 'letter'} landscape; margin: 0; }
   * { box-sizing: border-box; }
-  body { font: 10pt -apple-system, "Segoe UI", Roboto, sans-serif; color: #000; background: #fff; margin: 0; padding: 0; }
+  body { font: 10pt -apple-system, "Segoe UI", Roboto, sans-serif; color: #000; background: #fff; margin: 0; padding: 0.4in; }
   header { margin-bottom: 10px; }
   h1 { font-size: 16pt; margin: 0 0 4px; }
   .subtitle { font-size: 9pt; color: #555; }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   th, td { border: 1px solid #888; padding: 4px 6px; vertical-align: top; text-align: left; word-wrap: break-word; }
   thead th { background: #eee; font-weight: 600; font-size: 9pt; }
-  thead th .dow { font-size: 9pt; }
-  thead th .dom { font-size: 8pt; color: #555; font-weight: 400; }
+  thead th .dow { font-size: 13pt; }
+  thead th .dom { font-size: 11pt; color: #555; font-weight: 400; }
   td.col-driver, th.col-driver { width: 1.6in; }
-  td.col-total, th.col-total { width: 0.75in; text-align: right; font-weight: 700; }
   .name { font-weight: 600; font-size: 10pt; }
   .meta { font-size: 8pt; color: #555; display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 2px; }
   .shift { font-size: 9pt; }
@@ -341,7 +334,7 @@ function tablePrintDocTemplate({
   thead { display: table-header-group; }
   .toolbar { margin: 8px 0 14px; }
   .toolbar button { padding: 6px 12px; font: inherit; cursor: pointer; }
-  @media print { .toolbar { display: none; } @page { margin: 0.4in; } html, body { height: auto; } }
+  @media print { .toolbar { display: none; } @page { margin: 0; } html, body { height: auto; } }
   .page { transform-origin: top left; }
 </style>
 </head>
@@ -511,19 +504,21 @@ function ganttPrintDocTemplate({
 <meta charset="utf-8">
 <title>${escapeHtml(title)}</title>
 <style>
-  @page { size: ${colCount > 7 ? '11in 17in' : 'letter'} landscape; margin: 0.4in; }
+  /* margin: 0 leaves the browser no room to print its own header/footer
+     (date, "about:blank" URL, page number); body padding restores the margin. */
+  @page { size: ${colCount > 7 ? '11in 17in' : 'letter'} landscape; margin: 0; }
   * { box-sizing: border-box; }
-  body { font: 9pt -apple-system, "Segoe UI", Roboto, sans-serif; color: #000; background: #fff; margin: 0; padding: 0; }
+  body { font: 9pt -apple-system, "Segoe UI", Roboto, sans-serif; color: #000; background: #fff; margin: 0; padding: 0.4in; }
   header { margin-bottom: 10px; }
   h1 { font-size: 16pt; margin: 0 0 4px; }
   .subtitle { font-size: 9pt; color: #555; }
   .gx-head { display: flex; align-items: stretch; border: 1px solid #888; border-bottom: none; }
   .gx-head__driver { width: 1.6in; flex: 0 0 1.6in; padding: 4px 6px; font-weight: 600; background: #eee; border-right: 1px solid #888; }
-  .gx-axis { position: relative; flex: 1 1 auto; height: 28px; background: #eee; }
+  .gx-axis { position: relative; flex: 1 1 auto; height: 42px; background: #eee; }
   .gx-day { position: absolute; top: 0; bottom: 0; padding: 4px 6px; border-left: 1px solid #888; }
   .gx-day:first-child { border-left: none; }
-  .gx-dow { display: block; font-weight: 600; font-size: 9pt; }
-  .gx-dom { display: block; font-size: 8pt; color: #555; }
+  .gx-dow { display: block; font-weight: 600; font-size: 13pt; }
+  .gx-dom { display: block; font-size: 11pt; color: #555; }
   .gx-row { display: flex; align-items: stretch; border: 1px solid #888; border-top: none; min-height: 38px; page-break-inside: avoid; }
   .gx-driver { width: 1.6in; flex: 0 0 1.6in; padding: 4px 6px; border-right: 1px solid #888; }
   .gx-driver .name { font-weight: 600; font-size: 10pt; }
@@ -536,7 +531,7 @@ function ganttPrintDocTemplate({
   .gx-bar--off   { background: #fee2e2; border: 1px solid #b91c1c; color: #b91c1c; font-weight: 700; text-align: center; }
   .toolbar { margin: 8px 0 14px; }
   .toolbar button { padding: 6px 12px; font: inherit; cursor: pointer; }
-  @media print { .toolbar { display: none; } @page { margin: 0.4in; } html, body { height: auto; } }
+  @media print { .toolbar { display: none; } @page { margin: 0; } html, body { height: auto; } }
   .page { transform-origin: top left; }
 </style>
 </head>
