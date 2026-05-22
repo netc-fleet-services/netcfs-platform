@@ -9,9 +9,11 @@ import {
   addDays,
   dateRange,
   escapeHtml,
+  formatHours,
   formatName,
   formatTime12,
   fromIsoDate,
+  shiftDurationHours,
   shortDateLabel,
   startOfWeek,
   timeToHours,
@@ -255,6 +257,7 @@ function buildTableDoc({ title, subtitle, sorted, dates, byKey, days }: Schedule
           <div class="dow">${d.toLocaleDateString(undefined, { weekday: 'short' })}</div>
           <div class="dom">${d.getMonth() + 1}/${d.getDate()}</div>
         </th>`).join('')}
+      <th class="col-total">Total</th>
     </tr>`
 
   const bodyRows = sorted.map(driver => {
@@ -267,12 +270,17 @@ function buildTableDoc({ title, subtitle, sorted, dates, byKey, days }: Schedule
           <span>yard ${escapeHtml(driver.irh_yard_number || driver.yard || '—')}</span>
         </div>
       </td>`
+    let weekHours = 0
     const dayCells = dates.map(d => {
       const iso = toIsoDate(d)
       const list = byKey.get(`${driver.id}|${iso}`) || []
+      for (const e of list) {
+        if (e.entry_type === 'shift') weekHours += shiftDurationHours(e.start_time, e.end_time)
+      }
       return `<td>${renderTableCell(list)}</td>`
     }).join('')
-    return `<tr>${driverCell}${dayCells}</tr>`
+    const totalCell = `<td class="col-total">${formatHours(weekHours)}</td>`
+    return `<tr>${driverCell}${dayCells}${totalCell}</tr>`
   }).join('')
 
   return tablePrintDocTemplate({ title, subtitle, headerRow, bodyRows, colCount: days })
@@ -320,6 +328,7 @@ function tablePrintDocTemplate({
   thead th .dow { font-size: 9pt; }
   thead th .dom { font-size: 8pt; color: #555; font-weight: 400; }
   td.col-driver, th.col-driver { width: 1.6in; }
+  td.col-total, th.col-total { width: 0.75in; text-align: right; font-weight: 700; }
   .name { font-weight: 600; font-size: 10pt; }
   .meta { font-size: 8pt; color: #555; display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 2px; }
   .shift { font-size: 9pt; }
