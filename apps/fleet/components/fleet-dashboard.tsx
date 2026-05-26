@@ -61,7 +61,8 @@ const TRUCK_QUERY = `
   maintenance ( last_pm_date, last_pm_mileage, next_pm_date, next_pm_mileage ),
   truck_pm_assignments ( id, last_pm_date, last_pm_mileage, last_pm_hours, current_odometer, current_hours, pm_schedules ( name, interval_type, interval_value ) ),
   truck_notes ( id, note_type, body, created_by, created_at ),
-  status_history ( id, old_status, new_status, changed_by, created_at, comment )
+  status_history ( id, old_status, new_status, changed_by, created_at, comment ),
+  vehicle_inspections ( inspected_date )
 `
 
 export function FleetDashboard({ profile }: { profile: FleetProfile }) {

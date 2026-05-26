@@ -83,7 +83,7 @@ export function StatusTable({ status, trucks, totalCount, profile, onStatusChang
               <thead>
                 <tr>
                   <th>Unit</th><th>Category</th><th>Location</th>
-                  <th>Waiting On</th><th>Next PM</th><th>Status</th><th></th>
+                  <th>Waiting On</th><th>Last Inspection</th><th>Next PM</th><th>Status</th><th></th>
                 </tr>
               </thead>
               <tbody>

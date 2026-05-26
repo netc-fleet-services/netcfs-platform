@@ -204,6 +204,15 @@ export function TruckRow({ truck, currentStatus, profile, onStatusChange, onView
 
       <WaitingOnCell truck={truck} canEdit={canEditWaitingOn} onUpdateWaitingOn={onUpdateWaitingOn} />
 
+      <td data-label="Last Inspection" style={{ fontSize: '0.8rem', color: 'var(--on-surface-muted)', whiteSpace: 'nowrap' }}>
+        {(() => {
+          const dates = (truck.vehicle_inspections ?? []).map(i => i.inspected_date).filter(Boolean)
+          if (dates.length === 0) return <span style={{ color: 'var(--on-surface-muted)', fontSize: '0.75rem' }}>—</span>
+          const latest = dates.reduce((a, b) => (a > b ? a : b))
+          return new Date(latest + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        })()}
+      </td>
+
       <td data-label="Next PM" onClick={() => onLogPM(truck)} style={{ cursor: 'pointer' }} title="Click to view / log PM">
         {(() => {
           const pm = computeMostUrgentPM(truck.truck_pm_assignments ?? [])
