@@ -66,6 +66,7 @@ export interface Truck {
   truck_pm_assignments?: TruckPMAssignment[]
   truck_notes?: TruckNote[]
   status_history?: StatusHistoryEntry[]
+  vehicle_inspections?: { inspected_date: string }[]
 }
 
 export interface Location {
