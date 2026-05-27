@@ -14,6 +14,17 @@ export interface ImpoundPhoto {
   created_at: string
 }
 
+export interface ImpoundEquipment {
+  id: string
+  impound_id: string
+  year: string | null
+  make_model: string | null
+  vin: string | null
+  resale_value: number | null
+  created_at: string
+  updated_at: string
+}
+
 export interface Impound {
   id: string
   call_number: string
@@ -39,7 +50,9 @@ export interface Impound {
   scrapped: boolean
   sold: boolean
   disposition_date: string | null
+  vehicle_type: string | null
   created_at: string
   updated_at: string
   impound_photos?: ImpoundPhoto[]
+  impound_equipment?: ImpoundEquipment[]
 }

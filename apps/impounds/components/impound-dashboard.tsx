@@ -3,11 +3,11 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { getSupabaseBrowserClient } from '@netcfs/auth/client'
 import type { Impound, ImpoundProfile } from '@/lib/types'
-import { IMPOUND_STATUSES, IMPOUND_LOCATIONS, SCRAP_VALUE } from '@/lib/constants'
+import { IMPOUND_STATUSES, IMPOUND_LOCATIONS, scrapValueFor, equipmentTotal } from '@/lib/constants'
 import { VehicleDetailDrawer } from './vehicle-detail-drawer'
 import { SalesHistoryModal } from './sales-history-modal'
 
-const IMPOUND_QUERY = `*, impound_photos(*)`
+const IMPOUND_QUERY = `*, impound_photos(*), impound_equipment(*)`
 
 function formatDate(iso: string | null) {
   if (!iso) return '—'
@@ -32,6 +32,44 @@ function TriState({ value }: { value: boolean | null }) {
   if (value === true)  return <span style={{ color: '#22c55e' }}>Yes</span>
   if (value === false) return <span style={{ color: '#ef4444' }}>No</span>
   return <span style={{ color: 'rgb(var(--on-surface-muted))' }}>—</span>
+}
+
+function ThemeToggle() {
+  const [isLight, setIsLight] = useState(false)
+  useEffect(() => {
+    setIsLight(document.documentElement.classList.contains('theme-daylight'))
+  }, [])
+  function toggle() {
+    const html = document.documentElement
+    const next = html.classList.contains('theme-daylight') ? 'theme-midnight' : 'theme-daylight'
+    html.className = next
+    localStorage.setItem('theme', next)
+    setIsLight(next === 'theme-daylight')
+  }
+  return (
+    <button
+      onClick={toggle}
+      title={isLight ? 'Switch to dark' : 'Switch to light'}
+      aria-label="Toggle theme"
+      style={{
+        width: 32, height: 32, borderRadius: '0.5rem',
+        background: 'transparent', border: '1px solid rgb(var(--outline))',
+        color: 'rgb(var(--on-surface-muted))', cursor: 'pointer',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      {isLight ? (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+        </svg>
+      ) : (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+        </svg>
+      )}
+    </button>
+  )
 }
 
 function MetricCard({ label, value, sub, highlight }: { label: string; value: string | number; sub?: string; highlight?: boolean }) {
@@ -72,8 +110,8 @@ function FilterTabs<T extends string>({
 }
 
 function vehicleValue(imp: Impound): number {
-  if (imp.sell) return imp.estimated_value ?? 0
-  return SCRAP_VALUE
+  const base = imp.sell ? (imp.estimated_value ?? 0) : scrapValueFor(imp)
+  return base + equipmentTotal(imp)
 }
 
 export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
@@ -197,6 +235,7 @@ export function ImpoundDashboard({ profile }: { profile: ImpoundProfile }) {
           <span style={{ fontSize: '0.75rem', color: 'rgb(var(--on-surface-muted))' }}>
             {profile.full_name ?? profile.email}
           </span>
+          <ThemeToggle />
           <button
             className="btn-secondary"
             style={{ fontSize: '0.8rem', padding: '0.4rem 0.875rem', opacity: syncing ? 0.6 : 1 }}

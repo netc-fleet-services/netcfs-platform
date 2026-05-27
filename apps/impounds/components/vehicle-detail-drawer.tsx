@@ -3,6 +3,15 @@
 import React, { useState, useRef } from 'react'
 import { getSupabaseBrowserClient } from '@netcfs/auth/client'
 import type { Impound, ImpoundPhoto, ImpoundProfile } from '@/lib/types'
+import { VEHICLE_TYPES } from '@/lib/constants'
+
+type EquipDraft = {
+  id: string | null
+  year: string
+  make_model: string
+  vin: string
+  resale_value: string
+}
 
 interface Props {
   impound: Impound
@@ -89,9 +98,33 @@ export function VehicleDetailDrawer({ impound, profile, onClose, onSaved }: Prop
     needs_detail:          impound.needs_detail,
     needs_mechanic:        impound.needs_mechanic,
     estimated_repair_cost: impound.estimated_repair_cost?.toString() ?? '',
+    vehicle_type:          impound.vehicle_type ?? '',
   })
 
+  const [equipment, setEquipment] = useState<EquipDraft[]>(
+    (impound.impound_equipment ?? []).map(e => ({
+      id:           e.id,
+      year:         e.year ?? '',
+      make_model:   e.make_model ?? '',
+      vin:          e.vin ?? '',
+      resale_value: e.resale_value?.toString() ?? '',
+    }))
+  )
+  const [equipmentDeletes, setEquipmentDeletes] = useState<string[]>([])
+
   const set = (k: keyof typeof form, v: unknown) => setForm(f => ({ ...f, [k]: v }))
+
+  function updateEquipment(idx: number, patch: Partial<EquipDraft>) {
+    setEquipment(eq => eq.map((e, i) => i === idx ? { ...e, ...patch } : e))
+  }
+  function addEquipment() {
+    setEquipment(eq => [...eq, { id: null, year: '', make_model: '', vin: '', resale_value: '' }])
+  }
+  function removeEquipment(idx: number) {
+    const target = equipment[idx]
+    if (target.id) setEquipmentDeletes(d => [...d, target.id!])
+    setEquipment(eq => eq.filter((_, i) => i !== idx))
+  }
 
   async function handleSellToggle(v: boolean) {
     set('sell', v)
@@ -161,9 +194,28 @@ export function VehicleDetailDrawer({ impound, profile, onClose, onSaved }: Prop
       needs_detail:          form.needs_detail,
       needs_mechanic:        form.needs_mechanic,
       estimated_repair_cost: form.estimated_repair_cost ? parseFloat(form.estimated_repair_cost) : null,
+      vehicle_type:          form.vehicle_type || null,
     }).eq('id', impound.id)
+    if (error) { setSaving(false); alert(error.message); return }
+
+    if (equipmentDeletes.length) {
+      const { error: delErr } = await supabase.from('impound_equipment').delete().in('id', equipmentDeletes)
+      if (delErr) { setSaving(false); alert(delErr.message); return }
+    }
+    for (const e of equipment) {
+      const payload = {
+        year:         e.year || null,
+        make_model:   e.make_model || null,
+        vin:          e.vin || null,
+        resale_value: e.resale_value ? parseFloat(e.resale_value) : null,
+      }
+      const { error: eqErr } = e.id
+        ? await supabase.from('impound_equipment').update(payload).eq('id', e.id)
+        : await supabase.from('impound_equipment').insert({ impound_id: impound.id, ...payload })
+      if (eqErr) { setSaving(false); alert(eqErr.message); return }
+    }
+
     setSaving(false)
-    if (error) { alert(error.message); return }
     onSaved()
     onClose()
   }
@@ -277,6 +329,19 @@ export function VehicleDetailDrawer({ impound, profile, onClose, onSaved }: Prop
               <Field label="Reason for Impound">
                 <input style={inputStyle} value={form.reason_for_impound} onChange={e => set('reason_for_impound', e.target.value)} readOnly={!canEdit} />
               </Field>
+              <Field label="Vehicle Type">
+                <select
+                  style={inputStyle}
+                  value={form.vehicle_type}
+                  onChange={e => set('vehicle_type', e.target.value)}
+                  disabled={!canEdit}
+                >
+                  <option value="">Auto-detect</option>
+                  {VEHICLE_TYPES.map(t => (
+                    <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                  ))}
+                </select>
+              </Field>
             </div>
             <div style={{ marginTop: '0.75rem' }}>
               <Field label="Notes">
@@ -365,6 +430,63 @@ export function VehicleDetailDrawer({ impound, profile, onClose, onSaved }: Prop
               <textarea rows={3} style={{ ...inputStyle, resize: 'vertical' }}
                 value={form.sales_description} onChange={e => set('sales_description', e.target.value)} readOnly={!canEdit} />
             </Field>
+          </section>
+
+          {/* Equipment */}
+          <section>
+            <h3 style={sectionHead}>Equipment {equipment.length > 0 && `(${equipment.length})`}</h3>
+            {equipment.length === 0 && (
+              <div style={{ fontSize: '0.8rem', color: 'rgb(var(--on-surface-muted))', fontStyle: 'italic', marginBottom: '0.5rem' }}>
+                No equipment attached.
+              </div>
+            )}
+            {equipment.map((e, idx) => (
+              <div key={e.id ?? `new-${idx}`} style={{
+                border: '1px solid rgb(var(--outline))',
+                borderRadius: '0.5rem',
+                padding: '0.625rem',
+                marginBottom: '0.5rem',
+                background: 'rgb(var(--surface-high))',
+              }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                  <Field label="Year">
+                    <input style={inputStyle} value={e.year}
+                      onChange={ev => updateEquipment(idx, { year: ev.target.value })}
+                      readOnly={!canEdit} />
+                  </Field>
+                  <Field label="Make / Model">
+                    <input style={inputStyle} value={e.make_model}
+                      onChange={ev => updateEquipment(idx, { make_model: ev.target.value })}
+                      readOnly={!canEdit} />
+                  </Field>
+                  <Field label="VIN">
+                    <input style={{ ...inputStyle, fontFamily: 'monospace' }} value={e.vin}
+                      onChange={ev => updateEquipment(idx, { vin: ev.target.value })}
+                      readOnly={!canEdit} />
+                  </Field>
+                  <Field label="Resale Value">
+                    <input type="number" min="0" step="0.01" style={inputStyle} value={e.resale_value}
+                      onChange={ev => updateEquipment(idx, { resale_value: ev.target.value })}
+                      readOnly={!canEdit} />
+                  </Field>
+                </div>
+                {canEdit && (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                    <button type="button" onClick={() => removeEquipment(idx)} style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      color: '#dc2626', fontSize: '0.75rem', fontWeight: 600,
+                      padding: '0.25rem 0.5rem', fontFamily: 'inherit',
+                    }}>Remove</button>
+                  </div>
+                )}
+              </div>
+            ))}
+            {canEdit && (
+              <button type="button" className="btn-secondary" onClick={addEquipment}
+                style={{ fontSize: '0.8rem' }}>
+                + Add Equipment
+              </button>
+            )}
           </section>
 
           {/* Photos */}

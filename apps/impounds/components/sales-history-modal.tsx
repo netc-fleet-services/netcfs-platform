@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { getSupabaseBrowserClient } from '@netcfs/auth/client'
 import type { Impound } from '@/lib/types'
-import { SCRAP_VALUE } from '@/lib/constants'
+import { scrapValueFor, equipmentTotal } from '@/lib/constants'
 
 function currency(n: number) {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
@@ -15,8 +15,8 @@ function formatDate(iso: string | null | undefined) {
 }
 
 function saleValue(r: Impound): number | null {
-  if (r.sold) return r.estimated_value ?? 0
-  if (r.scrapped) return SCRAP_VALUE
+  if (r.sold) return (r.estimated_value ?? 0) + equipmentTotal(r)
+  if (r.scrapped) return scrapValueFor(r) + equipmentTotal(r)
   return null
 }
 
@@ -58,7 +58,7 @@ export function SalesHistoryModal({ onClose }: { onClose: () => void }) {
 
     const { data } = await supabase
       .from('impounds')
-      .select('*')
+      .select('*, impound_equipment(*)')
       .or(orParts.join(','))
       .gte('disposition_date', fromDate + 'T00:00:00Z')
       .lte('disposition_date', toDate   + 'T23:59:59Z')
