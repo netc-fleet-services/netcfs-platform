@@ -173,15 +173,17 @@ def samsara_get_v1_trips_for_vehicle(vehicle_id: str, start_ms: int, end_ms: int
     resp.raise_for_status()
     return resp.json().get("trips", [])
 
-def load_driver_vehicle_assignments(
+def load_vehicle_driver_schedule(
     sam_driver_ids: set[str],
     start_dt:       datetime,
     end_dt:         datetime,
-) -> dict[str, list[tuple[str, int, int]]]:
+) -> dict[str, list[tuple[int, int, str]]]:
     """
-    Returns {samsara_driver_id: [(vehicle_id, start_ms, end_ms), ...]}
-    Uses /fleet/driver-vehicle-assignments with filterBy=drivers.
-    Handles driver rotation — each assignment records which truck a driver used and when.
+    Returns {vehicle_id: [(start_ms, end_ms, driver_sam_id), ...]} sorted by start_ms.
+    Each entry is one assignment record clamped to [start_dt, end_dt]. Windows are
+    never merged per (driver, vehicle) pair, so a trip's driver is whoever was
+    actually logged in at the trip's start time — split shifts and same-truck-on-
+    different-days stay distinct.
     """
     try:
         raw = samsara_get("/fleet/driver-vehicle-assignments", {
@@ -195,7 +197,7 @@ def load_driver_vehicle_assignments(
         print(f"  WARNING: driver-vehicle assignments API failed ({e})")
         return {}
 
-    per_pair: dict[tuple[str, str], list[tuple[int, int]]] = {}
+    schedule: dict[str, list[tuple[int, int, str]]] = {}
     for a in raw:
         drv_id = (a.get("driver") or {}).get("id", "")
         veh_id = (a.get("vehicle") or {}).get("id", "")
@@ -209,14 +211,19 @@ def load_driver_vehicle_assignments(
         a_end   = min(a_end,   end_dt)
         if a_start >= a_end:
             continue
-        per_pair.setdefault((drv_id, veh_id), []).append((to_ms(a_start), to_ms(a_end)))
+        schedule.setdefault(veh_id, []).append((to_ms(a_start), to_ms(a_end), drv_id))
 
-    result: dict[str, list[tuple[str, int, int]]] = {}
-    for (drv_id, veh_id), windows in per_pair.items():
-        merged_start = min(w[0] for w in windows)
-        merged_end   = max(w[1] for w in windows)
-        result.setdefault(drv_id, []).append((veh_id, merged_start, merged_end))
-    return result
+    for veh_id in schedule:
+        schedule[veh_id].sort(key=lambda x: x[0])
+    return schedule
+
+
+def driver_at(schedule_entries: list[tuple[int, int, str]], ts_ms: int) -> str | None:
+    """driver_sam_id whose assignment window contains ts_ms, or None."""
+    for start_ms, end_ms, drv_id in schedule_entries:
+        if start_ms <= ts_ms <= end_ms:
+            return drv_id
+    return None
 
 # ── 1. Driver sync ─────────────────────────────────────────────────────────────
 
@@ -603,46 +610,56 @@ def mileage_from_vehicle_gps(
 def sync_mileage(target_date: date, by_name: dict[str, int]):
     """
     Three-pass mileage sync:
-      1. Driver-login GPS  — Samsara trips for drivers with samsara_driver_id linked
-      2. Vehicle GPS       — Samsara vehicle trips for non-interstate drivers via TowBook job lookup
-      3. TowBook estimate  — haversine fallback for any remaining driver-days
+      1. Samsara per-trip attribution — for each vehicle a linked driver was
+         logged into, pull its trips and credit whoever was logged in at the
+         trip's start time. Trips during gaps with no logged-in driver fall
+         through to passes 2/3.
+      2. Vehicle GPS via TowBook lookup — for vehicles pass 1 didn't fully
+         cover, resolve driver from the jobs table.
+      3. TowBook haversine estimate — fallback for any remaining driver-days.
     """
     print(f"\n── Mileage sync for {target_date} ──")
 
     day_start = datetime(target_date.year, target_date.month, target_date.day,
                          0, 0, 0, tzinfo=EASTERN)
     day_end   = day_start + timedelta(days=1)
-    day_str   = target_date.isoformat()
 
     resp = sb.table("drivers") \
              .select("id, samsara_driver_id") \
              .not_.is_("samsara_driver_id", "null") \
              .execute()
-    linked = resp.data or []
-    id_map = {r["samsara_driver_id"]: r["id"] for r in linked}
+    id_map = {r["samsara_driver_id"]: r["id"]
+              for r in (resp.data or []) if r.get("samsara_driver_id")}
 
     miles_map: dict[tuple[int, str], float] = {}
     matched = 0
 
     if id_map:
-        assignments = load_driver_vehicle_assignments(set(id_map.keys()), day_start, day_end)
-        if assignments:
-            print(f"  Assignments found for {len(assignments)} of {len(id_map)} linked drivers")
-        for sam_id, drv_assignments in assignments.items():
-            internal_id = id_map[sam_id]
-            for veh_id, a_start_ms, a_end_ms in drv_assignments:
-                try:
-                    trips = samsara_get_v1_trips_for_vehicle(veh_id, a_start_ms, a_end_ms)
-                except Exception:
+        schedule = load_vehicle_driver_schedule(set(id_map.keys()), day_start, day_end)
+        if schedule:
+            print(f"  {len(schedule)} vehicle(s) had a linked driver logged in")
+        for veh_id, entries in schedule.items():
+            try:
+                trips = samsara_get_v1_trips_for_vehicle(
+                    veh_id, to_ms(day_start), to_ms(day_end),
+                )
+            except Exception:
+                continue
+            for trip in trips:
+                trip_ms = trip.get("startMs") or 0
+                if not trip_ms:
                     continue
-                for trip in trips:
-                    miles = (float(trip["distanceMiles"]) if trip.get("distanceMiles") is not None
-                             else float(trip.get("distanceMeters") or 0) / 1609.344)
-                    if miles <= 0:
-                        continue
-                    matched += 1
-                    key = (internal_id, day_str)
-                    miles_map[key] = miles_map.get(key, 0.0) + miles
+                drv_sam_id = driver_at(entries, trip_ms)
+                if not drv_sam_id:
+                    continue
+                miles = (float(trip["distanceMiles"]) if trip.get("distanceMiles") is not None
+                         else float(trip.get("distanceMeters") or 0) / 1609.344)
+                if miles <= 0:
+                    continue
+                matched += 1
+                trip_date = datetime.fromtimestamp(trip_ms / 1000, tz=EASTERN).date()
+                key = (id_map[drv_sam_id], trip_date.isoformat())
+                miles_map[key] = miles_map.get(key, 0.0) + miles
 
     samsara_pairs: set[tuple[int, str]] = set()
     if miles_map:
@@ -653,7 +670,7 @@ def sync_mileage(target_date: date, by_name: dict[str, int]):
             for (did, ds), m in miles_map.items()
         ]
         sb.table("mileage_logs").upsert(rows, on_conflict="driver_id,log_date").execute()
-        samsara_pairs = {(r["driver_id"], r["log_date"]) for r in rows}
+        samsara_pairs = set(miles_map.keys())
 
     vehicle_pairs = mileage_from_vehicle_gps(target_date, by_name, samsara_pairs)
     all_gps_pairs = samsara_pairs | vehicle_pairs
@@ -693,12 +710,8 @@ def sync_dvirs(target_date: date):
                          0, 0, 0, tzinfo=EASTERN)
     day_end   = day_start + timedelta(days=1)
 
-    # Build reverse mapping for assignment-window fallback.
-    assignments = load_driver_vehicle_assignments(interstate_sam_ids, day_start, day_end)
-    veh_to_driver: dict[str, list[tuple[str, int, int]]] = {}
-    for drv_sam_id, drv_assignments in assignments.items():
-        for (veh_id, a_start_ms, a_end_ms) in drv_assignments:
-            veh_to_driver.setdefault(veh_id, []).append((drv_sam_id, a_start_ms, a_end_ms))
+    # Vehicle → driver schedule for the assignment-window fallback.
+    schedule = load_vehicle_driver_schedule(interstate_sam_ids, day_start, day_end)
 
     # Query through now so DVIRs submitted yesterday but resolved today are captured.
     now_utc = datetime.now(tz=timezone.utc)
@@ -740,11 +753,10 @@ def sync_dvirs(target_date: date):
 
         # Strategy 2: assignment window (only if strategy 1 failed and we have a vehicle)
         if not driver_sam_id and veh_id:
-            for (drv_id, a_start_ms, a_end_ms) in veh_to_driver.get(veh_id, []):
-                if a_start_ms <= dvir_ms <= a_end_ms:
-                    driver_sam_id = drv_id
-                    window_match += 1
-                    break
+            matched_drv = driver_at(schedule.get(veh_id, []), dvir_ms)
+            if matched_drv:
+                driver_sam_id = matched_drv
+                window_match += 1
 
         if driver_sam_id:
             submitted.add(driver_sam_id)
