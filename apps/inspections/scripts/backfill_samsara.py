@@ -36,6 +36,7 @@ SUPABASE_URL    = os.environ["SUPABASE_URL"].strip()
 SUPABASE_KEY    = os.environ["SUPABASE_SERVICE_KEY"].strip()
 BACKFILL_START  = date.fromisoformat(os.environ["BACKFILL_START"])
 BACKFILL_END    = date.fromisoformat(os.environ["BACKFILL_END"])
+DRY_RUN         = os.environ.get("DRY_RUN", "").strip().lower() in ("1", "true", "yes")
 
 BASE_URL = "https://api.samsara.com"
 
@@ -320,16 +321,17 @@ def load_interstate_drivers() -> list[dict]:
     )
     return resp.data or []
 
-def load_driver_vehicle_assignments(
+def load_vehicle_driver_schedule(
     sam_driver_ids: set[str],
     start_dt:       datetime,
     end_dt:         datetime,
-) -> dict[str, list[tuple[str, int, int]]]:
+) -> dict[str, list[tuple[int, int, str]]]:
     """
-    Returns {samsara_driver_id: [(vehicle_id, start_ms, end_ms), ...]}
-    Uses /fleet/driver-vehicle-assignments with filterBy=drivers.
-    Handles driver rotation — each assignment records which truck a driver used
-    and when, so mileage is attributed to the right driver even across truck swaps.
+    Returns {vehicle_id: [(start_ms, end_ms, driver_sam_id), ...]} sorted by start_ms.
+    Each entry is one assignment record clamped to [start_dt, end_dt]. Windows are
+    never merged per (driver, vehicle) pair, so a trip's driver is whoever was
+    actually logged in at the trip's start time — split shifts and same-truck-on-
+    different-days stay distinct.
     """
     try:
         raw = samsara_get("/fleet/driver-vehicle-assignments", {
@@ -343,10 +345,7 @@ def load_driver_vehicle_assignments(
         print(f"  WARNING: driver-vehicle assignments API failed ({e})")
         return {}
 
-    # Group raw assignments by (driver_id, vehicle_id), then merge into a single
-    # time window per pair.  Samsara can return one record per trip — without this,
-    # we'd make one v1/fleet/trips API call per trip record rather than one per vehicle.
-    per_pair: dict[tuple[str, str], list[tuple[int, int]]] = {}
+    schedule: dict[str, list[tuple[int, int, str]]] = {}
     for a in raw:
         drv_id = (a.get("driver") or {}).get("id", "")
         veh_id = (a.get("vehicle") or {}).get("id", "")
@@ -360,14 +359,19 @@ def load_driver_vehicle_assignments(
         a_end   = min(a_end,   end_dt)
         if a_start >= a_end:
             continue
-        per_pair.setdefault((drv_id, veh_id), []).append((to_ms(a_start), to_ms(a_end)))
+        schedule.setdefault(veh_id, []).append((to_ms(a_start), to_ms(a_end), drv_id))
 
-    result: dict[str, list[tuple[str, int, int]]] = {}
-    for (drv_id, veh_id), windows in per_pair.items():
-        merged_start = min(w[0] for w in windows)
-        merged_end   = max(w[1] for w in windows)
-        result.setdefault(drv_id, []).append((veh_id, merged_start, merged_end))
-    return result
+    for veh_id in schedule:
+        schedule[veh_id].sort(key=lambda x: x[0])
+    return schedule
+
+
+def driver_at(schedule_entries: list[tuple[int, int, str]], ts_ms: int) -> str | None:
+    """driver_sam_id whose assignment window contains ts_ms, or None."""
+    for start_ms, end_ms, drv_id in schedule_entries:
+        if start_ms <= ts_ms <= end_ms:
+            return drv_id
+    return None
 
 def _dt_month_ranges(start_dt: datetime, end_dt: datetime):
     """Yield (start_ms, end_ms) in ~30-day chunks (v1 API limit)."""
@@ -898,41 +902,39 @@ def backfill_mileage(
         id_map  = {d["samsara_driver_id"]: d["id"] for d in interstate}
         sam_ids = set(id_map.keys())
 
-        print(f"  Fetching vehicle assignments for {len(sam_ids)} interstate drivers …")
-        assignments = load_driver_vehicle_assignments(sam_ids, start_dt, end_dt)
-        total_assignments = sum(len(v) for v in assignments.values())
-        print(f"  Assignments found for {len(assignments)} of {len(sam_ids)} drivers "
-              f"({total_assignments} total assignment records)")
+        print(f"  Loading vehicle-driver schedule for {len(sam_ids)} interstate drivers …")
+        schedule = load_vehicle_driver_schedule(sam_ids, start_dt, end_dt)
+        total_records = sum(len(v) for v in schedule.values())
+        print(f"  Schedule covers {len(schedule)} vehicle(s) "
+              f"({total_records} assignment records, un-merged)")
 
-        for drv_idx, (sam_id, drv_assignments) in enumerate(assignments.items(), 1):
-            internal_id = id_map[sam_id]
-            drv_trips = 0
-            print(f"  [{drv_idx}/{len(assignments)}] driver {sam_id}: "
-                  f"{len(drv_assignments)} assignment(s) …", flush=True)
-            for veh_id, a_start_ms, a_end_ms in drv_assignments:
-                a_start_dt = datetime.fromtimestamp(a_start_ms / 1000, tz=EASTERN)
-                a_end_dt   = datetime.fromtimestamp(a_end_ms   / 1000, tz=EASTERN)
-                for chunk_start_ms, chunk_end_ms in _dt_month_ranges(a_start_dt, a_end_dt):
-                    try:
-                        trips = samsara_get_v1_trips_for_vehicle(veh_id, chunk_start_ms, chunk_end_ms)
-                    except Exception:
-                        failed += 1
+        for veh_idx, (veh_id, entries) in enumerate(schedule.items(), 1):
+            veh_trips = 0
+            print(f"  [{veh_idx}/{len(schedule)}] vehicle {veh_id}: "
+                  f"{len(entries)} assignment(s) …", flush=True)
+            for chunk_start_ms, chunk_end_ms in _dt_month_ranges(start_dt, end_dt):
+                try:
+                    trips = samsara_get_v1_trips_for_vehicle(veh_id, chunk_start_ms, chunk_end_ms)
+                except Exception:
+                    failed += 1
+                    continue
+                veh_trips += len(trips)
+                for trip in trips:
+                    trip_ms = trip.get("startMs") or 0
+                    if not trip_ms:
                         continue
-                    drv_trips += len(trips)
-                    for trip in trips:
-                        trip_ms = trip.get("startMs") or 0
-                        if not trip_ms:
-                            continue
-                        trip_date = datetime.fromtimestamp(trip_ms / 1000, tz=EASTERN).date()
-                        day_str   = trip_date.isoformat()
-                        miles = (float(trip["distanceMiles"]) if trip.get("distanceMiles") is not None
-                                 else float(trip.get("distanceMeters") or 0) / 1609.344)
-                        if miles <= 0:
-                            continue
-                        matched += 1
-                        key = (internal_id, day_str)
-                        miles_map[key] = miles_map.get(key, 0.0) + miles
-            print(f"    → {drv_trips} trips found", flush=True)
+                    drv_sam_id = driver_at(entries, trip_ms)
+                    if not drv_sam_id:
+                        continue
+                    miles = (float(trip["distanceMiles"]) if trip.get("distanceMiles") is not None
+                             else float(trip.get("distanceMeters") or 0) / 1609.344)
+                    if miles <= 0:
+                        continue
+                    matched += 1
+                    trip_date = datetime.fromtimestamp(trip_ms / 1000, tz=EASTERN).date()
+                    key = (id_map[drv_sam_id], trip_date.isoformat())
+                    miles_map[key] = miles_map.get(key, 0.0) + miles
+            print(f"    → {veh_trips} trips fetched", flush=True)
 
         if failed:
             print(f"  WARNING: {failed} trip fetches failed")
@@ -989,13 +991,7 @@ def backfill_dvirs():
     start_dt = datetime(BACKFILL_START.year, BACKFILL_START.month, BACKFILL_START.day, 0, 0, 0, tzinfo=EASTERN)
     end_dt   = datetime(BACKFILL_END.year,   BACKFILL_END.month,   BACKFILL_END.day, 23, 59, 59, tzinfo=EASTERN)
 
-    assignments = load_driver_vehicle_assignments(interstate_sam_ids, start_dt, end_dt)
-
-    # Build reverse mapping: vehicle_id → [(driver_sam_id, start_ms, end_ms)]
-    veh_to_driver: dict[str, list[tuple[str, int, int]]] = {}
-    for drv_sam_id, drv_assignments in assignments.items():
-        for (veh_id, a_start_ms, a_end_ms) in drv_assignments:
-            veh_to_driver.setdefault(veh_id, []).append((drv_sam_id, a_start_ms, a_end_ms))
+    schedule = load_vehicle_driver_schedule(interstate_sam_ids, start_dt, end_dt)
 
     # Fetch DVIRs from BACKFILL_START through now so DVIRs resolved after
     # BACKFILL_END (updatedAtTime > BACKFILL_END) are still captured.
@@ -1046,11 +1042,10 @@ def backfill_dvirs():
 
         # Strategy 2: assignment window
         if not driver_sam_id and veh_id:
-            for (drv_id, a_start_ms, a_end_ms) in veh_to_driver.get(veh_id, []):
-                if a_start_ms <= dvir_ms <= a_end_ms:
-                    driver_sam_id = drv_id
-                    window_match += 1
-                    break
+            matched_drv = driver_at(schedule.get(veh_id, []), dvir_ms)
+            if matched_drv:
+                driver_sam_id = matched_drv
+                window_match += 1
 
         if driver_sam_id:
             submitted_sam.add((driver_sam_id, dvir_date.isoformat()))
@@ -1163,7 +1158,139 @@ def patch_unlinked_event_drivers(by_name: dict[str, int]) -> int:
     return patched
 
 
+def dry_run_compare():
+    """
+    Recompute Samsara mileage with the new per-trip lookup and print a per-driver
+    comparison against what's currently in mileage_logs (source='samsara').
+    Does NOT write to the database. Used when DRY_RUN=1.
+    """
+    print(f"\n── DRY RUN: per-trip lookup vs current mileage_logs ──")
+    print(f"   Period: {BACKFILL_START} → {BACKFILL_END}")
+    print(f"   No database writes will occur.\n")
+
+    interstate = load_interstate_drivers()
+    if not interstate:
+        print("  No interstate drivers with samsara_driver_id — nothing to compare.")
+        return
+
+    id_map   = {d["samsara_driver_id"]: d["id"] for d in interstate}
+    name_map = {d["id"]: d["name"] for d in interstate}
+    sam_ids  = set(id_map.keys())
+
+    start_dt = datetime(BACKFILL_START.year, BACKFILL_START.month, BACKFILL_START.day,
+                        0, 0, 0, tzinfo=EASTERN)
+    end_dt   = datetime(BACKFILL_END.year,   BACKFILL_END.month,   BACKFILL_END.day,
+                        23, 59, 59, tzinfo=EASTERN)
+
+    print(f"  Loading vehicle-driver schedule for {len(sam_ids)} drivers …")
+    schedule = load_vehicle_driver_schedule(sam_ids, start_dt, end_dt)
+    print(f"  Schedule covers {len(schedule)} vehicle(s) "
+          f"({sum(len(v) for v in schedule.values())} un-merged assignment records)\n")
+
+    new_miles:   dict[tuple[int, str], float] = {}
+    ghost_miles: dict[str, float]             = {}
+    trip_count  = 0
+    ghost_count = 0
+    failed      = 0
+
+    for veh_idx, (veh_id, entries) in enumerate(schedule.items(), 1):
+        veh_trips = 0
+        print(f"  [{veh_idx}/{len(schedule)}] vehicle {veh_id} "
+              f"({len(entries)} assignment(s)) …", flush=True)
+        for chunk_start_ms, chunk_end_ms in _dt_month_ranges(start_dt, end_dt):
+            try:
+                trips = samsara_get_v1_trips_for_vehicle(veh_id, chunk_start_ms, chunk_end_ms)
+            except Exception:
+                failed += 1
+                continue
+            veh_trips += len(trips)
+            for trip in trips:
+                trip_ms = trip.get("startMs") or 0
+                if not trip_ms:
+                    continue
+                miles = (float(trip["distanceMiles"]) if trip.get("distanceMiles") is not None
+                         else float(trip.get("distanceMeters") or 0) / 1609.344)
+                if miles <= 0:
+                    continue
+                trip_date = datetime.fromtimestamp(trip_ms / 1000, tz=EASTERN).date()
+                day_str   = trip_date.isoformat()
+                drv_sam_id = driver_at(entries, trip_ms)
+                if drv_sam_id and drv_sam_id in id_map:
+                    new_miles[(id_map[drv_sam_id], day_str)] = (
+                        new_miles.get((id_map[drv_sam_id], day_str), 0.0) + miles
+                    )
+                    trip_count += 1
+                else:
+                    ghost_miles[day_str] = ghost_miles.get(day_str, 0.0) + miles
+                    ghost_count += 1
+        print(f"    → {veh_trips} trips fetched", flush=True)
+
+    if failed:
+        print(f"\n  WARNING: {failed} trip fetches failed")
+    print(f"\n  Attributed: {trip_count} trips → {len(new_miles)} driver-days")
+    print(f"  Ghost     : {ghost_count} trips → {sum(ghost_miles.values()):,.0f} mi "
+          f"across {len(ghost_miles)} day(s) (no linked driver logged in)")
+
+    print(f"\n  Loading current mileage_logs (source='samsara') for comparison …")
+    ml_resp = (
+        sb.table("mileage_logs")
+          .select("driver_id, log_date, miles")
+          .eq("source", "samsara")
+          .gte("log_date", BACKFILL_START.isoformat())
+          .lte("log_date", BACKFILL_END.isoformat())
+          .in_("driver_id", list(name_map.keys()))
+          .execute()
+    )
+    old_miles: dict[tuple[int, str], float] = {
+        (r["driver_id"], r["log_date"]): float(r["miles"])
+        for r in (ml_resp.data or [])
+    }
+
+    per_driver_old: dict[int, float] = {}
+    per_driver_new: dict[int, float] = {}
+    for (did, _), m in old_miles.items():
+        per_driver_old[did] = per_driver_old.get(did, 0.0) + m
+    for (did, _), m in new_miles.items():
+        per_driver_new[did] = per_driver_new.get(did, 0.0) + m
+
+    all_drivers = sorted(
+        set(per_driver_old) | set(per_driver_new),
+        key=lambda d: -(per_driver_old.get(d, 0.0) + per_driver_new.get(d, 0.0)),
+    )
+
+    print(f"\n  {'Driver':<28}  {'Old':>10}  {'New':>10}  {'Δ':>10}  Note")
+    print(f"  {'-'*28}  {'-'*10}  {'-'*10}  {'-'*10}")
+    grand_old = 0.0
+    grand_new = 0.0
+    for did in all_drivers:
+        name = (name_map.get(did) or f"id={did}")[:28]
+        o = per_driver_old.get(did, 0.0)
+        n = per_driver_new.get(did, 0.0)
+        delta = n - o
+        grand_old += o
+        grand_new += n
+        if o == 0 and n > 0:
+            note = "new-only"
+        elif o > 0 and n == 0:
+            note = "old-only"
+        elif o > 0 and abs(delta) > 10:
+            note = f"{n/o:.2f}x"
+        else:
+            note = ""
+        print(f"  {name:<28}  {o:>10.1f}  {n:>10.1f}  {delta:>+10.1f}  {note}")
+    print(f"  {'-'*28}  {'-'*10}  {'-'*10}  {'-'*10}")
+    print(f"  {'TOTAL':<28}  {grand_old:>10.1f}  {grand_new:>10.1f}  "
+          f"{grand_new - grand_old:>+10.1f}")
+    if grand_old > 0:
+        print(f"\n  Fleet ratio new/old: {grand_new / grand_old:.2f}x")
+    print(f"\n  No database writes occurred.\n")
+
+
 def main():
+    if DRY_RUN:
+        dry_run_compare()
+        return
+
     print(f"\nSamsara backfill: {BACKFILL_START} → {BACKFILL_END}")
     print(f"  ({(BACKFILL_END - BACKFILL_START).days + 1} days)")
 

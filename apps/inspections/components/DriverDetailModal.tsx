@@ -114,15 +114,14 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
     })
   }, [s.driver_id, period]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function markDvirCompleted(log: DvirLog) {
+  async function toggleDvirOverride(log: DvirLog) {
+    const undoing = log.completed && log.manually_overridden
+    const next = undoing
+      ? { completed: false, manually_overridden: false }
+      : { completed: true,  manually_overridden: true  }
     setOverriding(log.id)
-    await supabase
-      .from('dvir_logs')
-      .update({ completed: true, manually_overridden: true })
-      .eq('id', log.id)
-    setDvirLogs(prev => prev.map(d =>
-      d.id === log.id ? { ...d, completed: true, manually_overridden: true } : d
-    ))
+    await supabase.from('dvir_logs').update(next).eq('id', log.id)
+    setDvirLogs(prev => prev.map(d => d.id === log.id ? { ...d, ...next } : d))
     setOverriding(null)
   }
 
@@ -276,17 +275,24 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '0.375rem' }}>
                 {dvirLogs.map(d => {
                   const isSaving = overriding === d.id
+                  const canToggle = !d.completed || d.manually_overridden
                   return (
                     <div
                       key={d.id}
-                      onClick={!d.completed && !isSaving ? () => markDvirCompleted(d) : undefined}
-                      title={!d.completed ? 'Click to mark as verified completed' : d.manually_overridden ? 'Manually verified by safety manager' : undefined}
+                      onClick={canToggle && !isSaving ? () => toggleDvirOverride(d) : undefined}
+                      title={
+                        !d.completed
+                          ? 'Click to mark as verified completed'
+                          : d.manually_overridden
+                            ? 'Manually verified — click to undo'
+                            : undefined
+                      }
                       style={{
                         display: 'flex', alignItems: 'center', gap: '0.4rem',
                         padding: '0.35rem 0.5rem', borderRadius: '0.4rem',
                         background: d.completed ? '#4ade8022' : '#f59e0b22',
                         fontSize: '0.78rem',
-                        cursor: !d.completed ? 'pointer' : 'default',
+                        cursor: canToggle ? 'pointer' : 'default',
                         opacity: isSaving ? 0.5 : 1,
                         transition: 'opacity 0.15s',
                       }}
