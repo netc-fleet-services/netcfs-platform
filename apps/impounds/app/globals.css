@@ -18,8 +18,8 @@
 }
 .filter-tab:hover { background-color: rgb(var(--surface-high)); color: rgb(var(--on-surface)); }
 .filter-tab.active {
-  background-color: #3d2e00;
-  color: rgb(var(--primary-container));
+  background-color: rgb(var(--primary-container));
+  color: rgb(var(--on-primary-container));
   border-color: rgb(var(--primary-container));
   font-weight: 600;
 }

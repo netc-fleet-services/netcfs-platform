@@ -20,7 +20,7 @@ Required environment variables:
   SUPABASE_SERVICE_KEY — Service role key (bypasses RLS)
 """
 
-import os, re, csv, sys, tempfile
+import os, re, csv, sys, json, tempfile, urllib.parse, urllib.request
 from pathlib import Path
 from datetime import datetime
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
@@ -39,7 +39,40 @@ sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 KNOWN_LOCATIONS = {"Pembroke", "Exeter", "Bow", "Lee", "Saco"}
 
+# NHTSA vPIC VehicleType → our short label. Keep in sync with VEHICLE_TYPES in lib/constants.ts.
+NHTSA_TYPE_MAP = {
+    "MOTORCYCLE": "motorcycle",
+    "PASSENGER CAR": "car",
+    "MULTIPURPOSE PASSENGER VEHICLE (MPV)": "suv",
+    "TRUCK": "truck",
+    "INCOMPLETE VEHICLE": "truck",
+    "TRAILER": "trailer",
+    "BUS": "bus",
+}
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+
+def decode_vehicle_type(vin: str) -> str | None:
+    """Classify a VIN via NHTSA vPIC. Returns one of our short labels or None on failure."""
+    if not vin or len(vin) < 11:
+        return None
+    try:
+        url = (
+            "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/"
+            + urllib.parse.quote(vin)
+            + "?format=json"
+        )
+        with urllib.request.urlopen(url, timeout=10) as r:
+            results = json.loads(r.read()).get("Results") or []
+        if not results:
+            return None
+        vt = (results[0].get("VehicleType") or "").strip().upper()
+        return NHTSA_TYPE_MAP.get(vt)
+    except Exception as e:
+        print(f"  WARNING: VIN decode failed for {vin}: {e}")
+        return None
+
 
 def parse_date(raw: str) -> str | None:
     if not raw or not raw.strip():
@@ -228,16 +261,17 @@ def upsert_impounds(impounds: list[dict]):
         return
 
     existing_resp = sb.table("impounds").select(
-        "call_number, notes, sell, estimated_value, sales_description, released, scrapped, sold"
+        "call_number, notes, sell, estimated_value, sales_description, released, scrapped, sold, vehicle_type"
     ).execute()
     existing: dict[str, dict] = {r["call_number"]: r for r in (existing_resp.data or [])}
 
     new_count = 0
+    decoded_count = 0
     to_upsert: list[dict] = []
     for rec in impounds:
         cn = rec["call_number"]
-        if cn in existing:
-            ex = existing[cn]
+        ex = existing.get(cn)
+        if ex:
             if not rec.get("notes") and ex.get("notes"):
                 rec["notes"] = ex["notes"]
             # Never overwrite disposition flags set by a manager
@@ -246,7 +280,19 @@ def upsert_impounds(impounds: list[dict]):
             if ex.get("sold"):     rec["sold"]     = True
         else:
             new_count += 1
+
+        # vehicle_type: preserve existing override; otherwise decode VIN to backfill.
+        if ex and ex.get("vehicle_type"):
+            rec["vehicle_type"] = ex["vehicle_type"]
+        elif rec.get("vin"):
+            decoded = decode_vehicle_type(rec["vin"])
+            if decoded:
+                rec["vehicle_type"] = decoded
+                decoded_count += 1
+
         to_upsert.append(rec)
+
+    print(f"  decoded vehicle_type for {decoded_count} records (new or previously unclassified)")
 
     print(f"  {new_count} new, {len(to_upsert) - new_count} existing records in this sync")
 
