@@ -11,6 +11,7 @@ import { HistoryTab } from './HistoryTab'
 import { MetricsTab } from './MetricsTab'
 import { SettingsTab } from './SettingsTab'
 import { PlanningBoard } from './PlanningBoard'
+import { CapacityPlanner } from './CapacityPlanner'
 import { DriverMatchModal } from './DriverMatchModal'
 import { OptimizerModal } from './OptimizerModal'
 import { PossibleStackingModal } from './PossibleStackingModal'
@@ -541,7 +542,7 @@ export function DispatchBoard() {
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ background: C.bg, minHeight: '100vh', padding: '12px 16px', maxWidth: tab === 'planning' ? '75%' : 980, margin: '0 auto' }}>
+    <div style={{ background: C.bg, minHeight: '100vh', padding: '12px 16px', maxWidth: tab === 'planning' ? '75%' : tab === 'capacity' ? '90%' : 980, margin: '0 auto' }}>
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
@@ -561,7 +562,7 @@ export function DispatchBoard() {
 
       {/* Tabs */}
       <div className="tabs">
-        {[['planning', '📅 Planning Board'], ['schedule', '📋 Schedule'], ['drivers', '👥 Drivers'], ['metrics', '📊 Metrics'], ['history', '🕓 History'], ['settings', '⚙ Settings']].map(([k, l]) => (
+        {[['planning', '📅 Planning Board'], ['schedule', '📋 Schedule'], ['capacity', '⚡ Quick Planner'], ['drivers', '👥 Drivers'], ['metrics', '📊 Metrics'], ['history', '🕓 History'], ['settings', '⚙ Settings']].map(([k, l]) => (
           <div key={k} className={'tab' + (tab === k ? ' on' : '')} onClick={() => setTab(k)}>{l}</div>
         ))}
       </div>
@@ -726,6 +727,7 @@ export function DispatchBoard() {
       {tab === 'metrics'  && <MetricsTab jobs={jobs} drivers={drivers} viewDay={viewDay} hpd={hpd} staffing={staffing} locLabel={locLabel} />}
       {tab === 'history'  && <HistoryTab jobs={jobs} drivers={drivers} />}
       {tab === 'planning' && <PlanningBoard jobs={jobs} drivers={drivers} onJobUpdate={(id, upd) => updJob(id, upd)} onSyncTowBook={triggerSync} syncStatus={syncStatus} />}
+      {tab === 'capacity' && <CapacityPlanner yards={yards} staffing={staffing} hpd={hpd} />}
 
       {tab === 'settings' && <SettingsTab
         yards={yards} onAddYard={addYard} onUpdateYard={updateYard} onDeleteYard={removeYard}
