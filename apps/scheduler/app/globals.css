@@ -268,7 +268,8 @@
   background: var(--sched-surface);
   border: 1px solid var(--sched-border);
   border-radius: var(--sched-radius);
-  overflow: hidden;
+  max-height: calc(100vh - 170px);
+  overflow: auto;
 }
 .schedule__grid { display: grid; grid-template-columns: 220px repeat(7, minmax(110px, 1fr)); }
 .schedule__header, .schedule__body { grid-column: 1 / -1; display: contents; }
@@ -294,7 +295,10 @@
 }
 .cell--header .dow { font-size: 11px; text-transform: uppercase; color: var(--sched-text-dim); }
 .cell--header .dom { font-size: 14px; margin-top: 2px; }
-.cell--header.cell--today { background: rgba(59, 130, 246, 0.12); }
+.cell--header.cell--today {
+  background-color: var(--sched-surface-2);
+  background-image: linear-gradient(rgba(59, 130, 246, 0.12), rgba(59, 130, 246, 0.12));
+}
 .cell--header.cell--today .dom { color: var(--sched-accent); }
 .cell--driver {
   position: sticky;
