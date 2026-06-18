@@ -17,6 +17,14 @@ interface Props {
   onClose: () => void
 }
 
+interface ShiftBlock {
+  key: string
+  id?: string
+  start: string
+  end: string
+  notes: string
+}
+
 const TIME_OPTIONS = (() => {
   const step = APP_CONFIG.timeStepMinutes
   const out: string[] = []
@@ -31,14 +39,25 @@ const TIME_OPTIONS = (() => {
 export function ShiftModal({ supabase, driver, isoDate, entry, userId, onSaved, onClose }: Props) {
   const initialIsOff = entry?.entry_type === 'off'
   const [entryType, setEntryType] = useState<'shift' | 'off'>(initialIsOff ? 'off' : 'shift')
-  const [start, setStart] = useState<string>((entry?.start_time?.slice(0, 5)) || '08:00')
-  const [end, setEnd] = useState<string>((entry?.end_time?.slice(0, 5)) || '17:00')
+  const [blocks, setBlocks] = useState<ShiftBlock[]>(() => {
+    if (entry && entry.entry_type === 'shift') {
+      return [{
+        key: 'b0',
+        id: entry.id,
+        start: entry.start_time?.slice(0, 5) || '08:00',
+        end: entry.end_time?.slice(0, 5) || '17:00',
+        notes: entry.notes || '',
+      }]
+    }
+    return [{ key: 'b0', start: '08:00', end: '17:00', notes: '' }]
+  })
   const [reason, setReason] = useState<string>(entry?.off_reason || 'PTO')
-  const [notes, setNotes] = useState<string>(entry?.notes || '')
+  const [offNotes, setOffNotes] = useState<string>(initialIsOff ? (entry?.notes || '') : '')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
+  const blockCounter = useRef(1)
   const startRef = useRef<HTMLSelectElement>(null)
   const reasonRef = useRef<HTMLSelectElement>(null)
 
@@ -57,8 +76,6 @@ export function ShiftModal({ supabase, driver, isoDate, entry, userId, onSaved, 
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const overnight = entryType === 'shift' && end <= start
-
   const dateLabel = useMemo(() => {
     const d = fromIsoDate(isoDate)
     return d.toLocaleDateString(undefined, {
@@ -66,41 +83,71 @@ export function ShiftModal({ supabase, driver, isoDate, entry, userId, onSaved, 
     })
   }, [isoDate])
 
+  function updateBlock(key: string, patch: Partial<ShiftBlock>) {
+    setBlocks(prev => prev.map(b => (b.key === key ? { ...b, ...patch } : b)))
+  }
+
+  function addBlock() {
+    // Default a new block to an evening-into-next-day shift to make
+    // double / overnight shifts quick to enter.
+    const key = `b${blockCounter.current++}`
+    setBlocks(prev => [...prev, { key, start: '18:00', end: '02:00', notes: '' }])
+  }
+
+  function removeBlock(key: string) {
+    setBlocks(prev => prev.filter(b => b.key !== key))
+  }
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
     setError('')
 
-    if (entryType === 'shift' && start === end) {
-      setError("Start and end times can't be the same.")
+    if (entryType === 'shift') {
+      if (blocks.some(b => b.start === b.end)) {
+        setError("A shift's start and end times can't be the same.")
+        return
+      }
+      setSaving(true)
+      try {
+        for (const b of blocks) {
+          await upsertEntry(supabase, {
+            ...(b.id ? { id: b.id } : {}),
+            driver_id: driver.id,
+            schedule_date: isoDate,
+            entry_type: 'shift',
+            start_time: b.start,
+            end_time: b.end,
+            off_reason: null,
+            notes: b.notes.trim() || null,
+            created_by: userId,
+          })
+        }
+        onSaved()
+        onClose()
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Save failed.'
+        setError(message)
+        console.error(err)
+      } finally {
+        setSaving(false)
+      }
       return
     }
 
+    // entryType === 'off'
     setSaving(true)
     try {
-      const draft = entryType === 'shift'
-        ? {
-            ...(entry?.id ? { id: entry.id } : {}),
-            driver_id: driver.id,
-            schedule_date: isoDate,
-            entry_type: 'shift' as const,
-            start_time: start,
-            end_time: end,
-            off_reason: null,
-            notes: notes.trim() || null,
-            created_by: userId,
-          }
-        : {
-            ...(entry?.id ? { id: entry.id } : {}),
-            driver_id: driver.id,
-            schedule_date: isoDate,
-            entry_type: 'off' as const,
-            start_time: null,
-            end_time: null,
-            off_reason: reason,
-            notes: notes.trim() || null,
-            created_by: userId,
-          }
-      await upsertEntry(supabase, draft)
+      await upsertEntry(supabase, {
+        ...(entry?.id ? { id: entry.id } : {}),
+        driver_id: driver.id,
+        schedule_date: isoDate,
+        entry_type: 'off',
+        start_time: null,
+        end_time: null,
+        off_reason: reason,
+        notes: offNotes.trim() || null,
+        created_by: userId,
+      })
       onSaved()
       onClose()
     } catch (err) {
@@ -172,29 +219,71 @@ export function ShiftModal({ supabase, driver, isoDate, entry, userId, onSaved, 
           </div>
 
           {entryType === 'shift' && (
-            <fieldset className="entry-fields">
-              <div className="row-fields">
-                <label className="field">
-                  <span>Start</span>
-                  <select ref={startRef} value={start} onChange={e => setStart(e.target.value)}>
-                    {TIME_OPTIONS.map(t => (
-                      <option key={t} value={t}>{formatTime12(t)}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>End</span>
-                  <select value={end} onChange={e => setEnd(e.target.value)}>
-                    {TIME_OPTIONS.map(t => (
-                      <option key={t} value={t}>{formatTime12(t)}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              {overnight && (
-                <p className="muted hint">End is before start — shift crosses midnight into the next day.</p>
-              )}
-            </fieldset>
+            <>
+              {blocks.map((b, i) => {
+                const overnight = b.end <= b.start
+                return (
+                  <fieldset className="entry-fields shift-block" key={b.key}>
+                    <div className="shift-block__head">
+                      <span className="shift-block__title">
+                        {blocks.length > 1 ? `Shift ${i + 1}` : 'Shift'}
+                      </span>
+                      {blocks.length > 1 && (
+                        <button
+                          type="button"
+                          className="shift-block__remove"
+                          onClick={() => removeBlock(b.key)}
+                          aria-label="Remove this shift"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <div className="row-fields">
+                      <label className="field">
+                        <span>Start</span>
+                        <select
+                          ref={i === 0 ? startRef : undefined}
+                          value={b.start}
+                          onChange={e => updateBlock(b.key, { start: e.target.value })}
+                        >
+                          {TIME_OPTIONS.map(t => (
+                            <option key={t} value={t}>{formatTime12(t)}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span>End</span>
+                        <select
+                          value={b.end}
+                          onChange={e => updateBlock(b.key, { end: e.target.value })}
+                        >
+                          {TIME_OPTIONS.map(t => (
+                            <option key={t} value={t}>{formatTime12(t)}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    {overnight && (
+                      <p className="muted hint">End is before start — this shift ends the next day (+1d).</p>
+                    )}
+                    <label className="field">
+                      <span>Notes <span className="muted">(optional)</span></span>
+                      <textarea
+                        rows={2}
+                        placeholder="OT, training, anything to flag…"
+                        value={b.notes}
+                        onChange={e => updateBlock(b.key, { notes: e.target.value })}
+                      />
+                    </label>
+                  </fieldset>
+                )
+              })}
+
+              <button type="button" className="sched-btn sched-btn--ghost add-shift-btn" onClick={addBlock}>
+                + Add another shift
+              </button>
+            </>
           )}
 
           {entryType === 'off' && (
@@ -207,18 +296,17 @@ export function ShiftModal({ supabase, driver, isoDate, entry, userId, onSaved, 
                   ))}
                 </select>
               </label>
+              <label className="field">
+                <span>Notes <span className="muted">(optional)</span></span>
+                <textarea
+                  rows={2}
+                  placeholder="Anything to flag…"
+                  value={offNotes}
+                  onChange={e => setOffNotes(e.target.value)}
+                />
+              </label>
             </fieldset>
           )}
-
-          <label className="field">
-            <span>Notes <span className="muted">(optional)</span></span>
-            <textarea
-              rows={2}
-              placeholder="OT, training, anything to flag…"
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-            />
-          </label>
 
           {error && <div className="form-error">{error}</div>}
         </div>
