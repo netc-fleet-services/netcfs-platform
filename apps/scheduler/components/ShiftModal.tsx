@@ -49,7 +49,11 @@ export function ShiftModal({ supabase, driver, isoDate, entry, userId, onSaved, 
         notes: entry.notes || '',
       }]
     }
-    return [{ key: 'b0', start: '08:00', end: '17:00', notes: '' }]
+    // If we're editing an existing entry that is currently "off" (e.g. PTO)
+    // and the user switches it to a shift, reuse the existing row id so the
+    // save updates that row in place instead of inserting a duplicate shift
+    // alongside the lingering off entry.
+    return [{ key: 'b0', ...(entry?.id ? { id: entry.id } : {}), start: '08:00', end: '17:00', notes: '' }]
   })
   const [reason, setReason] = useState<string>(entry?.off_reason || 'PTO')
   const [offNotes, setOffNotes] = useState<string>(initialIsOff ? (entry?.notes || '') : '')
