@@ -4,6 +4,10 @@
     {
       "path": "/api/notify-reminder",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/notify-flush",
+      "schedule": "* * * * *"
     }
   ]
 }
