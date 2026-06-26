@@ -70,7 +70,13 @@ function WaitingOnCell({ truck, canEdit, onUpdateWaitingOn }: {
   }
 
   async function handleSave() {
-    await onUpdateWaitingOn(truck.id, value.trim())
+    // No-op guard: only save (and notify) when the value actually changed.
+    // Clicking the field and leaving it untouched should do nothing.
+    const next = value.trim()
+    const prev = (truck.waiting_on ?? '').trim()
+    if (next !== prev) {
+      await onUpdateWaitingOn(truck.id, next)
+    }
     setEditing(false)
   }
 
