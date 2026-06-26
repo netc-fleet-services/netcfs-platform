@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import {
   decideFlush, isStatusNoop, isWaitingOnNoop, matchRecipients,
   escapeHtml, buildRecipientDigest, QUIET_MS, CAP_MS,
-} from './notification-digest.mjs'
+} from './notification-digest.spec.mjs'
 
 const MIN = 60 * 1000
 
