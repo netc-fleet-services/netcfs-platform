@@ -57,6 +57,7 @@ async function sendEmail(
 }
 
 export async function GET(req: NextRequest) {
+ try {
   // Same auth pattern as /api/notify-reminder: if CRON_SECRET is set, require it.
   const cronSecret = process.env.CRON_SECRET
   if (cronSecret && req.headers.get('authorization') !== `Bearer ${cronSecret}`) {
@@ -209,4 +210,9 @@ export async function GET(req: NextRequest) {
     retrying:   retryRows.length - gaveUp,
     gaveUp,
   })
+ } catch (err: unknown) {
+   const message = err instanceof Error ? (err.stack ?? err.message) : String(err)
+   console.error('[notify-flush] fatal:', message)
+   return NextResponse.json({ error: message }, { status: 500 })
+ }
 }
