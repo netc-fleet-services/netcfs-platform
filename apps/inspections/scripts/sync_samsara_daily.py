@@ -704,7 +704,8 @@ def sync_dvirs(target_date: date):
         print("  No linked Interstate drivers found — skipping")
         return
 
-    interstate_sam_ids = {d["samsara_driver_id"] for d in interstate}
+    interstate_sam_ids      = {d["samsara_driver_id"] for d in interstate}
+    interstate_internal_ids = {d["id"] for d in interstate}
 
     day_start = datetime(target_date.year, target_date.month, target_date.day,
                          0, 0, 0, tzinfo=EASTERN)
@@ -712,6 +713,17 @@ def sync_dvirs(target_date: date):
 
     # Vehicle → driver schedule for the assignment-window fallback.
     schedule = load_vehicle_driver_schedule(interstate_sam_ids, day_start, day_end)
+
+    # Reference data for strategy 3 (vehicle → truck → job → driver). Mirrors
+    # backfill_dvirs so the daily sync resolves DVIRs as well as the backfill does;
+    # without it the daily path was strictly weaker and marked real DVIRs as missed.
+    by_unit_raw, by_unit_num, by_vin, by_id_towbook = load_truck_maps()
+    sam_vehicles = load_samsara_vehicle_info()
+    by_name: dict[str, int] = {}
+    for r in (sb.table("drivers").select("id, name").execute().data or []):
+        if r.get("name"):
+            for key in _name_forms(r["name"]):
+                by_name.setdefault(key, r["id"])
 
     # Query through now so DVIRs submitted yesterday but resolved today are captured.
     now_utc = datetime.now(tz=timezone.utc)
@@ -722,17 +734,21 @@ def sync_dvirs(target_date: date):
     })
 
     # Resolve each DVIR to a driver.
-    # Strategy 1: authorSignature.driverInfo.id on the DVIR itself (most reliable —
-    #   bypasses assignment window timing gaps entirely).
-    # Strategy 2: vehicle + timestamp within a driver-vehicle assignment window
-    #   (fallback for DVIRs that don't carry a driverInfo field).
-    submitted: set[str] = set()  # driver_sam_ids that submitted on target_date
+    # Strategy 1: authorSignature.driverInfo.id on the DVIR (most reliable —
+    #   bypasses assignment-window timing gaps entirely).
+    # Strategy 2: vehicle + timestamp within a driver-vehicle assignment window.
+    # Strategy 3: vehicle → trucks table → jobs table → driver (mirrors backfill_dvirs;
+    #   rescues DVIRs whose Samsara driver-id link is missing/wrong — the dominant miss cause).
+    submitted:     set[str] = set()  # driver_sam_ids matched via strategy 1/2
+    submitted_int: set[int] = set()  # internal driver ids matched via strategy 3
     direct_match  = 0
     window_match  = 0
+    job_match     = 0
     unmatched_veh = 0
     for dvir in all_dvirs:
         veh_id = (dvir.get("vehicle") or {}).get("id")
-        ts_raw = dvir.get("startTime") or dvir.get("updatedAtTime")
+        ts_raw = (dvir.get("dvirSubmissionTime") or dvir.get("dvirSubmissionBeginTime")
+                  or dvir.get("startTime") or dvir.get("updatedAtTime"))
         if not ts_raw:
             continue
         dvir_dt   = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
@@ -743,10 +759,13 @@ def sync_dvirs(target_date: date):
 
         driver_sam_id = None
 
-        # Strategy 1: driver ID directly on the DVIR
+        # Strategy 1: driver ID directly on the DVIR. The real Samsara payload carries
+        # it at authorSignature.signatoryUser.id (driverInfo/driver are absent/null).
         author     = dvir.get("authorSignature") or {}
-        drv_info   = author.get("driverInfo") or dvir.get("driver") or {}
-        direct_id  = drv_info.get("id", "")
+        sig        = author.get("signatoryUser") or {}
+        direct_id  = (sig.get("id")
+                      or (author.get("driverInfo") or {}).get("id")
+                      or (dvir.get("driver") or {}).get("id") or "")
         if direct_id and direct_id in interstate_sam_ids:
             driver_sam_id = direct_id
             direct_match += 1
@@ -760,10 +779,24 @@ def sync_dvirs(target_date: date):
 
         if driver_sam_id:
             submitted.add(driver_sam_id)
+            continue
+
+        # Strategy 3: vehicle → trucks table → jobs table → driver
+        if veh_id:
+            veh_name    = (sam_vehicles.get(veh_id) or {}).get("raw_name", "")
+            truck_uuid  = resolve_truck_id(veh_id, veh_name, sam_vehicles,
+                                           by_unit_raw, by_unit_num, by_vin)
+            internal_id = resolve_driver_from_job(truck_uuid, veh_name, dvir_date,
+                                                  by_name, by_id_towbook)
+            if internal_id and internal_id in interstate_internal_ids:
+                submitted_int.add(internal_id)
+                job_match += 1
+            else:
+                unmatched_veh += 1
         else:
             unmatched_veh += 1
-    print(f"  {len(all_dvirs)} total DVIRs fetched, {len(submitted)} Interstate drivers confirmed on {target_date}")
-    print(f"  Matched: {direct_match} via driver signature, {window_match} via assignment window, {unmatched_veh} unmatched")
+    print(f"  {len(all_dvirs)} total DVIRs fetched, {len(submitted) + len(submitted_int)} Interstate drivers confirmed on {target_date}")
+    print(f"  Matched: {direct_match} via driver signature, {window_match} via assignment window, {job_match} via vehicle→job, {unmatched_veh} unmatched")
 
     # Load mileage_logs to determine who actually drove today
     # (don't penalise drivers who were off)
@@ -796,7 +829,7 @@ def sync_dvirs(target_date: date):
             "driver_id":           internal_id,
             "driver_name":         drv["name"],
             "log_date":            target_date.isoformat(),
-            "completed":           sam_id in submitted,
+            "completed":           sam_id in submitted or internal_id in submitted_int,
             "manually_overridden": False,
             "source":              "samsara",
         })

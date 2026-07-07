@@ -44,6 +44,29 @@ MIN_MILES_ELIGIBLE  = 2000
 MIN_SAFETY_SCORE    = 5
 MAX_SEVERITY_RATE   = 95
 
+# ── Pagination ─────────────────────────────────────────────────────────────────
+
+def fetch_all(build_query) -> list[dict]:
+    """Page through a PostgREST query in 1000-row chunks until exhausted.
+
+    Supabase/PostgREST caps a single response at ~1000 rows, so an un-paginated
+    `.execute()` silently drops every row past the first 1000 — which under-counts
+    miles/events/DVIRs and corrupts the scores. `build_query` is a zero-arg
+    callable returning a FRESH query builder with all filters and a stable
+    `.order()` applied but no `.range()`; we add the range per page. A short page
+    (< PAGE rows) means we've reached the end.
+    """
+    PAGE = 1000
+    rows: list[dict] = []
+    start = 0
+    while True:
+        batch = build_query().range(start, start + PAGE - 1).execute().data or []
+        rows.extend(batch)
+        if len(batch) < PAGE:
+            break
+        start += PAGE
+    return rows
+
 # ── Quarter helpers ────────────────────────────────────────────────────────────
 
 def last_completed_quarter() -> tuple[date, date]:
@@ -79,55 +102,54 @@ def get_period() -> tuple[date, date]:
 # ── Data loaders ───────────────────────────────────────────────────────────────
 
 def load_drivers() -> list[dict]:
-    resp = sb.table("drivers") \
-             .select("id, name, yard, function") \
-             .execute()
-    return resp.data or []
+    return fetch_all(lambda: sb.table("drivers")
+                     .select("id, name, yard, function")
+                     .order("id"))
 
 def load_event_points(period_start: date, period_end: date) -> dict[int, int]:
     """Returns {driver_id: total_severity_points} for the period."""
-    resp = sb.table("safety_events") \
-             .select("driver_id, severity_points") \
-             .gte("occurred_at", period_start.isoformat()) \
-             .lte("occurred_at", f"{period_end.isoformat()}T23:59:59Z") \
-             .not_.is_("driver_id", "null") \
-             .execute()
+    rows = fetch_all(lambda: sb.table("safety_events")
+                     .select("driver_id, severity_points")
+                     .gte("occurred_at", period_start.isoformat())
+                     .lte("occurred_at", f"{period_end.isoformat()}T23:59:59Z")
+                     .not_.is_("driver_id", "null")
+                     .order("id"))
     totals: dict[int, int] = defaultdict(int)
-    for row in (resp.data or []):
+    for row in rows:
         totals[row["driver_id"]] += (row["severity_points"] or 0)
     return dict(totals)
 
 def load_miles(period_start: date, period_end: date) -> dict[int, float]:
     """Returns {driver_id: total_miles} for the period."""
-    resp = sb.table("mileage_logs") \
-             .select("driver_id, miles") \
-             .gte("log_date", period_start.isoformat()) \
-             .lte("log_date", period_end.isoformat()) \
-             .not_.is_("driver_id", "null") \
-             .execute()
+    rows = fetch_all(lambda: sb.table("mileage_logs")
+                     .select("driver_id, miles")
+                     .gte("log_date", period_start.isoformat())
+                     .lte("log_date", period_end.isoformat())
+                     .not_.is_("driver_id", "null")
+                     .order("id"))
     totals: dict[int, float] = defaultdict(float)
-    for row in (resp.data or []):
+    for row in rows:
         totals[row["driver_id"]] += float(row["miles"] or 0)
     return dict(totals)
 
 def load_dvir_misses(period_start: date, period_end: date) -> dict[int, int]:
     """Returns {driver_id: days_missed} — only rows where completed=false."""
-    resp = sb.table("dvir_logs") \
-             .select("driver_id, log_date, source") \
-             .gte("log_date", period_start.isoformat()) \
-             .lte("log_date", period_end.isoformat()) \
-             .eq("completed", False) \
-             .not_.is_("driver_id", "null") \
-             .execute()
+    rows = fetch_all(lambda: sb.table("dvir_logs")
+                     .select("driver_id, log_date, source")
+                     .gte("log_date", period_start.isoformat())
+                     .lte("log_date", period_end.isoformat())
+                     .eq("completed", False)
+                     .not_.is_("driver_id", "null")
+                     .order("id"))
     counts: dict[int, int] = defaultdict(int)
-    for row in (resp.data or []):
+    for row in rows:
         counts[row["driver_id"]] += 1
 
-    if resp.data:
+    if rows:
         by_source: dict[str, int] = defaultdict(int)
-        for row in resp.data:
+        for row in rows:
             by_source[row.get("source") or "unknown"] += 1
-        print(f"  DVIR miss rows found: {len(resp.data)} "
+        print(f"  DVIR miss rows found: {len(rows)} "
               f"({', '.join(f'{s}={n}' for s, n in sorted(by_source.items()))})")
         print(f"  Across {len(counts)} driver(s): "
               + ", ".join(f"driver_id={did}:{n}" for did, n in sorted(counts.items())))
@@ -154,14 +176,14 @@ def load_compliance(period_start: date, period_end: date) -> dict[int, dict]:
     Returns {driver_id: {points: int, disqualified: bool}}.
     disqualified=True when any event_type in ('oos', 'accident').
     """
-    resp = sb.table("compliance_events") \
-             .select("driver_id, event_type, points") \
-             .gte("event_date", period_start.isoformat()) \
-             .lte("event_date", period_end.isoformat()) \
-             .not_.is_("driver_id", "null") \
-             .execute()
+    rows = fetch_all(lambda: sb.table("compliance_events")
+                     .select("driver_id, event_type, points")
+                     .gte("event_date", period_start.isoformat())
+                     .lte("event_date", period_end.isoformat())
+                     .not_.is_("driver_id", "null")
+                     .order("id"))
     result: dict[int, dict] = defaultdict(lambda: {"points": 0, "disqualified": False})
-    for row in (resp.data or []):
+    for row in rows:
         did = row["driver_id"]
         result[did]["points"] += (row["points"] or 0)
         if row["event_type"] in ("oos", "accident"):
@@ -170,13 +192,13 @@ def load_compliance(period_start: date, period_end: date) -> dict[int, dict]:
 
 def load_locked_keys(period_start: date, period_end: date) -> set[int]:
     """Returns set of driver_ids whose snapshot for this period is already locked."""
-    resp = sb.table("score_snapshots") \
-             .select("driver_id") \
-             .eq("period_start", period_start.isoformat()) \
-             .eq("period_end", period_end.isoformat()) \
-             .eq("locked", True) \
-             .execute()
-    return {r["driver_id"] for r in (resp.data or [])}
+    rows = fetch_all(lambda: sb.table("score_snapshots")
+                     .select("driver_id")
+                     .eq("period_start", period_start.isoformat())
+                     .eq("period_end", period_end.isoformat())
+                     .eq("locked", True)
+                     .order("id"))
+    return {r["driver_id"] for r in rows}
 
 # ── Ranking ────────────────────────────────────────────────────────────────────
 
