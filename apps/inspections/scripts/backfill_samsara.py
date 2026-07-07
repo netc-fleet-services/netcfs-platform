@@ -1020,7 +1020,8 @@ def backfill_dvirs():
     unmatched_veh = 0
     for dvir in all_dvirs:
         veh_id = (dvir.get("vehicle") or {}).get("id")
-        ts_raw = dvir.get("startTime") or dvir.get("updatedAtTime")
+        ts_raw = (dvir.get("dvirSubmissionTime") or dvir.get("dvirSubmissionBeginTime")
+                  or dvir.get("startTime") or dvir.get("updatedAtTime"))
         if not ts_raw:
             no_vehicle += 1
             continue
@@ -1032,10 +1033,13 @@ def backfill_dvirs():
 
         driver_sam_id = None
 
-        # Strategy 1: driver ID directly on the DVIR
+        # Strategy 1: driver ID directly on the DVIR. The real Samsara payload carries
+        # it at authorSignature.signatoryUser.id (driverInfo/driver are absent/null).
         author    = dvir.get("authorSignature") or {}
-        drv_info  = author.get("driverInfo") or dvir.get("driver") or {}
-        direct_id = drv_info.get("id", "")
+        sig       = author.get("signatoryUser") or {}
+        direct_id = (sig.get("id")
+                     or (author.get("driverInfo") or {}).get("id")
+                     or (dvir.get("driver") or {}).get("id") or "")
         if direct_id and direct_id in interstate_sam_ids:
             driver_sam_id = direct_id
             direct_match += 1
