@@ -1,0 +1,55 @@
+# ═══════════════════════════════════════════════
+# DVIR Capture Diagnostic (READ ONLY)
+#
+# Manual-only. Prints what Samsara's DVIR feed actually contains for a date
+# window and how it compares to what our pipeline recorded. Makes NO writes
+# to Supabase or Samsara — safe to run any time.
+#
+# Run: Actions → "DVIR Diagnostic" → Run workflow → pick a start/end date,
+# then copy the output from the run log ("Run DVIR diagnostic" step).
+#
+# Required repository secrets (same ones the daily sync already uses):
+#   SAMSARA_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY
+# ═══════════════════════════════════════════════
+
+name: DVIR Diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      diag_start:
+        description: 'Start date (YYYY-MM-DD)'
+        required: true
+        default: '2026-06-09'
+      diag_end:
+        description: 'End date (YYYY-MM-DD)'
+        required: true
+        default: '2026-06-13'
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/inspections/requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r apps/inspections/requirements.txt
+
+      - name: Run DVIR diagnostic
+        env:
+          SAMSARA_API_KEY:      ${{ secrets.SAMSARA_API_KEY }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          DIAG_START:           ${{ github.event.inputs.diag_start }}
+          DIAG_END:             ${{ github.event.inputs.diag_end }}
+        run: python apps/inspections/scripts/dvir_diagnostic.py
