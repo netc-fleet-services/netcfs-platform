@@ -69,6 +69,10 @@ export function SafetyDashboard() {
   const [showCompliance, setShowCompliance] = useState(false)
   const [showDvir, setShowDvir]           = useState(false)
   const [refreshKey, setRefreshKey]       = useState(0)
+  // Live driver roster (id → current company/function) so the leaderboard groups
+  // by each driver's CURRENT classification, not the value frozen in the snapshot.
+  const [driverMap, setDriverMap]         = useState<Record<number, { yard: string | null; function: string | null }>>({})
+  const [driverRefreshKey, setDriverRefreshKey] = useState(0)
 
   // Load available periods
   useEffect(() => {
@@ -122,6 +126,18 @@ export function SafetyDashboard() {
       })
   }, [selectedPeriod, refreshKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Load the live driver roster, re-fetched on refreshKey so an inline driver
+  // edit (Company/Function) instantly regroups the leaderboard.
+  useEffect(() => {
+    supabase.from('drivers').select('id, yard, function').then(({ data }) => {
+      const m: Record<number, { yard: string | null; function: string | null }> = {}
+      for (const d of (data ?? []) as { id: number; yard: string | null; function: string | null }[]) {
+        m[d.id] = { yard: d.yard, function: d.function }
+      }
+      setDriverMap(m)
+    })
+  }, [refreshKey, driverRefreshKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Metric cards
   const metrics = useMemo(() => {
     const eligible = snapshots.filter(s => s.eligible && !s.disqualified)
@@ -136,9 +152,20 @@ export function SafetyDashboard() {
 
   // Leaderboard: group → sorted snapshots
   const groups = useMemo(() => {
+    // Group by the driver's CURRENT company/function so inline edits regroup the
+    // board live. Mirrors the scorer's rank_group (interstate yard = its own group,
+    // else the function); falls back to the snapshot's frozen value if unknown.
+    const liveGroup = (s: Snapshot): string => {
+      const d = driverMap[s.driver_id]
+      if (d) {
+        if ((d.yard || '').toLowerCase() === 'interstate') return 'interstate'
+        return (d.function || '').trim().toLowerCase() || 'other'
+      }
+      return s.rank_group || 'other'
+    }
     const byGroup: Record<string, Snapshot[]> = {}
     for (const s of snapshots) {
-      const g = s.rank_group || 'other'
+      const g = liveGroup(s)
       if (!byGroup[g]) byGroup[g] = []
       byGroup[g].push(s)
     }
@@ -156,9 +183,12 @@ export function SafetyDashboard() {
       if (b === 'interstate') return 1
       return a.localeCompare(b)
     })
-  }, [snapshots])
+  }, [snapshots, driverMap])
 
   const onSaved = () => { setShowCompliance(false); setShowDvir(false); setRefreshKey(k => k + 1) }
+  // Driver Company/Function edits only change grouping (not scores), so reload just
+  // the roster to regroup the board live — without resetting the selected period.
+  const onDriverSaved = () => setDriverRefreshKey(k => k + 1)
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '2.5rem 1.5rem 5rem' }}>
@@ -301,9 +331,9 @@ export function SafetyDashboard() {
                     <td style={{ padding: '0.6rem 0.75rem', fontWeight: 600, color: 'rgb(var(--on-surface))' }}>
                       {s.driver_name}
                     </td>
-                    {/* Yard */}
+                    {/* Yard (live so a Company edit updates the label immediately) */}
                     <td style={{ padding: '0.6rem 0.75rem', color: 'rgb(var(--on-surface-muted))', textTransform: 'capitalize' }}>
-                      {s.driver_yard ?? '—'}
+                      {driverMap[s.driver_id]?.yard ?? s.driver_yard ?? '—'}
                     </td>
                     {/* Score */}
                     <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right' }}>
@@ -351,6 +381,7 @@ export function SafetyDashboard() {
           snapshot={selectedDriver}
           period={selectedPeriod}
           onClose={() => setSelectedDriver(null)}
+          onSaved={onDriverSaved}
         />
       )}
       {showCompliance && (

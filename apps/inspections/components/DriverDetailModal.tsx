@@ -81,9 +81,10 @@ type Props = {
   snapshot: Snapshot
   period: Period
   onClose: () => void
+  onSaved?: () => void
 }
 
-export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
+export function DriverDetailModal({ snapshot: s, period, onClose, onSaved }: Props) {
   const supabase = getSupabaseBrowserClient()
   const [events, setEvents]           = useState<SafetyEvent[]>([])
   const [dvirLogs, setDvirLogs]       = useState<DvirLog[]>([])
@@ -105,11 +106,13 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
   const [fnOpts, setFnOpts]             = useState<string[]>([])
 
   useEffect(() => {
-    supabase.from('drivers').select('yard, function').then(({ data }) => {
+    supabase.from('drivers').select('id, yard, function').then(({ data }) => {
       const ys = new Set<string>(), fs = new Set<string>()
-      for (const r of (data ?? []) as { yard: string | null; function: string | null }[]) {
+      for (const r of (data ?? []) as { id: number; yard: string | null; function: string | null }[]) {
         if (r.yard && r.yard.trim()) ys.add(r.yard.trim())
         if (r.function && r.function.trim()) fs.add(r.function.trim())
+        // Show this driver's LIVE company/function (may differ from the frozen snapshot)
+        if (r.id === s.driver_id) { setCurYard(r.yard); setCurFunction(r.function) }
       }
       setYardOpts([...ys].sort((a, b) => a.localeCompare(b)))
       setFnOpts([...fs].sort((a, b) => a.localeCompare(b)))
@@ -170,6 +173,7 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
     setCurYard(formYard || null)
     setCurFunction(formFunction || null)
     setEditing(false)
+    onSaved?.()  // regroup the leaderboard live
   }
 
   return (
