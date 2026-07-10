@@ -66,6 +66,20 @@ jobs:
             else                     echo "${Y}-10-01"
             fi
           }
+          # Helper: compute current-quarter END date. Using the quarter END (not
+          # today) as period_end keeps the daily run's upsert key stable within a
+          # quarter, so it OVERWRITES one snapshot set per quarter instead of piling
+          # up a brand-new period every day (which bloated score_snapshots and pushed
+          # older quarters out of the dashboard's period query).
+          _quarter_end() {
+            local M Y
+            M=$(date +%-m); Y=$(date +%Y)
+            if   [ $M -le 3 ]; then echo "${Y}-03-31"
+            elif [ $M -le 6 ]; then echo "${Y}-06-30"
+            elif [ $M -le 9 ]; then echo "${Y}-09-30"
+            else                     echo "${Y}-12-31"
+            fi
+          }
           if [ -n "${{ github.event.inputs.period_start }}" ]; then
             # Manual run with explicit dates — use them as-is
             echo "start=${{ github.event.inputs.period_start }}" >> $GITHUB_OUTPUT
@@ -75,9 +89,11 @@ jobs:
             echo "start=" >> $GITHUB_OUTPUT
             echo "end="   >> $GITHUB_OUTPUT
           else
-            # Daily cron OR manual trigger with no dates — current quarter YTD
+            # Daily cron OR manual trigger with no dates — current quarter YTD.
+            # period_end is the quarter END so each daily run overwrites the same
+            # snapshot set instead of creating a new period every day.
             echo "start=$(_quarter_start)"   >> $GITHUB_OUTPUT
-            echo "end=$(date +%Y-%m-%d)"     >> $GITHUB_OUTPUT
+            echo "end=$(_quarter_end)"       >> $GITHUB_OUTPUT
           fi
 
       - name: Run scoring engine
