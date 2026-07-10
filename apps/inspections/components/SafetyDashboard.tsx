@@ -72,26 +72,39 @@ export function SafetyDashboard() {
 
   // Load available periods
   useEffect(() => {
-    supabase
-      .from('score_snapshots')
-      .select('period_start, period_end')
-      .order('period_start', { ascending: false })
-      .then(({ data }) => {
-        if (!data?.length) { setLoading(false); return }
-        // Group by quarter label; keep the row with the most recent period_end per quarter.
-        const byLabel = new Map<string, Period>()
-        for (const r of data) {
-          const label = formatPeriod(r.period_start, r.period_end)
-          const existing = byLabel.get(label)
-          if (!existing || r.period_end > existing.end) {
-            byLabel.set(label, { start: r.period_start, end: r.period_end, label })
-          }
+    // score_snapshots holds one snapshot set per (period_start, period_end). The daily
+    // job writes a set every day, so this table can far exceed PostgREST's 1000-row
+    // default cap. Page through ALL rows so older quarters can never fall out of the
+    // dropdown once the current quarter's rows alone pass 1000.
+    async function loadPeriods() {
+      const PAGE = 1000
+      const rows: { period_start: string; period_end: string }[] = []
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from('score_snapshots')
+          .select('period_start, period_end')
+          .order('period_start', { ascending: false })
+          .range(from, from + PAGE - 1)
+        if (error || !data?.length) break
+        rows.push(...data)
+        if (data.length < PAGE) break
+      }
+      if (!rows.length) { setLoading(false); return }
+      // Group by quarter label; keep the row with the most recent period_end per quarter.
+      const byLabel = new Map<string, Period>()
+      for (const r of rows) {
+        const label = formatPeriod(r.period_start, r.period_end)
+        const existing = byLabel.get(label)
+        if (!existing || r.period_end > existing.end) {
+          byLabel.set(label, { start: r.period_start, end: r.period_end, label })
         }
-        // Sort newest-first by period_start
-        const unique = Array.from(byLabel.values()).sort((a, b) => b.start.localeCompare(a.start))
-        setPeriods(unique)
-        setSelectedPeriod(unique[0])
-      })
+      }
+      // Sort newest-first by period_start
+      const unique = Array.from(byLabel.values()).sort((a, b) => b.start.localeCompare(a.start))
+      setPeriods(unique)
+      setSelectedPeriod(unique[0])
+    }
+    loadPeriods()
   }, [refreshKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load snapshots when period or refresh changes
