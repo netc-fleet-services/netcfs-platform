@@ -67,21 +67,12 @@ function complianceTypeLabel(type: string): string {
   return map[type] ?? type
 }
 
-// Company (drivers.yard, stored lowercase) + function options.
-// Mirrors apps/transport DEFAULT_YARDS + DRIVER_FUNCTIONS plus the interstate group.
-const COMPANIES: { value: string; label: string }[] = [
-  { value: 'interstate', label: 'Interstate'  },
-  { value: 'exeter',     label: 'Exeter'       },
-  { value: 'pembroke',   label: 'Pembroke'     },
-  { value: 'mattbrowns', label: "Matt Brown's" },
-  { value: 'rays',       label: "Ray's Saco"   },
-]
-const DRIVER_FUNCTIONS = ['Transport', 'Heavy Duty Towing', 'Road Service', 'Light Duty Towing']
-
-function companyLabel(yard: string | null): string {
-  if (!yard) return 'Unassigned'
-  const hit = COMPANIES.find(c => c.value === yard.toLowerCase())
-  return hit ? hit.label : yard.replace(/\b\w/g, c => c.toUpperCase())
+// The Company (drivers.yard) and Function dropdown options are read LIVE from the
+// drivers table, so every real category is selectable and nothing gets silently
+// merged — categories that look like duplicates but are kept distinct on purpose
+// (e.g. "LDT" vs "Light Duty Towing", same work at different companies) both appear.
+function displayOrDash(v: string | null): string {
+  return v && v.trim() ? v : 'Unassigned'
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -104,10 +95,26 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
   const [editing, setEditing]           = useState(false)
   const [curYard, setCurYard]           = useState<string | null>(s.driver_yard)
   const [curFunction, setCurFunction]   = useState<string | null>(s.driver_function)
-  const [formYard, setFormYard]         = useState<string>((s.driver_yard ?? '').toLowerCase())
+  const [formYard, setFormYard]         = useState<string>(s.driver_yard ?? '')
   const [formFunction, setFormFunction] = useState<string>(s.driver_function ?? '')
   const [savingEdit, setSavingEdit]     = useState(false)
   const [editError, setEditError]       = useState<string | null>(null)
+  // Distinct Company/Function values that already exist across the roster, so the
+  // dropdowns offer every real category (LDT, HDT, Light Duty Towing, …) as-is.
+  const [yardOpts, setYardOpts]         = useState<string[]>([])
+  const [fnOpts, setFnOpts]             = useState<string[]>([])
+
+  useEffect(() => {
+    supabase.from('drivers').select('yard, function').then(({ data }) => {
+      const ys = new Set<string>(), fs = new Set<string>()
+      for (const r of (data ?? []) as { yard: string | null; function: string | null }[]) {
+        if (r.yard && r.yard.trim()) ys.add(r.yard.trim())
+        if (r.function && r.function.trim()) fs.add(r.function.trim())
+      }
+      setYardOpts([...ys].sort((a, b) => a.localeCompare(b)))
+      setFnOpts([...fs].sort((a, b) => a.localeCompare(b)))
+    })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     Promise.all([
@@ -197,7 +204,7 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
         }}>
           <div>
             <div style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'rgb(var(--primary))', marginBottom: '0.25rem' }}>
-              {period.label} · {companyLabel(curYard)}{curFunction ? ` · ${curFunction}` : ''}
+              {period.label} · {displayOrDash(curYard)}{curFunction ? ` · ${curFunction}` : ''}
             </div>
             <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'rgb(var(--on-surface))' }}>
               {s.driver_name}
@@ -207,7 +214,7 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
             {!editing && (
               <button
                 onClick={() => {
-                  setFormYard((curYard ?? '').toLowerCase())
+                  setFormYard(curYard ?? '')
                   setFormFunction(curFunction ?? '')
                   setEditError(null)
                   setEditing(true)
@@ -247,8 +254,8 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
                   Company
                   <select value={formYard} onChange={e => setFormYard(e.target.value)} style={editSelectStyle}>
                     <option value="">— unassigned —</option>
-                    {COMPANIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                    {formYard && !COMPANIES.some(c => c.value === formYard) && (
+                    {yardOpts.map(y => <option key={y} value={y}>{y}</option>)}
+                    {formYard && !yardOpts.includes(formYard) && (
                       <option value={formYard}>{formYard}</option>
                     )}
                   </select>
@@ -257,8 +264,8 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
                   Function
                   <select value={formFunction} onChange={e => setFormFunction(e.target.value)} style={editSelectStyle}>
                     <option value="">— none —</option>
-                    {DRIVER_FUNCTIONS.map(f => <option key={f} value={f}>{f}</option>)}
-                    {formFunction && !DRIVER_FUNCTIONS.includes(formFunction) && (
+                    {fnOpts.map(f => <option key={f} value={f}>{f}</option>)}
+                    {formFunction && !fnOpts.includes(formFunction) && (
                       <option value={formFunction}>{formFunction}</option>
                     )}
                   </select>
