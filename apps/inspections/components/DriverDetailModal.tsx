@@ -67,6 +67,14 @@ function complianceTypeLabel(type: string): string {
   return map[type] ?? type
 }
 
+// The Company (drivers.yard) and Function dropdown options are read LIVE from the
+// drivers table, so every real category is selectable and nothing gets silently
+// merged — categories that look like duplicates but are kept distinct on purpose
+// (e.g. "LDT" vs "Light Duty Towing", same work at different companies) both appear.
+function displayOrDash(v: string | null): string {
+  return v && v.trim() ? v : 'Unassigned'
+}
+
 // ── Component ──────────────────────────────────────────────────────────────────
 
 type Props = {
@@ -82,6 +90,31 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
   const [compliance, setCompliance]   = useState<ComplianceEvent[]>([])
   const [loading, setLoading]         = useState(true)
   const [overriding, setOverriding]   = useState<string | null>(null) // log id being saved
+
+  // Inline driver-attribute editing (company / function)
+  const [editing, setEditing]           = useState(false)
+  const [curYard, setCurYard]           = useState<string | null>(s.driver_yard)
+  const [curFunction, setCurFunction]   = useState<string | null>(s.driver_function)
+  const [formYard, setFormYard]         = useState<string>(s.driver_yard ?? '')
+  const [formFunction, setFormFunction] = useState<string>(s.driver_function ?? '')
+  const [savingEdit, setSavingEdit]     = useState(false)
+  const [editError, setEditError]       = useState<string | null>(null)
+  // Distinct Company/Function values that already exist across the roster, so the
+  // dropdowns offer every real category (LDT, HDT, Light Duty Towing, …) as-is.
+  const [yardOpts, setYardOpts]         = useState<string[]>([])
+  const [fnOpts, setFnOpts]             = useState<string[]>([])
+
+  useEffect(() => {
+    supabase.from('drivers').select('yard, function').then(({ data }) => {
+      const ys = new Set<string>(), fs = new Set<string>()
+      for (const r of (data ?? []) as { yard: string | null; function: string | null }[]) {
+        if (r.yard && r.yard.trim()) ys.add(r.yard.trim())
+        if (r.function && r.function.trim()) fs.add(r.function.trim())
+      }
+      setYardOpts([...ys].sort((a, b) => a.localeCompare(b)))
+      setFnOpts([...fs].sort((a, b) => a.localeCompare(b)))
+    })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     Promise.all([
@@ -125,6 +158,20 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
     setOverriding(null)
   }
 
+  async function saveEdit() {
+    setSavingEdit(true)
+    setEditError(null)
+    const { error } = await supabase
+      .from('drivers')
+      .update({ yard: formYard || null, function: formFunction || null })
+      .eq('id', s.driver_id)
+    setSavingEdit(false)
+    if (error) { setEditError(error.message); return }
+    setCurYard(formYard || null)
+    setCurFunction(formFunction || null)
+    setEditing(false)
+  }
+
   return (
     <>
       {/* Backdrop */}
@@ -157,22 +204,94 @@ export function DriverDetailModal({ snapshot: s, period, onClose }: Props) {
         }}>
           <div>
             <div style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'rgb(var(--primary))', marginBottom: '0.25rem' }}>
-              {period.label} · {(s.driver_yard ?? '').replace(/\b\w/g, c => c.toUpperCase())}
+              {period.label} · {displayOrDash(curYard)}{curFunction ? ` · ${curFunction}` : ''}
             </div>
             <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'rgb(var(--on-surface))' }}>
               {s.driver_name}
             </h2>
           </div>
-          <button
-            onClick={onClose}
-            style={{ background: 'none', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: 'rgb(var(--on-surface-muted))', padding: '0.25rem', lineHeight: 1 }}
-          >
-            ✕
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {!editing && (
+              <button
+                onClick={() => {
+                  setFormYard(curYard ?? '')
+                  setFormFunction(curFunction ?? '')
+                  setEditError(null)
+                  setEditing(true)
+                }}
+                style={{
+                  background: 'rgb(var(--surface-container))', border: '1px solid rgb(var(--outline-variant))',
+                  borderRadius: '0.4rem', padding: '0.3rem 0.7rem', fontSize: '0.78rem', fontWeight: 600,
+                  cursor: 'pointer', color: 'rgb(var(--on-surface))', whiteSpace: 'nowrap',
+                }}
+              >
+                ✎ Edit
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              style={{ background: 'none', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: 'rgb(var(--on-surface-muted))', padding: '0.25rem', lineHeight: 1 }}
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         {/* Scrollable body */}
         <div style={{ overflowY: 'auto', padding: '1.5rem', flex: 1 }}>
+
+          {/* Edit driver company / function */}
+          {editing && (
+            <div style={{
+              marginBottom: '1.5rem', padding: '1rem', borderRadius: '0.625rem',
+              background: 'rgb(var(--surface-container))', border: '1px solid rgb(var(--outline-variant))',
+            }}>
+              <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'rgb(var(--on-surface-muted))', marginBottom: '0.75rem' }}>
+                Edit Driver
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <label style={{ fontSize: '0.72rem', fontWeight: 600, color: 'rgb(var(--on-surface-muted))' }}>
+                  Company
+                  <select value={formYard} onChange={e => setFormYard(e.target.value)} style={editSelectStyle}>
+                    <option value="">— unassigned —</option>
+                    {yardOpts.map(y => <option key={y} value={y}>{y}</option>)}
+                    {formYard && !yardOpts.includes(formYard) && (
+                      <option value={formYard}>{formYard}</option>
+                    )}
+                  </select>
+                </label>
+                <label style={{ fontSize: '0.72rem', fontWeight: 600, color: 'rgb(var(--on-surface-muted))' }}>
+                  Function
+                  <select value={formFunction} onChange={e => setFormFunction(e.target.value)} style={editSelectStyle}>
+                    <option value="">— none —</option>
+                    {fnOpts.map(f => <option key={f} value={f}>{f}</option>)}
+                    {formFunction && !fnOpts.includes(formFunction) && (
+                      <option value={formFunction}>{formFunction}</option>
+                    )}
+                  </select>
+                </label>
+              </div>
+              {editError && <div style={{ color: 'rgb(var(--error))', fontSize: '0.78rem', marginTop: '0.5rem' }}>{editError}</div>}
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.875rem' }}>
+                <button onClick={saveEdit} disabled={savingEdit} style={{
+                  background: 'rgb(var(--primary))', color: 'rgb(var(--on-primary))', border: 'none',
+                  borderRadius: '0.4rem', padding: '0.45rem 1rem', fontSize: '0.8rem', fontWeight: 700,
+                  cursor: savingEdit ? 'default' : 'pointer', opacity: savingEdit ? 0.6 : 1,
+                }}>
+                  {savingEdit ? 'Saving…' : 'Save'}
+                </button>
+                <button onClick={() => setEditing(false)} disabled={savingEdit} style={{
+                  background: 'none', color: 'rgb(var(--on-surface-muted))', border: '1px solid rgb(var(--outline-variant))',
+                  borderRadius: '0.4rem', padding: '0.45rem 1rem', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer',
+                }}>
+                  Cancel
+                </button>
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'rgb(var(--on-surface-muted))', marginTop: '0.625rem', lineHeight: 1.5 }}>
+                Saves to the driver record. Rankings and grouping refresh on the next score run.
+              </div>
+            </div>
+          )}
 
           {/* Score breakdown */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '0.75rem', marginBottom: '1.75rem' }}>
@@ -339,4 +458,11 @@ function Flag({ label, color }: { label: string; color: string }) {
       {label}
     </div>
   )
+}
+
+const editSelectStyle: React.CSSProperties = {
+  display: 'block', width: '100%', marginTop: '0.3rem',
+  padding: '0.45rem 0.5rem', fontSize: '0.82rem', borderRadius: '0.4rem',
+  border: '1px solid rgb(var(--outline-variant))',
+  background: 'rgb(var(--surface))', color: 'rgb(var(--on-surface))', cursor: 'pointer',
 }
