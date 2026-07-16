@@ -537,8 +537,11 @@ def sync_to_supabase(tb_calls):
             "drop_lon":     d_lon,
             "tb_scheduled": keep(call["scheduled"], "tb_scheduled"),
             "tb_reason":    tb_reason_final,
-            "tb_driver":    keep(call["driver"],    "tb_driver"),
-            "tb_driver_2":  keep(call["driver2"],   "tb_driver_2"),
+            # Driver names ALWAYS mirror TowBook exactly (no keep()): when a
+            # dispatcher reassigns or removes a driver on a call, the board
+            # must follow. The live board reconciles driver_id from these.
+            "tb_driver":    call["driver"]  or None,
+            "tb_driver_2":  call["driver2"] or None,
             "truck_and_equipment": keep(call["truck"], "truck_and_equipment"),
             "day":          keep(call["day"],       "day"),
             "updated_at":   now,

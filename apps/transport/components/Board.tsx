@@ -170,21 +170,35 @@ export function Board() {
     void db.loadJobsForDay(selectedDay).then(setPlanJobs)
   }, [isPlanning, selectedDay])
 
-  // ── Auto-match TowBook names → roster ids; queue the unmatchable ──
+  // ── Reconcile TowBook names → roster ids; queue the unmatchable ──
+  // TowBook is the source of truth whenever it names a driver: if a dispatcher
+  // reassigns a call there, the stored assignment is CORRECTED to follow (the
+  // old driver frees up everywhere). Only when TowBook has NO name do board
+  // assignments stand on their own (the claimed-pending workflow).
+  // Fingerprint so the effect re-runs on any name/assignment change, not just
+  // when jobs are added/removed.
+  const matchKey = useMemo(
+    () => jobs.map(j => `${j.id}:${j.tbDriver}|${j.tbDriver2}|${j.driverId}|${j.driverId2}|${j.status}`).join('~'),
+    [jobs],
+  )
   useEffect(() => {
     if (!loaded) return
     const byName = new Map(drivers.map(d => [normName(d.name), d]))
     const queue = new Map<string, DriverMatchItem>()
-    const updates: { id: string; fields: Record<string, unknown> }[] = []
+    const updates = new Map<string, Record<string, unknown>>()
 
     for (const j of jobs) {
       if (j.status !== 'scheduled' && j.status !== 'active') continue
       const check = (tbName: string, slot: DriverMatchItem['slot'], current: number | null) => {
         const n = normName(tbName)
-        if (!n || current) return
+        if (!n) return   // TowBook has no name — leave any board assignment alone
         const hit = byName.get(n) ?? drivers.find(d => d.id === aliases[n])
         if (hit) {
-          updates.push({ id: j.id, fields: slot === 'driverId' ? { driver_id: hit.id } : { driver_id_2: hit.id } })
+          if (current !== hit.id) {
+            const fields = updates.get(j.id) ?? {}
+            fields[slot === 'driverId' ? 'driver_id' : 'driver_id_2'] = hit.id
+            updates.set(j.id, fields)
+          }
         } else {
           const key = `${n}|${slot}`
           const existing = queue.get(key)
@@ -196,21 +210,21 @@ export function Board() {
       check(j.tbDriver2, 'driverId2', j.driverId2)
     }
 
-    if (updates.length) {
+    if (updates.size) {
       setJobs(prev => prev.map(j => {
-        const u = updates.find(x => x.id === j.id)
-        if (!u) return j
+        const fields = updates.get(j.id)
+        if (!fields) return j
         return {
           ...j,
-          driverId:  'driver_id'   in u.fields ? (u.fields.driver_id as number)   : j.driverId,
-          driverId2: 'driver_id_2' in u.fields ? (u.fields.driver_id_2 as number) : j.driverId2,
+          driverId:  'driver_id'   in fields ? (fields.driver_id as number)   : j.driverId,
+          driverId2: 'driver_id_2' in fields ? (fields.driver_id_2 as number) : j.driverId2,
         }
       }))
-      for (const u of updates) void db.updateJobFields(u.id, u.fields)
+      for (const [id, fields] of updates) void db.updateJobFields(id, fields)
     }
     setMatchQueue([...queue.values()])
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobs.length, drivers, aliases, loaded])
+  }, [matchKey, drivers, aliases, loaded])
 
   // ── Warm GraphHopper routes for displayed jobs (better ETAs) ──────
   useEffect(() => {
