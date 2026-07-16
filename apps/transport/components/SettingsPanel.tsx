@@ -1,14 +1,14 @@
 'use client'
 
 import { useState } from 'react'
-import { C, DRIVER_FUNCTIONS, bP, bSt, cB, iS, sS } from '../lib/config'
+import { C, COMPANY_ORDER, DRIVER_FUNCTIONS, bP, bSt, cB, iS, sS } from '../lib/config'
 import type { Driver, Yard } from '../lib/types'
 
 export function SettingsPanel({
   drivers, aliases, yards, ghRepo, ghToken, syncStatus,
-  onClose, onTriggerSync, onSaveGh, onSaveDriver, onDeleteAlias, onSaveYard, onDeleteYard,
+  onClose, onTriggerSync, onSaveGh, onSaveDriver, onAddDriver, onSetActive, onDeleteAlias, onSaveYard, onDeleteYard,
 }: {
-  drivers: Driver[]
+  drivers: Driver[]                       // full roster incl. hidden
   aliases: Record<string, number>
   yards: Yard[]
   ghRepo: string
@@ -18,12 +18,16 @@ export function SettingsPanel({
   onTriggerSync: () => void
   onSaveGh: (repo: string, token: string) => void
   onSaveDriver: (d: Driver) => void
+  onAddDriver: (d: Omit<Driver, 'id'>) => void
+  onSetActive: (id: number, active: boolean) => void
   onDeleteAlias: (normName: string) => void
   onSaveYard: (y: Yard) => void
   onDeleteYard: (id: string) => void
 }) {
   const [repo, setRepo] = useState(ghRepo)
   const [token, setToken] = useState(ghToken)
+  const visible = [...drivers].filter(d => d.active).sort((a, b) => a.name.localeCompare(b.name))
+  const hidden  = [...drivers].filter(d => !d.active).sort((a, b) => a.name.localeCompare(b.name))
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.75)', zIndex: 900, overflowY: 'auto', padding: '5vh 16px' }}
@@ -53,13 +57,36 @@ export function SettingsPanel({
         {/* ── Roster ── */}
         <div style={{ ...cB, padding: 14 }}>
           <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Driver Roster</div>
-          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-            {[...drivers].sort((a, b) => a.name.localeCompare(b.name)).map(d => (
-              <RosterRow key={d.id} driver={d} onSave={onSaveDriver} />
+
+          <AddDriverRow onAdd={onAddDriver} />
+
+          <div style={{ maxHeight: 320, overflowY: 'auto', marginTop: 8 }}>
+            {visible.map(d => (
+              <RosterRow key={d.id} driver={d} onSave={onSaveDriver} onHide={() => onSetActive(d.id, false)} />
             ))}
           </div>
-          <div style={{ fontSize: 10, color: C.dm, marginTop: 6 }}>
-            Company assignment and active/inactive status are managed by the roster sync + scheduler app.
+
+          {hidden.length > 0 && (
+            <div style={{ marginTop: 12, borderTop: '1px solid ' + C.bd, paddingTop: 8 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: C.dm, marginBottom: 6 }}>
+                HIDDEN ({hidden.length}) — never shown on the board or scheduler
+              </div>
+              {hidden.map(d => (
+                <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', fontSize: 12, opacity: 0.8 }}>
+                  <span style={{ fontWeight: 700 }}>{d.name}</span>
+                  {d.func && <span style={{ color: C.dm }}>{d.func}</span>}
+                  <button style={{ ...bSt, marginLeft: 'auto', color: C.gn, borderColor: C.gn }} onClick={() => onSetActive(d.id, true)}>
+                    restore
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ fontSize: 10, color: C.dm, marginTop: 8, lineHeight: 1.5 }}>
+            Hiding a driver (they quit, seasonal, etc.) removes them from the board and the
+            scheduler instantly but keeps all their history — restore any time. Drivers are
+            never deleted: schedules and calls reference them.
           </div>
         </div>
 
@@ -90,20 +117,63 @@ export function SettingsPanel({
   )
 }
 
-function RosterRow({ driver, onSave }: { driver: Driver; onSave: (d: Driver) => void }) {
+function CompanySelect({ value, onChange, width = 110 }: { value: string; onChange: (v: string) => void; width?: number }) {
+  return (
+    <select style={{ ...sS, width }} value={value} onChange={e => onChange(e.target.value)}>
+      {COMPANY_ORDER.map(c => <option key={c} value={c}>{c}</option>)}
+      {value && !COMPANY_ORDER.includes(value) && <option value={value}>{value}</option>}
+    </select>
+  )
+}
+
+function RosterRow({ driver, onSave, onHide }: { driver: Driver; onSave: (d: Driver) => void; onHide: () => void }) {
   const [d, setD] = useState(driver)
-  const dirty = d.name !== driver.name || d.truck !== driver.truck || d.func !== driver.func || d.yard !== driver.yard
+  const dirty = d.name !== driver.name || d.truck !== driver.truck || d.func !== driver.func
+    || d.yard !== driver.yard || d.company !== driver.company
   return (
     <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '3px 0' }}>
-      <input style={{ ...iS, width: 180 }} value={d.name} onChange={e => setD({ ...d, name: e.target.value })} />
-      <input style={{ ...iS, width: 70 }} placeholder="truck" value={d.truck} onChange={e => setD({ ...d, truck: e.target.value })} />
-      <select style={{ ...sS, width: 160 }} value={d.func} onChange={e => setD({ ...d, func: e.target.value })}>
+      <input style={{ ...iS, width: 160 }} value={d.name} onChange={e => setD({ ...d, name: e.target.value })} />
+      <input style={{ ...iS, width: 60 }} placeholder="truck" value={d.truck} onChange={e => setD({ ...d, truck: e.target.value })} />
+      <select style={{ ...sS, width: 140 }} value={d.func} onChange={e => setD({ ...d, func: e.target.value })}>
         <option value="">— function —</option>
         {DRIVER_FUNCTIONS.map(f => <option key={f} value={f}>{f}</option>)}
         {d.func && !DRIVER_FUNCTIONS.includes(d.func) && <option value={d.func}>{d.func}</option>}
       </select>
-      <input style={{ ...iS, width: 110 }} placeholder="yard" value={d.yard} onChange={e => setD({ ...d, yard: e.target.value })} />
+      <CompanySelect value={d.company ?? 'NETC'} onChange={v => setD({ ...d, company: v })} />
+      <input style={{ ...iS, width: 90 }} placeholder="yard" value={d.yard} onChange={e => setD({ ...d, yard: e.target.value })} />
       {dirty && <button style={bP} onClick={() => onSave(d)}>Save</button>}
+      <button style={bSt} title="Hide this driver (quit / no longer drives) — restorable below" onClick={onHide}>hide</button>
+    </div>
+  )
+}
+
+function AddDriverRow({ onAdd }: { onAdd: (d: Omit<Driver, 'id'>) => void }) {
+  const [name, setName] = useState('')
+  const [truck, setTruck] = useState('')
+  const [func, setFunc] = useState('')
+  const [company, setCompany] = useState('NETC')
+  const [yard, setYard] = useState('')
+  const canAdd = !!name.trim()
+  const submit = () => {
+    if (!canAdd) return
+    onAdd({ name: name.trim(), truck: truck.trim(), yard: yard.trim(), func, company, active: true })
+    setName(''); setTruck(''); setFunc(''); setYard('')
+  }
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '6px 8px', background: C.ca, border: '1px dashed ' + C.bd, borderRadius: 8 }}>
+      <input style={{ ...iS, width: 160 }} placeholder="new driver name" value={name}
+        onChange={e => setName(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') submit() }} />
+      <input style={{ ...iS, width: 60 }} placeholder="truck" value={truck} onChange={e => setTruck(e.target.value)} />
+      <select style={{ ...sS, width: 140 }} value={func} onChange={e => setFunc(e.target.value)}>
+        <option value="">— function —</option>
+        {DRIVER_FUNCTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+      </select>
+      <CompanySelect value={company} onChange={setCompany} />
+      <input style={{ ...iS, width: 90 }} placeholder="yard" value={yard} onChange={e => setYard(e.target.value)} />
+      <button style={{ ...bP, opacity: canAdd ? 1 : 0.5, cursor: canAdd ? 'pointer' : 'default' }} disabled={!canAdd} onClick={submit}>
+        + Add
+      </button>
     </div>
   )
 }

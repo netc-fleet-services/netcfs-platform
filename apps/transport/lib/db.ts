@@ -45,8 +45,15 @@ export function jobToApp(row: Record<string, unknown>): Job {
 }
 
 function driverToDB(d: Driver) {
-  // Identity-only writes — never touches Company/active (roster sync + scheduler own those).
-  return { id: d.id, name: d.name.trim(), truck: d.truck?.trim() || null, yard: d.yard.trim().toLowerCase(), function: d.func?.trim() || null }
+  // active is written via setDriverActive only (it also stamps inactive_since).
+  return {
+    id: d.id,
+    name: d.name.trim(),
+    truck: d.truck?.trim() || null,
+    yard: d.yard.trim().toLowerCase(),
+    function: d.func?.trim() || null,
+    Company: d.company?.trim() || null,
+  }
 }
 
 function driverToApp(row: Record<string, unknown>): Driver {
@@ -110,8 +117,10 @@ export const db = {
     return (data || []).map(scheduleToApp)
   },
 
+  // Full roster including hidden (inactive) drivers — the board filters
+  // display by `active`; Settings needs everyone for hide/restore.
   async loadDrivers(): Promise<Driver[]> {
-    const { data, error } = await sb.from('drivers').select('*').eq('active', true).order('id')
+    const { data, error } = await sb.from('drivers').select('*').order('id')
     if (error) { console.error('db.loadDrivers:', error); return [] }
     return (data || []).map(driverToApp)
   },
@@ -119,6 +128,16 @@ export const db = {
   async upsertDriver(driver: Driver): Promise<void> {
     const { error } = await sb.from('drivers').upsert(driverToDB(driver), { onConflict: 'id' })
     if (error) console.error('db.upsertDriver:', error)
+  },
+
+  // Hide (quit) / restore a driver. Never deletes — schedules, calls and
+  // safety history all reference driver ids. Shares the scheduler's flag.
+  async setDriverActive(id: number, active: boolean): Promise<void> {
+    const fields = active
+      ? { active: true, inactive_reason: null, inactive_since: null }
+      : { active: false, inactive_since: new Date().toISOString() }
+    const { error } = await sb.from('drivers').update(fields).eq('id', id)
+    if (error) console.error('db.setDriverActive:', error)
   },
 
   async loadYards(): Promise<Yard[]> {

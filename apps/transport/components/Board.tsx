@@ -208,7 +208,7 @@ export function Board() {
           const key = `${n}|${slot}`
           const existing = queue.get(key)
           if (existing) existing.callNums.push(j.tbCallNum ?? '')
-          else queue.set(key, { tbName, slot, callNums: [j.tbCallNum ?? ''], suggested: closestDriver(tbName, drivers) })
+          else queue.set(key, { tbName, slot, callNums: [j.tbCallNum ?? ''], suggested: closestDriver(tbName, drivers.filter(x => x.active)) })
         }
       }
       check(j.tbDriver, 'driverId', j.driverId)
@@ -256,18 +256,20 @@ export function Board() {
     })
   }, [drivers])
 
+  const activeDrivers = useMemo(() => drivers.filter(d => d.active), [drivers])
+
   const filteredDrivers = useMemo(() => {
     const teamFns = team === 'all'
       ? BOARD.teams.flatMap(t => t.functions)
       : BOARD.teams.find(t => t.id === team)?.functions ?? []
     const fnSet = new Set(teamFns.map(f => f.toLowerCase()))
-    return drivers.filter(d => {
+    return activeDrivers.filter(d => {
       if (company !== 'all' && driverCompany(d.company) !== company) return false
       const fn = d.func.trim().toLowerCase()
       if (team === 'all') return !fn || fnSet.has(fn)   // blank func visible under All Teams
       return fnSet.has(fn)
     })
-  }, [drivers, company, team])
+  }, [activeDrivers, company, team])
 
   const board = useMemo(() => computeBoard({
     drivers: filteredDrivers,
@@ -400,6 +402,18 @@ export function Board() {
     onMatchAssign(nd, callNums)
   }
 
+  const addDriver = (d: Omit<Driver, 'id'>) => {
+    const id = Math.max(0, ...drivers.map(x => x.id)) + 1
+    const nd: Driver = { ...d, id }
+    setDrivers(prev => [...prev, nd])
+    void db.upsertDriver(nd)
+  }
+
+  const toggleDriverActive = (id: number, active: boolean) => {
+    setDrivers(prev => prev.map(d => (d.id === id ? { ...d, active } : d)))
+    void db.setDriverActive(id, active)
+  }
+
   const saveYard = (y: Yard) => {
     setYards(prev => {
       const next = prev.some(x => x.id === y.id) ? prev.map(x => (x.id === y.id ? y : x)) : [...prev, y]
@@ -462,8 +476,19 @@ export function Board() {
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14 }}>
           <span style={{ fontSize: 13, color: staleColor, fontWeight: 700 }}>
             {staleMin == null ? 'TowBook: never synced' : `TowBook synced ${staleMin} min ago`}
-            {syncStatus === 'triggering' ? ' · triggering…' : syncStatus === 'ok' ? ' · sync requested ✓' : ''}
+            {syncStatus === 'ok' ? ' · sync requested ✓' : ''}
           </span>
+          <button
+            onClick={triggerSync}
+            disabled={syncStatus === 'triggering'}
+            title="Pull the latest from TowBook right now"
+            style={{
+              background: C.gn, color: '#052e12', border: 'none', borderRadius: 8,
+              padding: '7px 16px', fontSize: 13, fontWeight: 900, cursor: syncStatus === 'triggering' ? 'default' : 'pointer',
+              fontFamily: 'inherit', opacity: syncStatus === 'triggering' ? 0.6 : 1, whiteSpace: 'nowrap',
+            }}>
+            {syncStatus === 'triggering' ? 'Syncing…' : '🔄 Sync TowBook'}
+          </button>
           <span style={{ fontSize: 26, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{fT(now)}</span>
           <button className="board-gear" onClick={() => setSettingsOpen(true)} title="Settings"
             style={{ background: 'transparent', border: '1px solid ' + C.bd, borderRadius: 8, color: C.dm, fontSize: 16, padding: '4px 10px', cursor: 'pointer' }}>
@@ -685,6 +710,8 @@ export function Board() {
           onTriggerSync={triggerSync}
           onSaveGh={(repo, token) => { setGhRepo(repo); setGhToken(token); void db.saveSetting('github_repo', repo); void db.saveSetting('github_token', token) }}
           onSaveDriver={(d) => { setDrivers(prev => prev.map(x => x.id === d.id ? d : x)); void db.upsertDriver(d) }}
+          onAddDriver={addDriver}
+          onSetActive={toggleDriverActive}
           onDeleteAlias={(name) => { const next = { ...aliases }; delete next[name]; setAliases(next); void db.saveSetting('driver_name_aliases', next) }}
           onSaveYard={saveYard}
           onDeleteYard={removeYard}
@@ -693,7 +720,7 @@ export function Board() {
       {matchQueue.length > 0 && (
         <DriverMatchModal
           item={matchQueue[0]}
-          drivers={drivers}
+          drivers={activeDrivers}
           onAssign={onMatchAssign}
           onCreateNew={onMatchCreateNew}
         />
