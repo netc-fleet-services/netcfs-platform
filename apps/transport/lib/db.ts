@@ -79,6 +79,26 @@ function scheduleToApp(row: Record<string, unknown>): ScheduleEntry {
   }
 }
 
+// Page through a query past PostgREST's 1000-row default cap.
+// `build` must return a FRESH builder with all filters + a stable order applied.
+interface Pageable {
+  range: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: unknown }>
+}
+async function fetchAll(build: () => Pageable): Promise<Record<string, unknown>[]> {
+  const PAGE = 1000
+  const all: Record<string, unknown>[] = []
+  let offset = 0
+  while (true) {
+    const { data, error } = await build().range(offset, offset + PAGE - 1)
+    if (error) { console.error('db.fetchAll:', error); break }
+    const batch = (data ?? []) as Record<string, unknown>[]
+    all.push(...batch)
+    if (batch.length < PAGE) break
+    offset += PAGE
+  }
+  return all
+}
+
 // ── Database operations ────────────────────────────────────────────
 
 export const db = {
@@ -107,14 +127,16 @@ export const db = {
     if (error) console.error('db.updateJobFields:', error)
   },
 
-  // Shift/off rows from the scheduler app (read-only here).
+  // Shift/off rows from the scheduler app (read-only here). PAGINATED —
+  // a month of fleet-wide schedule easily exceeds the 1000-row cap.
   async loadScheduleRange(isoStart: string, isoEnd: string): Promise<ScheduleEntry[]> {
-    const { data, error } = await sb.from('scheduler_driver_schedule')
+    const rows = await fetchAll(() => sb.from('scheduler_driver_schedule')
       .select('driver_id, schedule_date, entry_type, start_time, end_time, off_reason')
       .gte('schedule_date', isoStart)
       .lte('schedule_date', isoEnd)
-    if (error) { console.error('db.loadScheduleRange:', error); return [] }
-    return (data || []).map(scheduleToApp)
+      .order('schedule_date')
+      .order('id'))
+    return rows.map(scheduleToApp)
   },
 
   // Full roster including hidden (inactive) drivers — the board filters
@@ -157,10 +179,9 @@ export const db = {
   },
 
   async loadGeocache(): Promise<GeoCache> {
-    const { data, error } = await sb.from('geocache').select('*')
-    if (error) { console.error('db.loadGeocache:', error); return {} }
+    const rows = await fetchAll(() => sb.from('geocache').select('*').order('addr'))
     const cache: GeoCache = {}
-    ;(data || []).forEach((row: Record<string, unknown>) => {
+    rows.forEach(row => {
       cache[row.addr as string] = { lat: row.lat as number, lon: row.lon as number, name: (row.name as string) || undefined }
     })
     return cache
@@ -173,10 +194,9 @@ export const db = {
   },
 
   async loadRouteCache(): Promise<RouteCache> {
-    const { data, error } = await sb.from('route_cache').select('*')
-    if (error) { console.error('db.loadRouteCache:', error); return {} }
+    const rows = await fetchAll(() => sb.from('route_cache').select('*').order('key'))
     const cache: RouteCache = {}
-    ;(data || []).forEach((row: Record<string, unknown>) => {
+    rows.forEach(row => {
       cache[row.key as string] = {
         miles:        row.miles as number,
         hours:        row.hours as number,

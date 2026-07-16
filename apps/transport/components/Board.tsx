@@ -147,7 +147,7 @@ export function Board() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'settings', filter: 'key=eq.manual_claims' },
         p => setManualClaims(((p.new as { value?: ManualClaims })?.value) ?? {}))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduler_driver_schedule' },
-        () => { const t = todayISO(); void db.loadScheduleRange(yesterISO(t), t).then(setSchedule) })
+        () => { const t = todayISO(); void db.loadScheduleRange(yesterISO(t), plusDaysISO(t, 31)).then(setSchedule) })
       .subscribe()
     return () => { void sb.removeChannel(ch) }
   }, [])
