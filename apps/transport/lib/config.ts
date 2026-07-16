@@ -123,8 +123,18 @@ export const CALL_PREFIX_COMPANY: Record<string, string> = {
   '3': 'Rays',
   '4': 'Interstate',
 }
+// TowBook stores call numbers WITH a leading '#' (e.g. "#309964").
+// Strip it before reading the company-prefix digit, and always render
+// exactly one '#' regardless of how the row was stored.
+export function callDigits(callNum: string | null): string {
+  return (callNum ?? '').trim().replace(/^#+/, '')
+}
+export function fmtCall(callNum: string | null): string {
+  const d = callDigits(callNum)
+  return d ? `#${d}` : '#—'
+}
 export function callCompany(callNum: string | null): string | null {
-  const ch = (callNum ?? '').trim()[0]
+  const ch = callDigits(callNum)[0]
   return ch ? (CALL_PREFIX_COMPANY[ch] ?? null) : null
 }
 

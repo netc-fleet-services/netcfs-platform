@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { BOARD, C, callCompany, sS, type TeamId } from '../lib/config'
+import { BOARD, C, callCompany, fmtCall, sS, type TeamId } from '../lib/config'
 import type { Driver, Job } from '../lib/types'
 import { cityFrom } from '../lib/geo'
 import { jobTotal } from '../lib/utils'
@@ -57,7 +57,7 @@ export function OpenCallsRail({ openCalls, unmatchedCalls, availableDrivers, com
           {assignedVisible.map(({ job: j, names }) => (
             <div key={j.id} style={{ background: C.cd, border: '1px solid ' + C.bd, borderLeft: '4px solid ' + C.gn, borderRadius: 8, padding: '8px 10px', marginBottom: 6 }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 13, fontWeight: 900 }}>#{j.tbCallNum ?? '—'}</span>
+                <span style={{ fontSize: 13, fontWeight: 900 }}>{fmtCall(j.tbCallNum)}</span>
                 {j.jobType && <span style={{ fontSize: 10, color: C.dm, border: '1px solid ' + C.bd, borderRadius: 4, padding: '1px 5px' }}>{j.jobType}</span>}
                 {j.tbScheduled && <span style={{ fontSize: 11, color: C.dm, marginLeft: 'auto' }}>{j.tbScheduled}</span>}
               </div>
@@ -81,7 +81,7 @@ export function OpenCallsRail({ openCalls, unmatchedCalls, availableDrivers, com
             <div key={`${job.id}-${i}`} style={{ background: C.cd, border: '1px solid ' + C.bd, borderLeft: '4px solid ' + C.rd, borderRadius: 8, padding: '8px 10px', marginBottom: 6 }}>
               <div style={{ fontSize: 12, fontWeight: 800, color: C.rd }}>&ldquo;{tbName}&rdquo;</div>
               <div style={{ fontSize: 11, color: C.dm, marginTop: 2 }}>
-                on #{job.tbCallNum} — resolve in the match popup (appears automatically)
+                on {fmtCall(job.tbCallNum)} — resolve in the match popup (appears automatically)
               </div>
             </div>
           ))}
@@ -102,7 +102,7 @@ function OpenCallCard({ job: j, availableDrivers, onAssign }: {
   return (
     <div style={{ background: C.cd, border: '1px solid ' + C.bd, borderLeft: '4px solid ' + C.am, borderRadius: 8, padding: '10px 12px', marginBottom: 8 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 14, fontWeight: 900 }}>#{j.tbCallNum ?? '—'}</span>
+        <span style={{ fontSize: 14, fontWeight: 900 }}>{fmtCall(j.tbCallNum)}</span>
         {j.jobType && <span style={{ fontSize: 10, color: C.dm, border: '1px solid ' + C.bd, borderRadius: 4, padding: '1px 5px' }}>{j.jobType}</span>}
         {j.status === 'active' && <span style={{ fontSize: 10, fontWeight: 800, color: C.rd }}>ACTIVE</span>}
         {j.tbScheduled && <span style={{ fontSize: 11, color: C.dm, marginLeft: 'auto' }}>{j.tbScheduled}</span>}

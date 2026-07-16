@@ -1,6 +1,6 @@
 'use client'
 
-import { C } from '../lib/config'
+import { C, fmtCall } from '../lib/config'
 import type { DriverBoardStatus } from '../lib/availability'
 import { cityFrom } from '../lib/geo'
 import { fT } from '../lib/utils'
@@ -87,7 +87,7 @@ export function DriverCard({ status: s, now, onRelease, onClaim, draggable, onDr
                 ? (s.job ? 'PENDING IN TOWBOOK' : 'CLAIMED — ENTER CALL IN TOWBOOK')
                 : (s.actionStatus || 'ON CALL').toUpperCase()}
             </span>
-            {s.job?.tbCallNum && <span style={{ fontSize: 12, color: C.dm, fontWeight: 700 }}>#{s.job.tbCallNum}</span>}
+            {s.job?.tbCallNum && <span style={{ fontSize: 12, color: C.dm, fontWeight: 700 }}>{fmtCall(s.job.tbCallNum)}</span>}
             {s.job?.jobType && <span style={{ fontSize: 11, color: C.dm, border: '1px solid ' + C.bd, borderRadius: 4, padding: '1px 6px' }}>{s.job.jobType}</span>}
           </div>
 

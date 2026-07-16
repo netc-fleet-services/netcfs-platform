@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { db, jobToApp } from '../lib/db'
 import { sb } from '../lib/supabase'
 import {
@@ -468,8 +468,11 @@ export function Board() {
     void db.deleteYard(id)
   }
 
-  const triggerSync = async () => {
-    if (!ghRepo || !ghToken) { alert('Set the GitHub repo and token in Settings before triggering a manual sync.'); return }
+  const triggerSync = async (silent = false) => {
+    if (!ghRepo || !ghToken) {
+      if (!silent) alert('Set the GitHub repo and token in Settings before triggering a manual sync.')
+      return
+    }
     setSyncStatus('triggering')
     try {
       const [owner, repo] = ghRepo.trim().split('/')
@@ -481,15 +484,33 @@ export function Board() {
       else {
         const body = await res.json().catch(() => ({}))
         setSyncStatus('error')
-        alert(`GitHub returned ${res.status}: ${(body as { message?: string }).message || 'unknown error'}`)
+        if (!silent) alert(`GitHub returned ${res.status}: ${(body as { message?: string }).message || 'unknown error'}`)
         setTimeout(() => setSyncStatus(null), 5000)
       }
     } catch (e) {
       setSyncStatus('error')
-      alert('Network error: ' + (e as Error).message)
+      if (!silent) alert('Network error: ' + (e as Error).message)
       setTimeout(() => setSyncStatus(null), 5000)
     }
   }
+
+  // ── Sync watchdog ─────────────────────────────────────────────────
+  // GitHub's cron scheduler is best-effort and regularly skips 5-minute
+  // slots (observed real gaps of 50–116 min). Any open board re-triggers
+  // the scrape itself once the feed goes stale, so an always-on TV keeps
+  // the data fresh. Duplicate dispatches from multiple open boards
+  // collapse in the workflow's concurrency group.
+  const lastAutoSyncRef = useRef(0)
+  useEffect(() => {
+    if (!loaded) return
+    if (staleMin == null || staleMin < 7) return
+    if (!ghRepo || !ghToken || syncStatus === 'triggering') return
+    const nowMs = Date.now()
+    if (nowMs - lastAutoSyncRef.current < 5 * 60_000) return   // one nudge per 5 min max
+    lastAutoSyncRef.current = nowMs
+    void triggerSync(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [now, loaded, ghRepo, ghToken, syncStatus])
 
   if (!loaded) {
     return <div style={{ minHeight: '100vh', background: C.bg, color: C.dm, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>Loading dispatch board…</div>
@@ -516,7 +537,7 @@ export function Board() {
             {syncStatus === 'ok' ? ' · sync requested ✓' : ''}
           </span>
           <button
-            onClick={triggerSync}
+            onClick={() => triggerSync()}
             disabled={syncStatus === 'triggering'}
             title="Pull the latest from TowBook right now"
             style={{
