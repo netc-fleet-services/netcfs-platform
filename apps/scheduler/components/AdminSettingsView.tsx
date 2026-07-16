@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { OptimizerConfig } from '../lib/config'
+import { APP_CONFIG, type OptimizerConfig } from '../lib/config'
 import { useSettings } from '../lib/settings'
 import { insertDriver, listDistinctYardNames, listDriversByIds } from '../lib/db'
 import type { Driver } from '../lib/types'
@@ -381,12 +381,9 @@ function AddDriverForm({ supabase, onAdded }: { supabase: SupabaseClient; onAdde
             <span>Function</span>
             <select required value={fn} onChange={e => setFn(e.target.value)}>
               <option value="" disabled>Pick one…</option>
-              <option value="LDT">LDT</option>
-              <option value="HDT">HDT</option>
-              <option value="Transport">Transport</option>
-              <option value="Road Service">Road Service</option>
-              <option value="Dispatch">Dispatch</option>
-              <option value="Office Manager">Office Manager</option>
+              {APP_CONFIG.driverCategories.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
             </select>
           </label>
           <label className="field">

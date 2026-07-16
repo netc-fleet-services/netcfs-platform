@@ -125,6 +125,31 @@
 .view-btn:hover { color: var(--sched-text); }
 .view-btn--active { background: var(--sched-accent); color: #fff; }
 
+/* ---------- Company scope pills (top-level NETC / Interstate switch) ---------- */
+
+.company-toggle {
+  display: inline-flex;
+  background: var(--sched-surface-2);
+  border: 1px solid var(--sched-border);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 3px;
+  margin-bottom: 12px;
+}
+.company-btn {
+  padding: 8px 18px;
+  background: transparent;
+  border: none;
+  color: var(--sched-text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+  font-family: inherit;
+}
+.company-btn:hover { color: var(--sched-text); }
+.company-btn--active { background: var(--sched-accent); color: #fff; }
+
 /* ---------- Tabs ---------- */
 
 .tabs {

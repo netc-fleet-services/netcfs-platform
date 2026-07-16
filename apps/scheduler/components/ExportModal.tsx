@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { APP_CONFIG } from '../lib/config'
+import { APP_CONFIG, type CompanyBucket } from '../lib/config'
 import type { Driver, ScheduleEntry } from '../lib/types'
 import { listDrivers, listScheduleBetween } from '../lib/db'
 import {
@@ -25,6 +25,7 @@ type Tab = 'drivers' | 'dispatchers'
 
 interface Props {
   supabase: SupabaseClient
+  companyBucket: CompanyBucket
   defaultStartIso: string
   defaultTab: Tab
   defaultFormat: Format
@@ -37,6 +38,7 @@ interface Props {
 
 export function ExportModal({
   supabase,
+  companyBucket,
   defaultStartIso,
   defaultTab,
   defaultFormat,
@@ -69,7 +71,7 @@ export function ExportModal({
     const n = Math.max(1, Math.min(31, Number(days) || 7))
     setBusy(true)
     try {
-      const data = await loadScheduleData(supabase, { tab, isoStart: start, days: n, yard, yardFilterFor, driverSort, hiddenIds: hiddenDriverIds })
+      const data = await loadScheduleData(supabase, { tab, companyBucket, isoStart: start, days: n, yard, yardFilterFor, driverSort, hiddenIds: hiddenDriverIds })
       if (output === 'csv') {
         const csv = buildCsv(data)
         downloadCsv(`${tab}-schedule_${start}_${n}d${yard ? `_yard-${yard}` : ''}.csv`, csv)
@@ -171,6 +173,7 @@ export function ExportModal({
 
 interface ScheduleDataInput {
   tab: Tab
+  companyBucket: CompanyBucket
   isoStart: string
   days: number
   yard: string
@@ -195,7 +198,7 @@ interface ScheduleData {
 
 async function loadScheduleData(
   supabase: SupabaseClient,
-  { tab, isoStart, days, yard, yardFilterFor, driverSort, hiddenIds }: ScheduleDataInput,
+  { tab, companyBucket, isoStart, days, yard, yardFilterFor, driverSort, hiddenIds }: ScheduleDataInput,
 ): Promise<ScheduleData> {
   const tabDef = APP_CONFIG.tabs.find(t => t.id === tab)
   const functions = tabDef ? tabDef.functions : null
@@ -209,8 +212,8 @@ async function loadScheduleData(
   const [drivers, entries] = await Promise.all([
     listDrivers(supabase, {
       includeInactive: false,
-      company: APP_CONFIG.defaultCompany ?? null,
-      yard: yardFilter,
+      companyBucket,
+      yard: companyBucket === 'interstate' ? yardFilter : null,
       functions,
       hiddenIds: hiddenIds ?? null,
     }),
@@ -238,8 +241,9 @@ async function loadScheduleData(
     : `${shortDateLabel(dates[0])} → ${shortDateLabel(dates[days - 1])}`
   const printedAt = new Date().toLocaleString()
   const yardLabel = yard ? `Yard ${yard}` : 'All yards'
+  const bucketLabel = APP_CONFIG.companyBuckets.find(b => b.id === companyBucket)?.label ?? ''
   const title = `${tabLabel} Schedule — ${rangeLabel}`
-  const subtitle = `${yardLabel} · ${sorted.length} ${tabLabel.toLowerCase()}${sorted.length === 1 ? '' : 's'} · printed ${printedAt}`
+  const subtitle = `${bucketLabel} · ${yardLabel} · ${sorted.length} ${tabLabel.toLowerCase()}${sorted.length === 1 ? '' : 's'} · printed ${printedAt}`
 
   return { tab, sorted, entries, dates, byKey, days, tabLabel, title, subtitle, isoStart, isoEnd }
 }
