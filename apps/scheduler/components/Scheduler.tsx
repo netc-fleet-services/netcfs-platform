@@ -2,14 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getSupabaseBrowserClient } from '@netcfs/auth/client'
-import { APP_CONFIG } from '../lib/config'
+import { APP_CONFIG, type CompanyBucket, type TeamId } from '../lib/config'
 import type { Driver, ScheduleEntry } from '../lib/types'
 import {
   copyEntriesShifted,
   deleteEntriesForDriversInRange,
   fetchEntriesForRange,
   insertEntries,
-  listDistinctCompanies,
   listDistinctYards,
   listDrivers,
   listScheduleBetween,
@@ -72,14 +71,22 @@ function SchedulerInner() {
   const [viewDays, setViewDays] = useState(APP_CONFIG.defaultViewDays)
   const [anchorDate, setAnchorDate] = useState<Date>(() => snapAnchor(new Date(), APP_CONFIG.defaultViewDays))
   const [showInactive, setShowInactive] = useState(false)
-  const [company, setCompany] = useState<string>(APP_CONFIG.defaultCompany || '')
+  // Company scope — defaults to Interstate so live Interstate users see zero
+  // change until they click a pill. Last choice persists per browser.
+  const [companyBucket, setCompanyBucket] = useState<CompanyBucket>(() => {
+    if (typeof window === 'undefined') return APP_CONFIG.defaultCompanyBucket
+    const v = window.localStorage.getItem('scheduler.companyBucket')
+    return v === 'all' || v === 'netc' || v === 'interstate' ? v : APP_CONFIG.defaultCompanyBucket
+  })
+  // Team (type of work) filter — unifies LDT/'Light Duty Towing' etc., so it
+  // works under any company bucket including All Companies.
+  const [team, setTeam] = useState<'all' | TeamId>('all')
   const [yard, setYard] = useState<string>('')
   const [search, setSearch] = useState('')
   const [gridSort, setGridSort] = useState<SortKey>('function')
   const [ganttSort, setGanttSort] = useState<SortKey>('startTime')
 
   // ---- Data --------------------------------------------------------------
-  const [companies, setCompanies] = useState<string[]>([])
   const [yards, setYards] = useState<string[]>([])
   const [drivers, setDrivers] = useState<Driver[]>([])
   const [allEntries, setAllEntries] = useState<ScheduleEntry[]>([])
@@ -97,25 +104,10 @@ function SchedulerInner() {
   const [lastBulkAction, setLastBulkAction] = useState<BulkAction | null>(null)
   const [bulkBusy, setBulkBusy] = useState(false)
 
-  // ---- Companies (one-time) ----------------------------------------------
-  const companiesLoadedRef = useRef(false)
+  // ---- Persist company scope ---------------------------------------------
   useEffect(() => {
-    if (companiesLoadedRef.current) return
-    companiesLoadedRef.current = true
-    ;(async () => {
-      try {
-        const list = (APP_CONFIG.allowedCompanies && APP_CONFIG.allowedCompanies.length)
-          ? APP_CONFIG.allowedCompanies.slice()
-          : await listDistinctCompanies(supabase)
-        setCompanies(list)
-        if (list.length === 1) setCompany(list[0])
-        else if (!list.includes(company)) setCompany('')
-      } catch (err) {
-        console.error('Failed to load companies:', err)
-      }
-    })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supabase])
+    window.localStorage.setItem('scheduler.companyBucket', companyBucket)
+  }, [companyBucket])
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null))
@@ -132,18 +124,27 @@ function SchedulerInner() {
   }, [viewDays])
 
   // ---- Active functions for current tab ---------------------------------
+  // A team pill narrows the drivers tab to that team's function spellings
+  // (covers both companies' naming, so it works under All Companies too).
   const activeFunctions = useMemo<string[] | null>(() => {
+    if (activeTab === 'drivers' && team !== 'all') {
+      const def = APP_CONFIG.teams.find(x => x.id === team)
+      if (def) return def.functions.slice()
+    }
     const t = APP_CONFIG.tabs.find(t => t.id === activeTab)
     return t ? t.functions : APP_CONFIG.schedulableFunctions.slice()
-  }, [activeTab])
+  }, [activeTab, team])
 
   // ---- Load yards on filter changes -------------------------------------
+  // Yard codes (irh_yard_number) only exist on Interstate rows; for the NETC
+  // or All buckets the yard filter is hidden and cleared.
   useEffect(() => {
     if (activeTab !== 'drivers' && activeTab !== 'dispatchers') return
+    if (companyBucket !== 'interstate') { setYards([]); setYard(''); return }
     ;(async () => {
       try {
         const allYards = await listDistinctYards(supabase, {
-          company: company || null,
+          company: 'Interstate',
           functions: activeFunctions,
         })
         const aliases = APP_CONFIG.yardAliases
@@ -157,7 +158,7 @@ function SchedulerInner() {
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supabase, company, activeFunctions, activeTab])
+  }, [supabase, companyBucket, activeFunctions, activeTab])
 
   // ---- Date windows -----------------------------------------------------
   const week = useMemo(() => dateRange(anchorDate, viewDays), [anchorDate, viewDays])
@@ -183,8 +184,8 @@ function SchedulerInner() {
       const [ds, ents] = await Promise.all([
         listDrivers(supabase, {
           includeInactive: showInactive,
-          company: company || null,
-          yard: yardFilterFor(yard),
+          companyBucket,
+          yard: companyBucket === 'interstate' ? yardFilterFor(yard) : null,
           functions: activeFunctions,
           hiddenIds: hiddenDriverIds,
         }),
@@ -196,7 +197,7 @@ function SchedulerInner() {
       setError(err instanceof Error ? err.message : String(err))
       console.error(err)
     }
-  }, [supabase, activeTab, showInactive, company, yard, yardFilterFor, activeFunctions, isoRangeStart, isoRangeEnd, hiddenDriverIds])
+  }, [supabase, activeTab, showInactive, companyBucket, yard, yardFilterFor, activeFunctions, isoRangeStart, isoRangeEnd, hiddenDriverIds])
 
   useEffect(() => { void reload() }, [reload])
 
@@ -413,6 +414,13 @@ function SchedulerInner() {
     setActiveTab(next)
     setYard('')
     setSearch('')
+    setTeam('all')
+  }
+  function handleBucketChange(next: CompanyBucket) {
+    if (next === companyBucket) return
+    setCompanyBucket(next)
+    setYard('')
+    // team is kept on purpose — every team exists in both companies
   }
 
   const totalDriverCount = drivers.length
@@ -425,6 +433,20 @@ function SchedulerInner() {
 
   return (
     <>
+      {/* Company scope — the top-level switch between NETC and Interstate */}
+      <div className="company-toggle" role="group" aria-label="Company">
+        {APP_CONFIG.companyBuckets.map(b => (
+          <button
+            key={b.id}
+            type="button"
+            className={`company-btn ${b.id === companyBucket ? 'company-btn--active' : ''}`}
+            onClick={() => handleBucketChange(b.id)}
+          >
+            {b.label}
+          </button>
+        ))}
+      </div>
+
       <div className="tabs">
         {APP_CONFIG.tabs.map(t => (
           <button
@@ -446,7 +468,9 @@ function SchedulerInner() {
             <Stat label="Next week" value={formatHours(stats.nextH)} delta={delta(stats.nextH, stats.thisH)} deltaSuffix="vs this" />
           </div>
 
-          {activeTab === 'drivers' && (
+          {/* Optimizer counts LDT/HDT supply against the Interstate call
+              baseline — only meaningful for Interstate + All Teams. */}
+          {activeTab === 'drivers' && companyBucket === 'interstate' && team === 'all' && (
             <CoveragePanel
               supabase={supabase}
               drivers={drivers}
@@ -501,24 +525,39 @@ function SchedulerInner() {
           </div>
 
           <div className="filters">
-            <label className="filter">
-              <span>Company</span>
-              <select
-                value={company}
-                onChange={e => { setCompany(e.target.value); setYard('') }}
-                disabled={companies.length === 1}
-              >
-                {companies.length !== 1 && <option value="">All companies</option>}
-                {companies.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </label>
-            <label className="filter">
-              <span>Yard</span>
-              <select value={yard} onChange={e => setYard(e.target.value)}>
-                <option value="">All yards</option>
-                {yards.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-            </label>
+            {/* Team (type of work) pills — unified across both companies'
+                function spellings, so they work under any company scope. */}
+            {activeTab === 'drivers' && (
+              <div className="view-toggle" role="group" aria-label="Team">
+                <button
+                  type="button"
+                  className={`view-btn ${team === 'all' ? 'view-btn--active' : ''}`}
+                  onClick={() => setTeam('all')}
+                >
+                  All Teams
+                </button>
+                {APP_CONFIG.teams.map(t => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className={`view-btn ${team === t.id ? 'view-btn--active' : ''}`}
+                    onClick={() => setTeam(t.id)}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* Yard codes only exist on Interstate rows */}
+            {companyBucket === 'interstate' && (
+              <label className="filter">
+                <span>Yard</span>
+                <select value={yard} onChange={e => setYard(e.target.value)}>
+                  <option value="">All yards</option>
+                  {yards.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </label>
+            )}
             <label className="filter filter--grow">
               <span>Search</span>
               <input
@@ -657,6 +696,7 @@ function SchedulerInner() {
       {exportOpen && (
         <ExportModal
           supabase={supabase}
+          companyBucket={companyBucket}
           defaultStartIso={toIsoDate(weekDates(anchorDate)[0])}
           defaultTab={activeTab === 'dispatchers' ? 'dispatchers' : 'drivers'}
           defaultFormat={view === 'gantt' ? 'gantt' : 'table'}

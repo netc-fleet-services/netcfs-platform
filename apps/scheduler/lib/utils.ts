@@ -111,11 +111,13 @@ export function hoursToTimeStr(h: number): string {
 
 export function categoryClass(fn: string | null): string {
   switch ((fn || '').toLowerCase()) {
-    case 'ldt':          return 'ldt'
-    case 'hdt':          return 'hdt'
-    case 'transport':    return 'transport'
-    case 'road service': return 'road'
-    default:             return 'default'
+    case 'ldt':               return 'ldt'
+    case 'light duty towing': return 'ldt'   // NETC-side spelling of the same work
+    case 'hdt':               return 'hdt'
+    case 'heavy duty towing': return 'hdt'   // NETC-side spelling of the same work
+    case 'transport':         return 'transport'
+    case 'road service':      return 'road'
+    default:                  return 'default'
   }
 }
 

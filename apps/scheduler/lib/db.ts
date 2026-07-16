@@ -1,11 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Driver, ScheduleEntry, ScheduleEntryDraft } from './types'
-import { APP_CONFIG } from './config'
+import { APP_CONFIG, matchesCompanyBucket, type CompanyBucket } from './config'
 import { addDays, fromIsoDate, toIsoDate } from './utils'
 
 interface ListDriversOptions {
   includeInactive?: boolean
   company?: string | null
+  // Client-side company bucketing (Interstate vs everything-else). Preferred
+  // over `company` for the UI; applied after fetch so NULL "Company" rows
+  // fold into the NETC bucket without PostgREST or() quoting hazards.
+  companyBucket?: CompanyBucket | null
   yard?: string | string[] | null  // matches irh_yard_number; pass array to OR-match
   functions?: string[] | null
   applyExcludedNames?: boolean
@@ -25,6 +29,7 @@ export async function listDrivers(
   const {
     includeInactive = false,
     company = null,
+    companyBucket = null,
     yard = null,
     functions = null,
     applyExcludedNames = true,
@@ -49,6 +54,10 @@ export async function listDrivers(
   const { data, error } = await q
   if (error) throw error
   let drivers = (data ?? []) as Driver[]
+
+  if (companyBucket && companyBucket !== 'all') {
+    drivers = drivers.filter(d => matchesCompanyBucket(d.Company, companyBucket))
+  }
 
   if (applyExcludedNames) {
     const excluded = new Set(
@@ -104,19 +113,6 @@ export async function updateDriver(
     .single()
   if (error) throw error
   return data as Driver
-}
-
-// Backed by the scheduler_distinct_companies view (migration 7).
-export async function listDistinctCompanies(supabase: SupabaseClient): Promise<string[]> {
-  const { data, error } = await supabase
-    .from('scheduler_distinct_companies')
-    .select('company')
-  if (error) throw error
-  const set = new Set<string>()
-  for (const r of (data ?? []) as Array<{ company: string | null }>) {
-    if (r.company) set.add(r.company)
-  }
-  return [...set].sort()
 }
 
 // Backed by scheduler_distinct_yards, which already splits comma-separated
