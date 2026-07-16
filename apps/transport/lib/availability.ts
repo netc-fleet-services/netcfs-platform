@@ -35,8 +35,11 @@ export interface DriverBoardStatus {
 }
 
 // Manual (job-less) claims: dispatcher grabbed a driver before the call exists
-// in TowBook. Stored in settings key 'manual_claims', keyed by driver id.
+// in TowBook. Stored in settings key 'manual_claims' keyed by ISO day → driver
+// id, so drivers can be claimed for FUTURE days too. When a claimed day
+// arrives, its bucket simply becomes the live board's claims.
 export type ManualClaims = Record<string, { at: string; note?: string }>
+export type ManualClaimsByDay = Record<string, ManualClaims>
 
 export interface BoardInputs {
   drivers: Driver[]            // display set (already bucket+team filtered)
@@ -248,9 +251,9 @@ export function computeBoard(inp: BoardInputs): BoardResult {
 }
 
 // ── Planning view for a non-today date ──────────────────────────────
-// No live call data for other days — just who's scheduled / off / absent.
+// No live call data for other days — who's scheduled / claimed / off / absent.
 
-export type PlanState = 'SCHEDULED' | 'OFF' | 'NOT_SCHEDULED'
+export type PlanState = 'SCHEDULED' | 'CLAIMED' | 'OFF' | 'NOT_SCHEDULED'
 
 export interface DriverDayPlan {
   driver: Driver
@@ -258,10 +261,17 @@ export interface DriverDayPlan {
   shiftStart: string | null
   shiftEnd: string | null
   offReason: string | null
+  claimedAt: string | null   // ISO — when the dispatcher claimed them for this day
+  claimNote: string | null
   sortKey: number   // minutes-from-midnight of shift start (for ordering)
 }
 
-export function computeDayPlan(drivers: Driver[], schedule: ScheduleEntry[], dayISO: string): DriverDayPlan[] {
+export function computeDayPlan(
+  drivers: Driver[],
+  schedule: ScheduleEntry[],
+  dayISO: string,
+  claims: ManualClaims = {},
+): DriverDayPlan[] {
   const byDriver = new Map<number, ScheduleEntry[]>()
   for (const e of schedule) {
     if (e.scheduleDate !== dayISO) continue
@@ -272,21 +282,32 @@ export function computeDayPlan(drivers: Driver[], schedule: ScheduleEntry[], day
   return drivers.map(d => {
     const rows = byDriver.get(d.id) ?? []
     const off = rows.find(e => e.entryType === 'off')
-    if (off) {
-      return { driver: d, state: 'OFF' as const, shiftStart: null, shiftEnd: null, offReason: off.offReason, sortKey: 9999 }
-    }
+
+    // Shift window (if any) — shown for scheduled AND claimed drivers.
     const shifts = rows.filter(e => e.entryType === 'shift' && e.startTime && e.endTime)
+    let shiftStart: string | null = null
+    let shiftEnd: string | null = null
+    let sortKey = 9998
     if (shifts.length) {
       const first = shifts.reduce((a, b) => ((a.startTime ?? '') <= (b.startTime ?? '') ? a : b))
       const w = windowFor(first)
+      shiftStart = w ? fmtHM(w.start) : null
+      shiftEnd = w ? fmtHM(w.end) : null
       const [hh, mm] = (first.startTime ?? '0:0').split(':').map(Number)
-      return {
-        driver: d, state: 'SCHEDULED' as const,
-        shiftStart: w ? fmtHM(w.start) : null,
-        shiftEnd: w ? fmtHM(w.end) : null,
-        offReason: null, sortKey: hh * 60 + mm,
-      }
+      sortKey = hh * 60 + mm
     }
-    return { driver: d, state: 'NOT_SCHEDULED' as const, shiftStart: null, shiftEnd: null, offReason: null, sortKey: 9998 }
+
+    if (off) {
+      // Off wins — an off driver can't be sent out, claim or not.
+      return { driver: d, state: 'OFF' as const, shiftStart: null, shiftEnd: null, offReason: off.offReason, claimedAt: null, claimNote: null, sortKey: 9999 }
+    }
+    const mc = claims[String(d.id)]
+    if (mc) {
+      return { driver: d, state: 'CLAIMED' as const, shiftStart, shiftEnd, offReason: null, claimedAt: mc.at, claimNote: mc.note ?? null, sortKey }
+    }
+    if (shifts.length) {
+      return { driver: d, state: 'SCHEDULED' as const, shiftStart, shiftEnd, offReason: null, claimedAt: null, claimNote: null, sortKey }
+    }
+    return { driver: d, state: 'NOT_SCHEDULED' as const, shiftStart: null, shiftEnd: null, offReason: null, claimedAt: null, claimNote: null, sortKey }
   })
 }

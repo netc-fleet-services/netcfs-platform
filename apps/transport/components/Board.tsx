@@ -8,7 +8,7 @@ import {
   driverCompany, type TeamId,
 } from '../lib/config'
 import type { Driver, DriverMatchItem, Job, ScheduleEntry, Yard } from '../lib/types'
-import { computeBoard, computeDayPlan, normName, type ManualClaims } from '../lib/availability'
+import { computeBoard, computeDayPlan, normName, type ManualClaims, type ManualClaimsByDay } from '../lib/availability'
 import { dayFull, dayNm, daySh, fT, genDays, isoD, todayISO } from '../lib/utils'
 import { crd, geoCache, ghRoute, jobCrd, routeCache, routeLookup, yCrd } from '../lib/geo'
 import { DriverCard } from './DriverCard'
@@ -48,6 +48,23 @@ function lsGet(key: string): string | null {
   return window.localStorage.getItem(key)
 }
 
+// Claims are stored keyed by ISO day → driver id. Also accepts the original
+// flat shape (driver id → claim) and folds it into today's bucket; past-day
+// buckets are pruned.
+function normalizeClaims(raw: Record<string, unknown>, today: string): ManualClaimsByDay {
+  const out: ManualClaimsByDay = {}
+  for (const [k, v] of Object.entries(raw ?? {})) {
+    if (!v || typeof v !== 'object') continue
+    if (/^\d{4}-\d{2}-\d{2}$/.test(k)) {
+      if (k >= today && Object.keys(v as object).length) out[k] = v as ManualClaims
+    } else if ('at' in (v as Record<string, unknown>)) {
+      // legacy flat entry (driver id → claim) → today's bucket
+      ;(out[today] ??= {})[k] = v as ManualClaims[string]
+    }
+  }
+  return out
+}
+
 export function Board() {
   const [loaded, setLoaded]       = useState(false)
   const [drivers, setDrivers]     = useState<Driver[]>([])
@@ -65,8 +82,9 @@ export function Board() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [ghVersion, setGhVersion] = useState(0)   // bumped when a GraphHopper route resolves
   // Manual (job-less) claims — dispatcher grabbed a driver before the call
-  // exists in TowBook. Shared across every open board via settings realtime.
-  const [manualClaims, setManualClaims] = useState<ManualClaims>({})
+  // exists in TowBook. Keyed by ISO day so future days can be claimed too.
+  // Shared across every open board via settings realtime.
+  const [manualClaims, setManualClaims] = useState<ManualClaimsByDay>({})
   const [claimTarget, setClaimTarget]   = useState<Driver | null>(null)
   const [dragOver, setDragOver]         = useState(false)
   // Day picker — today is the live board; any other day is a planning view.
@@ -99,7 +117,7 @@ export function Board() {
       // Yesterday (overnight carry-over) through +31 days (day-picker planning)
       db.loadScheduleRange(yesterISO(t), plusDaysISO(t, 31)),
       db.loadSetting<Record<string, number>>('driver_name_aliases', {}),
-      db.loadSetting<ManualClaims>('manual_claims', {}),
+      db.loadSetting<Record<string, unknown>>('manual_claims', {}),
       db.loadYards(),
       db.loadSetting<string | null>('last_synced', null),
       db.loadSetting<string>('github_repo', ''),
@@ -115,7 +133,7 @@ export function Board() {
     setJobs(js)
     setSchedule(sched)
     setAliases(al)
-    setManualClaims(mc)
+    setManualClaims(normalizeClaims(mc, t))
     setYards(yardList)
     setLastSynced(ls)
     setGhRepo(repo)
@@ -145,7 +163,7 @@ export function Board() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'settings', filter: 'key=eq.last_synced' },
         p => setLastSynced(((p.new as { value?: string })?.value) ?? null))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'settings', filter: 'key=eq.manual_claims' },
-        p => setManualClaims(((p.new as { value?: ManualClaims })?.value) ?? {}))
+        p => setManualClaims(normalizeClaims(((p.new as { value?: Record<string, unknown> })?.value) ?? {}, todayISO())))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduler_driver_schedule' },
         () => { const t = todayISO(); void db.loadScheduleRange(yesterISO(t), plusDaysISO(t, 31)).then(setSchedule) })
       .subscribe()
@@ -277,38 +295,52 @@ export function Board() {
     schedule,
     jobs,
     aliases,
-    manualClaims,
+    manualClaims: manualClaims[today] ?? {},
     now,
     todayISO: today,
     yesterdayISO: yesterISO(today),
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [filteredDrivers, drivers, schedule, jobs, aliases, manualClaims, now, today, ghVersion])
 
-  // ── Manual-claim lifecycle ────────────────────────────────────────
-  const saveClaims = useCallback((next: ManualClaims) => {
+  // ── Manual-claim lifecycle (per day) ──────────────────────────────
+  const saveClaims = useCallback((next: ManualClaimsByDay) => {
     setManualClaims(next)
     void db.saveSetting('manual_claims', next)
   }, [])
+  // Claims apply to whichever day is on screen: live = today, planning = that day.
   const claimDriver = (driverId: number, note: string) => {
-    saveClaims({ ...manualClaims, [String(driverId)]: { at: new Date().toISOString(), ...(note.trim() ? { note: note.trim() } : {}) } })
+    const day = selectedDay
+    const dayClaims: ManualClaims = {
+      ...(manualClaims[day] ?? {}),
+      [String(driverId)]: { at: new Date().toISOString(), ...(note.trim() ? { note: note.trim() } : {}) },
+    }
+    saveClaims({ ...manualClaims, [day]: dayClaims })
   }
-  const releaseClaim = useCallback((driverId: number) => {
-    if (!manualClaims[String(driverId)]) return
+  const releaseClaim = useCallback((driverId: number, day: string) => {
+    const dayClaims = manualClaims[day]
+    if (!dayClaims?.[String(driverId)]) return
+    const nextDay = { ...dayClaims }
+    delete nextDay[String(driverId)]
     const next = { ...manualClaims }
-    delete next[String(driverId)]
+    if (Object.keys(nextDay).length) next[day] = nextDay
+    else delete next[day]
     saveClaims(next)
   }, [manualClaims, saveClaims])
 
-  // Auto-resolve: once TowBook shows a claimed driver actually ON CALL,
+  // Auto-resolve: once TowBook shows a today-claimed driver actually ON CALL,
   // the manual claim has served its purpose — clear it.
   useEffect(() => {
     if (!loaded) return
-    const confirmed = board.statuses.filter(s => s.state === 'ON_CALL' && manualClaims[String(s.driver.id)])
+    const todayClaims = manualClaims[today] ?? {}
+    const confirmed = board.statuses.filter(s => s.state === 'ON_CALL' && todayClaims[String(s.driver.id)])
     if (!confirmed.length) return
+    const nextDay = { ...todayClaims }
+    for (const s of confirmed) delete nextDay[String(s.driver.id)]
     const next = { ...manualClaims }
-    for (const s of confirmed) delete next[String(s.driver.id)]
+    if (Object.keys(nextDay).length) next[today] = nextDay
+    else delete next[today]
     saveClaims(next)
-  }, [board, manualClaims, loaded, saveClaims])
+  }, [board, manualClaims, today, loaded, saveClaims])
 
   const avail   = board.statuses.filter(s => s.state === 'AVAILABLE')
   const onCall  = board.statuses.filter(s => s.state === 'ON_CALL')
@@ -317,9 +349,14 @@ export function Board() {
   const offish  = board.statuses.filter(s => s.state === 'OFF' || s.state === 'OUT_OF_SHIFT' || s.state === 'NOT_SCHEDULED')
 
   // ── Planning-view derivations (selected day ≠ today) ─────────────
-  const dayPlan = useMemo(() => computeDayPlan(filteredDrivers, schedule, selectedDay), [filteredDrivers, schedule, selectedDay])
+  const dayPlan = useMemo(
+    () => computeDayPlan(filteredDrivers, schedule, selectedDay, manualClaims[selectedDay] ?? {}),
+    [filteredDrivers, schedule, selectedDay, manualClaims],
+  )
   const planScheduled = dayPlan.filter(p => p.state === 'SCHEDULED')
     .sort((a, b) => a.sortKey - b.sortKey || a.driver.name.localeCompare(b.driver.name))
+  const planClaimed = dayPlan.filter(p => p.state === 'CLAIMED')
+    .sort((a, b) => a.driver.name.localeCompare(b.driver.name))
   const planOff = dayPlan.filter(p => p.state === 'OFF')
   const planNot = dayPlan.filter(p => p.state === 'NOT_SCHEDULED')
 
@@ -590,12 +627,62 @@ export function Board() {
               {planScheduled.length === 0 && <EmptyNote text="Nobody scheduled for this day (yet) — shifts come from the Scheduler app." />}
               <div className="board-grid">
                 {planScheduled.map(p => (
-                  <div key={p.driver.id} style={{ background: C.cd, border: '1px solid ' + C.bd, borderLeft: '6px solid ' + C.gn, borderRadius: 10, padding: '12px 14px' }}>
+                  <div key={p.driver.id}
+                    draggable
+                    onDragStart={e => e.dataTransfer.setData('text/driver-id', String(p.driver.id))}
+                    style={{ background: C.cd, border: '1px solid ' + C.bd, borderLeft: '6px solid ' + C.gn, borderRadius: 10, padding: '12px 14px', cursor: 'grab' }}>
                     <div style={{ fontSize: 21, fontWeight: 900, lineHeight: 1.12 }}>{p.driver.name}</div>
-                    <div style={{ marginTop: 6, fontSize: 14, color: C.gn, fontWeight: 700 }}>{p.shiftStart} – {p.shiftEnd}</div>
+                    <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 14, color: C.gn, fontWeight: 700 }}>{p.shiftStart} – {p.shiftEnd}</span>
+                      <button onClick={() => setClaimTarget(p.driver)} title={`Claim this driver for ${dayFull(selectedDay)}`}
+                        style={{ marginLeft: 'auto', background: 'transparent', border: '1px solid ' + C.cy, borderRadius: 6, color: C.cy, fontSize: 11, fontWeight: 800, padding: '2px 10px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                        claim →
+                      </button>
+                    </div>
                     {p.driver.truck && <div style={{ marginTop: 2, fontSize: 12, color: C.dm }}>#{p.driver.truck}</div>}
                   </div>
                 ))}
+              </div>
+
+              {/* Drop target — claim drivers for THIS future day */}
+              <div
+                onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={e => {
+                  e.preventDefault()
+                  setDragOver(false)
+                  const id = Number(e.dataTransfer.getData('text/driver-id'))
+                  const d = drivers.find(x => x.id === id)
+                  if (d) setClaimTarget(d)
+                }}
+                style={{ outline: dragOver ? `2px dashed ${C.cy}` : 'none', outlineOffset: 4, borderRadius: 10 }}
+              >
+                <SectionHeader label={`CLAIMED FOR ${dayFull(selectedDay).toUpperCase()}`} count={planClaimed.length} color={C.cy} />
+                {planClaimed.length === 0 && (
+                  <EmptyNote text="Booking a call ahead? Drag a scheduled driver here (or hit claim →) to reserve them for this day." />
+                )}
+                <div className="board-grid board-grid--wide">
+                  {planClaimed.map(p => (
+                    <div key={p.driver.id} style={{ background: C.cd, border: '1px solid ' + C.bd, borderLeft: '6px solid ' + C.cy, borderRadius: 10, padding: '12px 14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                        <span style={{ fontSize: 21, fontWeight: 900, lineHeight: 1.12 }}>{p.driver.name}</span>
+                        {p.driver.truck && <span style={{ fontSize: 13, color: C.dm, fontWeight: 700 }}>#{p.driver.truck}</span>}
+                        <button onClick={() => releaseClaim(p.driver.id, selectedDay)} title="Release this reservation"
+                          style={{ marginLeft: 'auto', background: 'transparent', border: '1px solid ' + C.bd, borderRadius: 6, color: C.dm, fontSize: 11, padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                          ✕ release
+                        </button>
+                      </div>
+                      <div style={{ marginTop: 6, fontSize: 13, fontWeight: 800, color: C.cy }}>
+                        RESERVED — ENTER CALL IN TOWBOOK
+                      </div>
+                      {p.claimNote && <div style={{ marginTop: 4, fontSize: 13, color: C.cy, fontWeight: 700 }}>“{p.claimNote}”</div>}
+                      <div style={{ marginTop: 4, display: 'flex', gap: 12, fontSize: 12, color: C.dm }}>
+                        {p.shiftStart && <span>shift {p.shiftStart} – {p.shiftEnd}</span>}
+                        {p.claimedAt && <span>reserved {fT(p.claimedAt)}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <SectionHeader label="OFF" count={planOff.length} color={C.am} />
@@ -657,7 +744,7 @@ export function Board() {
                     <DriverCard key={s.driver.id} status={s} now={now}
                       onRelease={() => {
                         if (s.job) releaseDriver(s.job, s.driver.id)
-                        releaseClaim(s.driver.id)
+                        releaseClaim(s.driver.id, today)
                       }} />
                   ))}
                 </div>
@@ -728,6 +815,7 @@ export function Board() {
       {claimTarget && (
         <ClaimModal
           driver={claimTarget}
+          dayLabel={isPlanning ? dayFull(selectedDay) : null}
           onCancel={() => setClaimTarget(null)}
           onClaim={note => { claimDriver(claimTarget.id, note); setClaimTarget(null) }}
         />
@@ -736,8 +824,9 @@ export function Board() {
   )
 }
 
-function ClaimModal({ driver, onClaim, onCancel }: {
+function ClaimModal({ driver, dayLabel, onClaim, onCancel }: {
   driver: Driver
+  dayLabel: string | null   // null = today (live view)
   onClaim: (note: string) => void
   onCancel: () => void
 }) {
@@ -746,11 +835,14 @@ function ClaimModal({ driver, onClaim, onCancel }: {
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.7)', zIndex: 950, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
       onClick={e => { if (e.target === e.currentTarget) onCancel() }}>
       <div style={{ background: C.bg, border: '1px solid ' + C.cy, borderRadius: 12, padding: 20, width: 400 }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: C.cy, marginBottom: 4, letterSpacing: 1 }}>CLAIM DRIVER</div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: C.cy, marginBottom: 4, letterSpacing: 1 }}>
+          {dayLabel ? `CLAIM DRIVER — ${dayLabel.toUpperCase()}` : 'CLAIM DRIVER'}
+        </div>
         <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}>{driver.name}</div>
         <div style={{ fontSize: 12, color: C.dm, marginBottom: 10, lineHeight: 1.5 }}>
-          Marks them as spoken for. The card will remind you to enter the call in TowBook
-          and assign them there — once TowBook confirms, this converges to ON CALL automatically.
+          {dayLabel
+            ? `Reserves them for ${dayLabel}. When that day arrives they'll show as claimed on the live board until the call is entered in TowBook and assigned to them.`
+            : 'Marks them as spoken for. The card will remind you to enter the call in TowBook and assign them there — once TowBook confirms, this converges to ON CALL automatically.'}
         </div>
         <input
           autoFocus
