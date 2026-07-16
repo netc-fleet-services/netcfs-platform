@@ -17,7 +17,6 @@
     "@netcfs/utils": "workspace:*",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.49.0",
-    "leaflet": "^1.9.4",
     "next": "^15.2.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -25,7 +24,6 @@
   "devDependencies": {
     "@netcfs/config": "workspace:*",
     "@tailwindcss/postcss": "^4.0.0",
-    "@types/leaflet": "^1.9.21",
     "@types/node": "^22.10.7",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
