@@ -1,16 +1,16 @@
 'use client'
 
 import { useState } from 'react'
-import { BOARD, C, callCompanyBucket, sS, type CompanyBucket, type TeamId } from '../lib/config'
+import { BOARD, C, callCompany, sS, type TeamId } from '../lib/config'
 import type { Driver, Job } from '../lib/types'
 import { cityFrom } from '../lib/geo'
 import { jobTotal } from '../lib/utils'
 
-export function OpenCallsRail({ openCalls, unmatchedCalls, availableDrivers, bucket, team, onAssign, title, assignedCalls }: {
+export function OpenCallsRail({ openCalls, unmatchedCalls, availableDrivers, company, team, onAssign, title, assignedCalls }: {
   openCalls: Job[]
   unmatchedCalls: { job: Job; tbName: string }[]
   availableDrivers: Driver[]
-  bucket: CompanyBucket
+  company: string                                   // 'all' or an exact Company value
   team: TeamId | 'all'
   onAssign: (job: Job, driverId: number) => void
   title?: string                                    // defaults to "OPEN CALLS"
@@ -19,20 +19,20 @@ export function OpenCallsRail({ openCalls, unmatchedCalls, availableDrivers, buc
   // Scope the rail to the board's company + team. Unknown prefixes / NULL
   // job types are always shown (never silently hide a call).
   const teamTypes = team === 'all' ? null : new Set(BOARD.teamJobTypes[team])
+  const companyMatch = (j: Job) => {
+    if (company === 'all') return true
+    const cc = callCompany(j.tbCallNum)
+    return !cc || cc === company
+  }
   const visible = openCalls.filter(j => {
-    const jb = callCompanyBucket(j.tbCallNum)
-    if (jb && jb !== bucket) return false
+    if (!companyMatch(j)) return false
     if (teamTypes && j.jobType && !teamTypes.has(j.jobType)) return false
     return true
   })
-  const unmatchedVisible = unmatchedCalls.filter(({ job }) => {
-    const jb = callCompanyBucket(job.tbCallNum)
-    return !jb || jb === bucket
-  })
+  const unmatchedVisible = unmatchedCalls.filter(({ job }) => companyMatch(job))
 
   const assignedVisible = (assignedCalls ?? []).filter(({ job }) => {
-    const jb = callCompanyBucket(job.tbCallNum)
-    if (jb && jb !== bucket) return false
+    if (!companyMatch(job)) return false
     if (teamTypes && job.jobType && !teamTypes.has(job.jobType)) return false
     return true
   })

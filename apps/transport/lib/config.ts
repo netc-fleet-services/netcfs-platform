@@ -70,15 +70,16 @@ export const DEFAULT_YARDS: Yard[] = [
 // Mutable global — updated in-place so geo/utils functions stay in sync.
 export const YARDS: Yard[] = []
 
-// ── Company buckets & teams (mirrors apps/scheduler/lib/config.ts) ─
-// Interstate = drivers."Company" === 'Interstate'; NETC = everything else
-// (NETC, MBTR, Rays, and NULL fold together).
-export type CompanyBucket = 'interstate' | 'netc'
-
-export function matchesCompanyBucket(company: string | null | undefined, bucket: CompanyBucket): boolean {
-  const isInterstate = String(company ?? '').trim().toLowerCase() === 'interstate'
-  return bucket === 'interstate' ? isInterstate : !isInterstate
+// ── Companies & teams ───────────────────────────────────────────────
+// Company pills are built from the live roster's "Company" values (NETC,
+// Interstate, MBTR, Rays, …) plus an "All Companies" option. Drivers with
+// no Company set count as NETC.
+export function driverCompany(company: string | null | undefined): string {
+  return String(company ?? '').trim() || 'NETC'
 }
+
+// Preferred pill order — anything not listed sorts alphabetically after.
+export const COMPANY_ORDER = ['NETC', 'Interstate', 'MBTR', 'Rays']
 
 export type TeamId = 'light' | 'heavy' | 'transport' | 'road'
 export interface TeamDef { id: TeamId; label: string; functions: string[] }
@@ -87,11 +88,7 @@ export interface TeamDef { id: TeamId; label: string; functions: string[] }
 export const DRIVER_FUNCTIONS = ['Transport', 'Heavy Duty Towing', 'Road Service', 'Light Duty Towing', 'LDT', 'HDT']
 
 export const BOARD = {
-  companyBuckets: [
-    { id: 'netc',       label: 'NETC' },
-    { id: 'interstate', label: 'Interstate' },
-  ] as Array<{ id: CompanyBucket; label: string }>,
-  defaultCompanyBucket: 'netc' as CompanyBucket,
+  defaultCompany: 'all' as string,   // 'all' or an exact "Company" value
 
   // Team pills — each matches BOTH function spellings (Interstate's LDT/HDT
   // and the NETC side's long names). Same work, different companies; the two
@@ -118,11 +115,16 @@ export const BOARD = {
   staleAlertMin: 20,
 }
 
-// TowBook call numbers carry a location prefix (first digit): 4 = Interstate,
-// 1/2/3 = NETC-side yards. Unknown/missing → null (show under any bucket).
-export function callCompanyBucket(callNum: string | null): CompanyBucket | null {
+// TowBook call numbers carry a location prefix (first digit).
+// Unknown/missing prefix → null (the call shows under every company).
+export const CALL_PREFIX_COMPANY: Record<string, string> = {
+  '1': 'NETC',
+  '2': 'MBTR',
+  '3': 'Rays',
+  '4': 'Interstate',
+}
+export function callCompany(callNum: string | null): string | null {
   const ch = (callNum ?? '').trim()[0]
-  if (!ch || !/\d/.test(ch)) return null
-  return ch === '4' ? 'interstate' : 'netc'
+  return ch ? (CALL_PREFIX_COMPANY[ch] ?? null) : null
 }
 

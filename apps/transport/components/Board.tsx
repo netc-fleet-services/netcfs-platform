@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { db, jobToApp } from '../lib/db'
 import { sb } from '../lib/supabase'
 import {
-  BOARD, C, DEFAULT_YARDS, YARDS,
-  matchesCompanyBucket, type CompanyBucket, type TeamId,
+  BOARD, C, COMPANY_ORDER, DEFAULT_YARDS, YARDS,
+  driverCompany, type TeamId,
 } from '../lib/config'
 import type { Driver, DriverMatchItem, Job, ScheduleEntry, Yard } from '../lib/types'
 import { computeBoard, computeDayPlan, normName, type ManualClaims } from '../lib/availability'
@@ -74,16 +74,21 @@ export function Board() {
   const [planJobs, setPlanJobs]         = useState<Job[]>([])
 
   // Company/team scope — persisted per device so each TV keeps its setting.
-  const [bucket, setBucketState] = useState<CompanyBucket>(() => {
-    const v = lsGet('transport.companyBucket')
-    return v === 'interstate' || v === 'netc' ? v : BOARD.defaultCompanyBucket
+  // company is 'all' or an exact roster "Company" value (NETC / Interstate / MBTR / Rays / …).
+  const [company, setCompanyState] = useState<string>(() => {
+    const v = lsGet('transport.company')
+    if (v) return v
+    const legacy = lsGet('transport.companyBucket')   // migrate the old two-bucket key
+    if (legacy === 'interstate') return 'Interstate'
+    if (legacy === 'netc') return 'NETC'
+    return BOARD.defaultCompany
   })
   const [team, setTeamState] = useState<TeamId | 'all'>(() => {
     const v = lsGet('transport.team')
     return v === 'all' || BOARD.teams.some(t => t.id === v) ? (v as TeamId | 'all') : BOARD.defaultTeam
   })
-  const setBucket = (b: CompanyBucket) => { setBucketState(b); window.localStorage.setItem('transport.companyBucket', b) }
-  const setTeam   = (t: TeamId | 'all') => { setTeamState(t); window.localStorage.setItem('transport.team', t) }
+  const setCompany = (c: string) => { setCompanyState(c); window.localStorage.setItem('transport.company', c) }
+  const setTeam    = (t: TeamId | 'all') => { setTeamState(t); window.localStorage.setItem('transport.team', t) }
 
   // ── Initial load / reload ─────────────────────────────────────────
   const reload = useCallback(async () => {
@@ -241,18 +246,28 @@ export function Board() {
   }, [jobs, loaded, today])
 
   // ── Board computation ─────────────────────────────────────────────
+  // Company pills come from the live roster (plus All Companies).
+  const companies = useMemo(() => {
+    const set = new Set(drivers.map(d => driverCompany(d.company)))
+    return [...set].sort((a, b) => {
+      const ia = COMPANY_ORDER.indexOf(a)
+      const ib = COMPANY_ORDER.indexOf(b)
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b)
+    })
+  }, [drivers])
+
   const filteredDrivers = useMemo(() => {
     const teamFns = team === 'all'
       ? BOARD.teams.flatMap(t => t.functions)
       : BOARD.teams.find(t => t.id === team)?.functions ?? []
     const fnSet = new Set(teamFns.map(f => f.toLowerCase()))
     return drivers.filter(d => {
-      if (!matchesCompanyBucket(d.company, bucket)) return false
+      if (company !== 'all' && driverCompany(d.company) !== company) return false
       const fn = d.func.trim().toLowerCase()
       if (team === 'all') return !fn || fnSet.has(fn)   // blank func visible under All Teams
       return fnSet.has(fn)
     })
-  }, [drivers, bucket, team])
+  }, [drivers, company, team])
 
   const board = useMemo(() => computeBoard({
     drivers: filteredDrivers,
@@ -439,7 +454,7 @@ export function Board() {
         <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: -0.5 }}>
           Dispatch Board
           <span style={{ color: C.dm, fontWeight: 600, fontSize: 15, marginLeft: 10 }}>
-            {BOARD.companyBuckets.find(b => b.id === bucket)?.label}
+            {company === 'all' ? 'All Companies' : company}
             {team !== 'all' ? ` · ${BOARD.teams.find(t => t.id === team)?.label}` : ' · All Teams'}
           </span>
         </div>
@@ -499,11 +514,15 @@ export function Board() {
 
       {/* ── Scope pills ── */}
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 14 }}>
-        <div style={{ display: 'inline-flex', background: C.sf, border: '1px solid ' + C.bd, borderRadius: 8, padding: 3, gap: 3 }}>
-          {BOARD.companyBuckets.map(b => (
-            <button key={b.id} onClick={() => setBucket(b.id)}
-              style={{ padding: '7px 16px', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: 'inherit', background: bucket === b.id ? C.ac : 'transparent', color: bucket === b.id ? C.wh : C.dm }}>
-              {b.label}
+        <div style={{ display: 'inline-flex', background: C.sf, border: '1px solid ' + C.bd, borderRadius: 8, padding: 3, gap: 3, flexWrap: 'wrap' }}>
+          <button onClick={() => setCompany('all')}
+            style={{ padding: '7px 16px', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: 'inherit', background: company === 'all' ? C.ac : 'transparent', color: company === 'all' ? C.wh : C.dm }}>
+            All Companies
+          </button>
+          {companies.map(c => (
+            <button key={c} onClick={() => setCompany(c)}
+              style={{ padding: '7px 16px', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: 'inherit', background: company === c ? C.ac : 'transparent', color: company === c ? C.wh : C.dm }}>
+              {c}
             </button>
           ))}
         </div>
@@ -591,12 +610,6 @@ export function Board() {
                 ))}
               </div>
 
-              <SectionHeader label="ON CALL" count={onCall.length} color={C.rd} />
-              {onCall.length === 0 && <EmptyNote text="Nobody is on a call." />}
-              <div className="board-grid board-grid--wide">
-                {onCall.map(s => <DriverCard key={s.driver.id} status={s} now={now} />)}
-              </div>
-
               {/* Always rendered live — it's also the drop target for claiming */}
               <div
                 onDragOver={e => { e.preventDefault(); setDragOver(true) }}
@@ -625,6 +638,12 @@ export function Board() {
                 </div>
               </div>
 
+              <SectionHeader label="ON CALL" count={onCall.length} color={C.rd} />
+              {onCall.length === 0 && <EmptyNote text="Nobody is on a call." />}
+              <div className="board-grid board-grid--wide">
+                {onCall.map(s => <DriverCard key={s.driver.id} status={s} now={now} />)}
+              </div>
+
               <OffStrip statuses={offish} />
             </>
           )}
@@ -635,7 +654,7 @@ export function Board() {
             openCalls={planOpen}
             unmatchedCalls={[]}
             availableDrivers={planScheduled.map(p => p.driver)}
-            bucket={bucket}
+            company={company}
             team={team}
             onAssign={assignPlanned}
             title={`CALLS ${daySh(selectedDay)}`}
@@ -646,7 +665,7 @@ export function Board() {
             openCalls={board.openCalls}
             unmatchedCalls={board.unmatchedCalls}
             availableDrivers={avail.map(s => s.driver)}
-            bucket={bucket}
+            company={company}
             team={team}
             onAssign={assignDriver}
           />
