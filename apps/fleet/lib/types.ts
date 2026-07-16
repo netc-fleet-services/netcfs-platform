@@ -72,4 +72,5 @@ export interface Truck {
 export interface Location {
   id: string
   name: string
+  company?: string | null   // 'netc' | 'interstate' — yards without one are NETC
 }

@@ -11,6 +11,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   ld_tow:    'LD Tow',
   roadside:  'Roadside',
   transport: 'Transport',
+  other:     'Other',
 }
 
 function daysAgo(isoString: string): number {

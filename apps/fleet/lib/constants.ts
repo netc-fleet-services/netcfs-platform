@@ -27,6 +27,7 @@ export const CATEGORY = {
   LD_TOW:    'ld_tow',
   ROADSIDE:  'roadside',
   TRANSPORT: 'transport',
+  OTHER:     'other',
 } as const
 
 export const CATEGORY_LABELS: Record<string, string> = {
@@ -34,6 +35,13 @@ export const CATEGORY_LABELS: Record<string, string> = {
   ld_tow:    'LD Tow',
   roadside:  'Roadside',
   transport: 'Transport',
+  other:     'Other',
+}
+
+// Top-level company filter — each location (yard) belongs to one company.
+export const COMPANY_LABELS: Record<string, string> = {
+  netc:       'NETC',
+  interstate: 'Interstate',
 }
 
 export const ROLE = {
