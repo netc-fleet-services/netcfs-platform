@@ -36,6 +36,9 @@ export interface Job {
   completedAt: string | null
   hasTolls: boolean
   addedAt: string | null
+  // Live-board fields (written by sync_calls.py only)
+  actionStatus: string | null   // raw TowBook action text ("On Scene", "Towing at time", …)
+  activeSince: string | null    // first observed transition into status=active
 }
 
 export interface Driver {
@@ -44,6 +47,18 @@ export interface Driver {
   truck: string
   yard: string
   func: string
+  company: string | null   // drivers."Company" — 'Interstate' vs NETC-side entities
+  active: boolean
+}
+
+// Row from scheduler_driver_schedule (the scheduler app owns writes).
+export interface ScheduleEntry {
+  driverId: number
+  scheduleDate: string           // ISO date
+  entryType: 'shift' | 'off'
+  startTime: string | null       // 'HH:MM:SS'; end < start ⇒ overnight
+  endTime: string | null
+  offReason: 'PTO' | 'sick' | 'unavailable' | 'other' | null
 }
 
 export interface Yard {
@@ -84,28 +99,6 @@ export interface LegCalc {
   luH: number
   fromGH: boolean
   multiLeg?: boolean
-}
-
-export interface DriverState {
-  driver: Driver
-  yard: Yard
-  jobs: Job[]
-  usedH: number
-  curPos: Coords | null
-}
-
-export interface OptimizerState {
-  driverStates: DriverState[]
-  unassigned: Job[]
-}
-
-export interface StackPair {
-  a: Job
-  b: Job
-  dist: number
-  aDriver: Driver | null
-  bDriver: Driver | null
-  city: string
 }
 
 export interface DriverMatchItem {

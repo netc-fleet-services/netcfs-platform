@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import type { Driver, Yard } from './types'
+import type { Yard } from './types'
 
 // ── Color Palette ──────────────────────────────────────────────────
 // Structural colors map to NETCFS CSS variables (theme-aware).
@@ -23,6 +23,8 @@ export const C = {
   wh:  '#ffffff',
   pu:  '#a78bfa',
   pd:  '#2e1065',
+  cy:  '#22d3ee',   // CLAIMED — dispatcher assigned on the board, not in TowBook yet
+  cb:  '#083344',
 } as const
 
 export const PRI_COLORS: Record<string, string> = {
@@ -68,20 +70,59 @@ export const DEFAULT_YARDS: Yard[] = [
 // Mutable global — updated in-place so geo/utils functions stay in sync.
 export const YARDS: Yard[] = []
 
-// ── Default Driver Roster ──────────────────────────────────────────
-export const defaultDrivers: Driver[] = [
-  { id: 1, name: 'Robert Welch',      truck: '3223', yard: 'exeter',     func: 'Transport' },
-  { id: 2, name: 'Trevor Tardif',     truck: '49',   yard: 'exeter',     func: 'Transport' },
-  { id: 3, name: 'Greg Rutherford',   truck: '2425', yard: 'exeter',     func: 'Transport' },
-  { id: 4, name: 'Matt Cashin',       truck: '5222', yard: 'exeter',     func: 'Transport' },
-  { id: 5, name: 'Kevin Curtis',      truck: '721',  yard: 'pembroke',   func: 'Transport' },
-  { id: 6, name: 'Robert Deleon',     truck: '2125', yard: 'mattbrowns', func: 'Transport' },
-  { id: 7, name: 'Andrew Broughton',  truck: '2822', yard: 'mattbrowns', func: 'Transport' },
-  { id: 8, name: 'Jonathan Wright',   truck: '52',   yard: 'mattbrowns', func: 'Transport' },
-]
+// ── Company buckets & teams (mirrors apps/scheduler/lib/config.ts) ─
+// Interstate = drivers."Company" === 'Interstate'; NETC = everything else
+// (NETC, MBTR, Rays, and NULL fold together).
+export type CompanyBucket = 'interstate' | 'netc'
 
-export const DRIVER_FUNCTIONS = ['Transport', 'Heavy Duty Towing', 'Road Service', 'Light Duty Towing']
+export function matchesCompanyBucket(company: string | null | undefined, bucket: CompanyBucket): boolean {
+  const isInterstate = String(company ?? '').trim().toLowerCase() === 'interstate'
+  return bucket === 'interstate' ? isInterstate : !isInterstate
+}
 
-// ── TowBook Bookmarklet ────────────────────────────────────────────
-// Run on the TowBook dispatch page to copy jobs to clipboard.
-export const NETC_BM = 'javascript:(function(){function xz(a){var m=a.match(/\\b[A-Za-z]{2}\\s*(\\d{5})\\b/);if(m)return m[1];var all=[],re=/\\b(\\d{5})\\b/g,r;while((r=re.exec(a))!==null)all.push(r[1]);return all.length?all[all.length-1]:\'\';}function xc(s){return s.replace(/\\s*\\([^)]*\\)\\s*$/,\'\').replace(/,?\\s*USA\\s*$/i,\'\').trim();}function xa(s){if(!s||/^\\d/.test(s))return s;var m=s.match(/\\d+\\s+[A-Za-z]/);return m?s.substring(m.index):s;}var rows=document.querySelectorAll(\'li.entryRow\');var jobs=[];rows.forEach(function(r){var lis=r.querySelectorAll(\'ul.details1>li\');var pickup=\'\',drop=\'\',desc=\'\',sched=\'\',reason=\'\',driver=\'\',truck=\'\';for(var i=0;i<lis.length;i++){var tEl=lis[i].querySelector(\'.title\');var vEl=lis[i].querySelector(\'.text\');if(!tEl||!vEl)continue;var lbl=tEl.textContent.trim();var val=(vEl.getAttribute(\'title\')||vEl.textContent).replace(/\\s+/g,\' \').trim();if(lbl===\'Tow Source\')pickup=val;else if(lbl===\'Reason\')reason=val;else if(lbl===\'Driver\')driver=val;else if(lbl===\'Truck\')truck=val;else if(lbl===\'Destination\')drop=val;}pickup=xa(xc(pickup));drop=xa(xc(drop));var bEl=r.querySelector(\'.big-text\');if(bEl)desc=(bEl.getAttribute(\'title\')||bEl.textContent).trim();var eta=r.querySelector(\'.scheduled-eta-container\');if(eta){var sp=eta.closest(\'span[title]\');if(sp){var title=sp.getAttribute(\'title\');var paren=title.indexOf(\'(\');sched=paren>-1?title.substring(0,paren).trim():title.trim();}}var pz=xz(pickup),dz=xz(drop);var cn=r.getAttribute(\'data-call-number\')||\'\';if(pickup||drop)jobs.push({callNum:cn,desc:desc,pickup:pickup,drop:drop,pickupZip:pz,dropZip:dz,scheduled:sched,reason:reason,driver:driver,truck:truck});});var json=JSON.stringify(jobs);var ta=document.createElement(\'textarea\');ta.value=json;ta.style.position=\'fixed\';ta.style.left=\'-9999px\';document.body.appendChild(ta);ta.select();document.execCommand(\'copy\');document.body.removeChild(ta);var rt={};jobs.forEach(function(j){if(j.reason)rt[j.reason]=(rt[j.reason]||0)+1;});alert(\'Copied \'+jobs.length+\' jobs\\n\\nTypes: \'+Object.keys(rt).sort().map(function(k){return k+\': \'+rt[k]}).join(\', \')+\'\\n\\nOpen Planner > Import\');})()';
+export type TeamId = 'light' | 'heavy' | 'transport' | 'road'
+export interface TeamDef { id: TeamId; label: string; functions: string[] }
+
+// Function options for the roster editor — both companies' spellings.
+export const DRIVER_FUNCTIONS = ['Transport', 'Heavy Duty Towing', 'Road Service', 'Light Duty Towing', 'LDT', 'HDT']
+
+export const BOARD = {
+  companyBuckets: [
+    { id: 'netc',       label: 'NETC' },
+    { id: 'interstate', label: 'Interstate' },
+  ] as Array<{ id: CompanyBucket; label: string }>,
+  defaultCompanyBucket: 'netc' as CompanyBucket,
+
+  // Team pills — each matches BOTH function spellings (Interstate's LDT/HDT
+  // and the NETC side's long names). Same work, different companies; the two
+  // conventions are intentional and never normalized.
+  teams: [
+    { id: 'light',     label: 'Light Duty',   functions: ['LDT', 'Light Duty Towing'] },
+    { id: 'heavy',     label: 'Heavy Duty',   functions: ['HDT', 'Heavy Duty Towing'] },
+    { id: 'transport', label: 'Transport',    functions: ['Transport'] },
+    { id: 'road',      label: 'Road Service', functions: ['Road Service'] },
+  ] as TeamDef[],
+  defaultTeam: 'transport' as TeamId | 'all',
+
+  // Open-calls rail: which canonical jobs.job_type values belong to each team.
+  // Jobs with NULL job_type are always shown.
+  teamJobTypes: {
+    light:     ['Light Duty Tow'],
+    heavy:     ['Heavy Duty Tow', 'Crane Service'],
+    transport: ['Equipment Transport'],
+    road:      ['Road Service'],
+  } as Record<TeamId, string[]>,
+
+  // Sync staleness thresholds (minutes since settings.last_synced)
+  staleWarnMin: 10,
+  staleAlertMin: 20,
+}
+
+// TowBook call numbers carry a location prefix (first digit): 4 = Interstate,
+// 1/2/3 = NETC-side yards. Unknown/missing → null (show under any bucket).
+export function callCompanyBucket(callNum: string | null): CompanyBucket | null {
+  const ch = (callNum ?? '').trim()[0]
+  if (!ch || !/\d/.test(ch)) return null
+  return ch === '4' ? 'interstate' : 'netc'
+}
+
