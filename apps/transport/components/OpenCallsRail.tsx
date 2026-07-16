@@ -6,13 +6,15 @@ import type { Driver, Job } from '../lib/types'
 import { cityFrom } from '../lib/geo'
 import { jobTotal } from '../lib/utils'
 
-export function OpenCallsRail({ openCalls, unmatchedCalls, availableDrivers, bucket, team, onAssign }: {
+export function OpenCallsRail({ openCalls, unmatchedCalls, availableDrivers, bucket, team, onAssign, title, assignedCalls }: {
   openCalls: Job[]
   unmatchedCalls: { job: Job; tbName: string }[]
   availableDrivers: Driver[]
   bucket: CompanyBucket
   team: TeamId | 'all'
   onAssign: (job: Job, driverId: number) => void
+  title?: string                                    // defaults to "OPEN CALLS"
+  assignedCalls?: { job: Job; names: string[] }[]   // planning view: already-covered calls
 }) {
   // Scope the rail to the board's company + team. Unknown prefixes / NULL
   // job types are always shown (never silently hide a call).
@@ -28,10 +30,17 @@ export function OpenCallsRail({ openCalls, unmatchedCalls, availableDrivers, buc
     return !jb || jb === bucket
   })
 
+  const assignedVisible = (assignedCalls ?? []).filter(({ job }) => {
+    const jb = callCompanyBucket(job.tbCallNum)
+    if (jb && jb !== bucket) return false
+    if (teamTypes && job.jobType && !teamTypes.has(job.jobType)) return false
+    return true
+  })
+
   return (
     <div style={{ width: 340, flexShrink: 0 }}>
       <div style={{ fontSize: 14, fontWeight: 900, letterSpacing: 1.2, color: C.am, margin: '4px 0 10px' }}>
-        OPEN CALLS <span style={{ fontSize: 22 }}>{visible.length}</span>
+        {title ?? 'OPEN CALLS'} <span style={{ fontSize: 22 }}>{visible.length}</span>
       </div>
 
       {visible.length === 0 && (
@@ -39,6 +48,29 @@ export function OpenCallsRail({ openCalls, unmatchedCalls, availableDrivers, buc
       )}
 
       {visible.map(j => <OpenCallCard key={j.id} job={j} availableDrivers={availableDrivers} onAssign={onAssign} />)}
+
+      {assignedVisible.length > 0 && (
+        <>
+          <div style={{ fontSize: 12, fontWeight: 900, letterSpacing: 1.2, color: C.gn, margin: '16px 0 8px' }}>
+            COVERED ({assignedVisible.length})
+          </div>
+          {assignedVisible.map(({ job: j, names }) => (
+            <div key={j.id} style={{ background: C.cd, border: '1px solid ' + C.bd, borderLeft: '4px solid ' + C.gn, borderRadius: 8, padding: '8px 10px', marginBottom: 6 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13, fontWeight: 900 }}>#{j.tbCallNum ?? '—'}</span>
+                {j.jobType && <span style={{ fontSize: 10, color: C.dm, border: '1px solid ' + C.bd, borderRadius: 4, padding: '1px 5px' }}>{j.jobType}</span>}
+                {j.tbScheduled && <span style={{ fontSize: 11, color: C.dm, marginLeft: 'auto' }}>{j.tbScheduled}</span>}
+              </div>
+              <div style={{ marginTop: 2, fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {cityFrom(j.pickupAddr) || '—'} → {cityFrom(j.dropAddr) || '—'}
+              </div>
+              <div style={{ marginTop: 2, fontSize: 12, color: C.gn, fontWeight: 700 }}>
+                {names.length ? names.join(', ') : 'assigned'}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
 
       {unmatchedVisible.length > 0 && (
         <>

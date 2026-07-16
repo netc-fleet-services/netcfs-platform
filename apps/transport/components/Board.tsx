@@ -8,8 +8,8 @@ import {
   matchesCompanyBucket, type CompanyBucket, type TeamId,
 } from '../lib/config'
 import type { Driver, DriverMatchItem, Job, ScheduleEntry, Yard } from '../lib/types'
-import { computeBoard, normName } from '../lib/availability'
-import { fT, isoD, todayISO } from '../lib/utils'
+import { computeBoard, computeDayPlan, normName, type ManualClaims } from '../lib/availability'
+import { dayFull, dayNm, daySh, fT, genDays, isoD, todayISO } from '../lib/utils'
 import { crd, geoCache, ghRoute, jobCrd, routeCache, routeLookup, yCrd } from '../lib/geo'
 import { DriverCard } from './DriverCard'
 import { OpenCallsRail } from './OpenCallsRail'
@@ -20,6 +20,12 @@ import { DriverMatchModal } from './DriverMatchModal'
 function yesterISO(today: string): string {
   const d = new Date(today + 'T12:00:00')
   d.setDate(d.getDate() - 1)
+  return isoD(d)
+}
+
+function plusDaysISO(iso: string, n: number): string {
+  const d = new Date(iso + 'T12:00:00')
+  d.setDate(d.getDate() + n)
   return isoD(d)
 }
 
@@ -58,6 +64,14 @@ export function Board() {
   const [matchQueue, setMatchQueue] = useState<DriverMatchItem[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [ghVersion, setGhVersion] = useState(0)   // bumped when a GraphHopper route resolves
+  // Manual (job-less) claims — dispatcher grabbed a driver before the call
+  // exists in TowBook. Shared across every open board via settings realtime.
+  const [manualClaims, setManualClaims] = useState<ManualClaims>({})
+  const [claimTarget, setClaimTarget]   = useState<Driver | null>(null)
+  const [dragOver, setDragOver]         = useState(false)
+  // Day picker — today is the live board; any other day is a planning view.
+  const [selectedDay, setSelectedDay]   = useState<string>(todayISO())
+  const [planJobs, setPlanJobs]         = useState<Job[]>([])
 
   // Company/team scope — persisted per device so each TV keeps its setting.
   const [bucket, setBucketState] = useState<CompanyBucket>(() => {
@@ -74,11 +88,13 @@ export function Board() {
   // ── Initial load / reload ─────────────────────────────────────────
   const reload = useCallback(async () => {
     const t = todayISO()
-    const [ds, js, sched, al, ys, ls, repo, token, gc, rc] = await Promise.all([
+    const [ds, js, sched, al, mc, ys, ls, repo, token, gc, rc] = await Promise.all([
       db.loadDrivers(),
       db.loadBoardJobs(t),
-      db.loadScheduleRange(yesterISO(t), t),
+      // Yesterday (overnight carry-over) through +31 days (day-picker planning)
+      db.loadScheduleRange(yesterISO(t), plusDaysISO(t, 31)),
       db.loadSetting<Record<string, number>>('driver_name_aliases', {}),
+      db.loadSetting<ManualClaims>('manual_claims', {}),
       db.loadYards(),
       db.loadSetting<string | null>('last_synced', null),
       db.loadSetting<string>('github_repo', ''),
@@ -94,6 +110,7 @@ export function Board() {
     setJobs(js)
     setSchedule(sched)
     setAliases(al)
+    setManualClaims(mc)
     setYards(yardList)
     setLastSynced(ls)
     setGhRepo(repo)
@@ -122,6 +139,8 @@ export function Board() {
         p => setJobs(prev => prev.filter(x => x.id !== String((p.old as { id?: string }).id))))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'settings', filter: 'key=eq.last_synced' },
         p => setLastSynced(((p.new as { value?: string })?.value) ?? null))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'settings', filter: 'key=eq.manual_claims' },
+        p => setManualClaims(((p.new as { value?: ManualClaims })?.value) ?? {}))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduler_driver_schedule' },
         () => { const t = todayISO(); void db.loadScheduleRange(yesterISO(t), t).then(setSchedule) })
       .subscribe()
@@ -134,12 +153,22 @@ export function Board() {
       setNow(new Date())
       const t = todayISO()
       setToday(prev => {
-        if (prev !== t) void reload()
+        if (prev !== t) {
+          void reload()
+          setSelectedDay(cur => (cur === prev ? t : cur))   // a TV left on "today" follows the date
+        }
         return t
       })
     }, 30_000)
     return () => clearInterval(iv)
   }, [reload])
+
+  // ── Planning-day jobs (any day other than today) ─────────────────
+  const isPlanning = selectedDay !== today
+  useEffect(() => {
+    if (!isPlanning) { setPlanJobs([]); return }
+    void db.loadJobsForDay(selectedDay).then(setPlanJobs)
+  }, [isPlanning, selectedDay])
 
   // ── Auto-match TowBook names → roster ids; queue the unmatchable ──
   useEffect(() => {
@@ -217,17 +246,79 @@ export function Board() {
     schedule,
     jobs,
     aliases,
+    manualClaims,
     now,
     todayISO: today,
     yesterdayISO: yesterISO(today),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [filteredDrivers, drivers, schedule, jobs, aliases, now, today, ghVersion])
+  }), [filteredDrivers, drivers, schedule, jobs, aliases, manualClaims, now, today, ghVersion])
+
+  // ── Manual-claim lifecycle ────────────────────────────────────────
+  const saveClaims = useCallback((next: ManualClaims) => {
+    setManualClaims(next)
+    void db.saveSetting('manual_claims', next)
+  }, [])
+  const claimDriver = (driverId: number, note: string) => {
+    saveClaims({ ...manualClaims, [String(driverId)]: { at: new Date().toISOString(), ...(note.trim() ? { note: note.trim() } : {}) } })
+  }
+  const releaseClaim = useCallback((driverId: number) => {
+    if (!manualClaims[String(driverId)]) return
+    const next = { ...manualClaims }
+    delete next[String(driverId)]
+    saveClaims(next)
+  }, [manualClaims, saveClaims])
+
+  // Auto-resolve: once TowBook shows a claimed driver actually ON CALL,
+  // the manual claim has served its purpose — clear it.
+  useEffect(() => {
+    if (!loaded) return
+    const confirmed = board.statuses.filter(s => s.state === 'ON_CALL' && manualClaims[String(s.driver.id)])
+    if (!confirmed.length) return
+    const next = { ...manualClaims }
+    for (const s of confirmed) delete next[String(s.driver.id)]
+    saveClaims(next)
+  }, [board, manualClaims, loaded, saveClaims])
 
   const avail   = board.statuses.filter(s => s.state === 'AVAILABLE')
   const onCall  = board.statuses.filter(s => s.state === 'ON_CALL')
     .sort((a, b) => (a.freeAt?.getTime() ?? Infinity) - (b.freeAt?.getTime() ?? Infinity))
   const claimed = board.statuses.filter(s => s.state === 'CLAIMED')
   const offish  = board.statuses.filter(s => s.state === 'OFF' || s.state === 'OUT_OF_SHIFT' || s.state === 'NOT_SCHEDULED')
+
+  // ── Planning-view derivations (selected day ≠ today) ─────────────
+  const dayPlan = useMemo(() => computeDayPlan(filteredDrivers, schedule, selectedDay), [filteredDrivers, schedule, selectedDay])
+  const planScheduled = dayPlan.filter(p => p.state === 'SCHEDULED')
+    .sort((a, b) => a.sortKey - b.sortKey || a.driver.name.localeCompare(b.driver.name))
+  const planOff = dayPlan.filter(p => p.state === 'OFF')
+  const planNot = dayPlan.filter(p => p.state === 'NOT_SCHEDULED')
+
+  const driversById = useMemo(() => new Map(drivers.map(d => [d.id, d])), [drivers])
+  const hasOccupant = (j: Job) => !!(j.driverId || j.driverId2 || j.tbDriver.trim() || j.tbDriver2.trim())
+  const planRelevant = planJobs.filter(j => j.status === 'scheduled' || j.status === 'active')
+  const planOpen = planRelevant.filter(j => !hasOccupant(j))
+  const planAssigned = planRelevant.filter(hasOccupant).map(j => {
+    const raw = [
+      ...[j.driverId, j.driverId2].filter((x): x is number => !!x).map(id => driversById.get(id)?.name ?? `driver #${id}`),
+      ...[j.tbDriver, j.tbDriver2],
+    ]
+    const seen = new Set<string>()
+    const names: string[] = []
+    for (const n of raw) {
+      const k = n.trim().toLowerCase()
+      if (!k || seen.has(k)) continue
+      seen.add(k)
+      names.push(n.trim())
+    }
+    return { job: j, names }
+  })
+
+  const assignPlanned = (job: Job, driverId: number) => {
+    const slot = job.driverId ? 'driver_id_2' : 'driver_id'
+    setPlanJobs(prev => prev.map(j => j.id === job.id
+      ? { ...j, driverId: slot === 'driver_id' ? driverId : j.driverId, driverId2: slot === 'driver_id_2' ? driverId : j.driverId2 }
+      : j))
+    void db.updateJobFields(job.id, { [slot]: driverId })
+  }
 
   const staleMin = lastSynced ? Math.floor((now.getTime() - new Date(lastSynced).getTime()) / 60_000) : null
 
@@ -352,12 +443,45 @@ export function Board() {
         </div>
       </div>
 
-      {/* ── Stale-sync alert ── */}
-      {staleMin != null && staleMin >= BOARD.staleAlertMin && (
+      {/* ── Stale-sync alert (live view only) ── */}
+      {!isPlanning && staleMin != null && staleMin >= BOARD.staleAlertMin && (
         <div style={{ background: C.rd, color: C.wh, fontWeight: 800, fontSize: 14, borderRadius: 8, padding: '8px 14px', marginBottom: 10 }}>
           ⚠ TowBook sync is {staleMin} minutes old — driver call status may be outdated.
         </div>
       )}
+
+      {/* ── Day picker: Today + next 7 days + calendar jump ── */}
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+        {genDays(8).map(iso => (
+          <button key={iso} onClick={() => setSelectedDay(iso)}
+            style={{
+              padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit',
+              border: '1px solid ' + (selectedDay === iso ? C.ac : C.bd),
+              background: selectedDay === iso ? C.ad : C.sf,
+              color: selectedDay === iso ? C.wh : C.dm,
+              fontWeight: 700, fontSize: 12,
+            }}>
+            {dayNm(iso)} <span style={{ opacity: 0.65 }}>{daySh(iso)}</span>
+          </button>
+        ))}
+        <input
+          type="date"
+          value={selectedDay}
+          onChange={e => { if (e.target.value) setSelectedDay(e.target.value) }}
+          style={{ background: C.inp, border: '1px solid ' + C.bd, borderRadius: 6, color: C.tx, fontSize: 12, padding: '5px 8px', fontFamily: 'inherit' }}
+        />
+        {isPlanning && (
+          <>
+            <span style={{ fontSize: 13, fontWeight: 900, color: C.am, letterSpacing: 0.5 }}>
+              PLANNING — {dayFull(selectedDay).toUpperCase()}
+            </span>
+            <button onClick={() => setSelectedDay(today)}
+              style={{ background: 'transparent', border: '1px solid ' + C.bd, borderRadius: 6, color: C.dm, fontSize: 11, fontWeight: 700, padding: '4px 10px', cursor: 'pointer', fontFamily: 'inherit' }}>
+              ← back to live
+            </button>
+          </>
+        )}
+      </div>
 
       {/* ── Scope pills ── */}
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -382,51 +506,137 @@ export function Board() {
           ))}
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14, fontSize: 14, fontWeight: 800 }}>
-          <span style={{ color: C.gn }}>{avail.length} AVAILABLE</span>
-          <span style={{ color: C.rd }}>{onCall.length} ON CALL</span>
-          {claimed.length > 0 && <span style={{ color: C.cy }}>{claimed.length} CLAIMED</span>}
+          {isPlanning ? (
+            <>
+              <span style={{ color: C.gn }}>{planScheduled.length} SCHEDULED</span>
+              <span style={{ color: C.am }}>{planOff.length} OFF</span>
+            </>
+          ) : (
+            <>
+              <span style={{ color: C.gn }}>{avail.length} AVAILABLE</span>
+              <span style={{ color: C.rd }}>{onCall.length} ON CALL</span>
+              {claimed.length > 0 && <span style={{ color: C.cy }}>{claimed.length} CLAIMED</span>}
+            </>
+          )}
         </div>
       </div>
 
-      {/* ── Main: driver sections + open-calls rail ── */}
+      {/* ── Main: driver sections + calls rail ── */}
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
 
-          <SectionHeader label="AVAILABLE" count={avail.length} color={C.gn} />
-          {avail.length === 0 && <EmptyNote text="No drivers available right now." />}
-          <div className="board-grid">
-            {avail.map(s => <DriverCard key={s.driver.id} status={s} now={now} />)}
-          </div>
-
-          <SectionHeader label="ON CALL" count={onCall.length} color={C.rd} />
-          {onCall.length === 0 && <EmptyNote text="Nobody is on a call." />}
-          <div className="board-grid board-grid--wide">
-            {onCall.map(s => <DriverCard key={s.driver.id} status={s} now={now} />)}
-          </div>
-
-          {claimed.length > 0 && (
+          {isPlanning ? (
             <>
-              <SectionHeader label="CLAIMED — PENDING IN TOWBOOK" count={claimed.length} color={C.cy} />
-              <div className="board-grid board-grid--wide">
-                {claimed.map(s => (
-                  <DriverCard key={s.driver.id} status={s} now={now}
-                    onRelease={s.job ? () => releaseDriver(s.job as Job, s.driver.id) : undefined} />
+              {/* Planning view: roster preview for the selected day */}
+              <SectionHeader label="SCHEDULED" count={planScheduled.length} color={C.gn} />
+              {planScheduled.length === 0 && <EmptyNote text="Nobody scheduled for this day (yet) — shifts come from the Scheduler app." />}
+              <div className="board-grid">
+                {planScheduled.map(p => (
+                  <div key={p.driver.id} style={{ background: C.cd, border: '1px solid ' + C.bd, borderLeft: '6px solid ' + C.gn, borderRadius: 10, padding: '12px 14px' }}>
+                    <div style={{ fontSize: 21, fontWeight: 900, lineHeight: 1.12 }}>{p.driver.name}</div>
+                    <div style={{ marginTop: 6, fontSize: 14, color: C.gn, fontWeight: 700 }}>{p.shiftStart} – {p.shiftEnd}</div>
+                    {p.driver.truck && <div style={{ marginTop: 2, fontSize: 12, color: C.dm }}>#{p.driver.truck}</div>}
+                  </div>
                 ))}
               </div>
+
+              <SectionHeader label="OFF" count={planOff.length} color={C.am} />
+              {planOff.length === 0 && <EmptyNote text="Nobody marked off." />}
+              <div className="board-grid">
+                {planOff.map(p => (
+                  <div key={p.driver.id} style={{ background: C.cd, border: '1px solid ' + C.bd, borderLeft: '6px solid ' + C.am, borderRadius: 10, padding: '12px 14px', opacity: 0.85 }}>
+                    <div style={{ fontSize: 21, fontWeight: 900, lineHeight: 1.12 }}>{p.driver.name}</div>
+                    <div style={{ marginTop: 6, fontSize: 13, color: C.am, fontWeight: 800, textTransform: 'uppercase' }}>{p.offReason ?? 'off'}</div>
+                  </div>
+                ))}
+              </div>
+
+              {planNot.length > 0 && (
+                <div style={{ marginTop: 22, borderTop: '1px solid ' + C.bd, paddingTop: 10, opacity: 0.75 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.2, color: C.dm, marginBottom: 8 }}>NOT SCHEDULED</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {planNot.map(p => (
+                      <span key={p.driver.id} style={{ background: C.sf, border: '1px solid ' + C.bd, borderRadius: 6, padding: '4px 10px', fontSize: 12, color: C.tx, fontWeight: 700 }}>
+                        {p.driver.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <SectionHeader label="AVAILABLE" count={avail.length} color={C.gn} />
+              {avail.length === 0 && <EmptyNote text="No drivers available right now." />}
+              <div className="board-grid">
+                {avail.map(s => (
+                  <DriverCard key={s.driver.id} status={s} now={now}
+                    draggable
+                    onDragStart={e => e.dataTransfer.setData('text/driver-id', String(s.driver.id))}
+                    onClaim={() => setClaimTarget(s.driver)} />
+                ))}
+              </div>
+
+              <SectionHeader label="ON CALL" count={onCall.length} color={C.rd} />
+              {onCall.length === 0 && <EmptyNote text="Nobody is on a call." />}
+              <div className="board-grid board-grid--wide">
+                {onCall.map(s => <DriverCard key={s.driver.id} status={s} now={now} />)}
+              </div>
+
+              {/* Always rendered live — it's also the drop target for claiming */}
+              <div
+                onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={e => {
+                  e.preventDefault()
+                  setDragOver(false)
+                  const id = Number(e.dataTransfer.getData('text/driver-id'))
+                  const d = drivers.find(x => x.id === id)
+                  if (d) setClaimTarget(d)
+                }}
+                style={{ outline: dragOver ? `2px dashed ${C.cy}` : 'none', outlineOffset: 4, borderRadius: 10 }}
+              >
+                <SectionHeader label="CLAIMED — PENDING IN TOWBOOK" count={claimed.length} color={C.cy} />
+                {claimed.length === 0 && (
+                  <EmptyNote text="Phone call before it's in TowBook? Drag an available driver here (or hit claim →) to mark them spoken for." />
+                )}
+                <div className="board-grid board-grid--wide">
+                  {claimed.map(s => (
+                    <DriverCard key={s.driver.id} status={s} now={now}
+                      onRelease={() => {
+                        if (s.job) releaseDriver(s.job, s.driver.id)
+                        releaseClaim(s.driver.id)
+                      }} />
+                  ))}
+                </div>
+              </div>
+
+              <OffStrip statuses={offish} />
             </>
           )}
-
-          <OffStrip statuses={offish} />
         </div>
 
-        <OpenCallsRail
-          openCalls={board.openCalls}
-          unmatchedCalls={board.unmatchedCalls}
-          availableDrivers={avail.map(s => s.driver)}
-          bucket={bucket}
-          team={team}
-          onAssign={assignDriver}
-        />
+        {isPlanning ? (
+          <OpenCallsRail
+            openCalls={planOpen}
+            unmatchedCalls={[]}
+            availableDrivers={planScheduled.map(p => p.driver)}
+            bucket={bucket}
+            team={team}
+            onAssign={assignPlanned}
+            title={`CALLS ${daySh(selectedDay)}`}
+            assignedCalls={planAssigned}
+          />
+        ) : (
+          <OpenCallsRail
+            openCalls={board.openCalls}
+            unmatchedCalls={board.unmatchedCalls}
+            availableDrivers={avail.map(s => s.driver)}
+            bucket={bucket}
+            team={team}
+            onAssign={assignDriver}
+          />
+        )}
       </div>
 
       {/* ── Overlays ── */}
@@ -455,6 +665,55 @@ export function Board() {
           onCreateNew={onMatchCreateNew}
         />
       )}
+      {claimTarget && (
+        <ClaimModal
+          driver={claimTarget}
+          onCancel={() => setClaimTarget(null)}
+          onClaim={note => { claimDriver(claimTarget.id, note); setClaimTarget(null) }}
+        />
+      )}
+    </div>
+  )
+}
+
+function ClaimModal({ driver, onClaim, onCancel }: {
+  driver: Driver
+  onClaim: (note: string) => void
+  onCancel: () => void
+}) {
+  const [note, setNote] = useState('')
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.7)', zIndex: 950, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onClick={e => { if (e.target === e.currentTarget) onCancel() }}>
+      <div style={{ background: C.bg, border: '1px solid ' + C.cy, borderRadius: 12, padding: 20, width: 400 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: C.cy, marginBottom: 4, letterSpacing: 1 }}>CLAIM DRIVER</div>
+        <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}>{driver.name}</div>
+        <div style={{ fontSize: 12, color: C.dm, marginBottom: 10, lineHeight: 1.5 }}>
+          Marks them as spoken for. The card will remind you to enter the call in TowBook
+          and assign them there — once TowBook confirms, this converges to ON CALL automatically.
+        </div>
+        <input
+          autoFocus
+          placeholder="what for? (optional — shows on the card)"
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') onClaim(note)
+            if (e.key === 'Escape') onCancel()
+          }}
+          style={{ background: C.inp, border: '1px solid ' + C.bd, borderRadius: 6, padding: '9px 10px', color: C.tx, fontSize: 13, width: '100%', boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }}
+        />
+        <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
+          <button onClick={onCancel}
+            style={{ background: 'transparent', color: C.dm, border: '1px solid ' + C.bd, borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+            Cancel
+          </button>
+          <button onClick={() => onClaim(note)}
+            style={{ background: C.cy, color: '#04222b', border: 'none', borderRadius: 6, padding: '8px 18px', fontSize: 12, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>
+            Claim
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

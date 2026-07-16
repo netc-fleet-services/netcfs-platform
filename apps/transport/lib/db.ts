@@ -84,6 +84,13 @@ export const db = {
     return (data || []).map(jobToApp)
   },
 
+  // All jobs booked for one specific day (planning view for tomorrow etc.).
+  async loadJobsForDay(dayISO: string): Promise<Job[]> {
+    const { data, error } = await sb.from('jobs').select('*').eq('day', dayISO).order('added_at')
+    if (error) { console.error('db.loadJobsForDay:', error); return [] }
+    return (data || []).map(jobToApp)
+  },
+
   // Targeted column update — used by board actions (assign / release / notes).
   // Never full-row upserts: the TowBook sync owns most job columns.
   async updateJobFields(id: string, fields: Record<string, unknown>): Promise<void> {

@@ -19,7 +19,7 @@ export type BoardState = 'ON_CALL' | 'CLAIMED' | 'AVAILABLE' | 'OUT_OF_SHIFT' | 
 export interface DriverBoardStatus {
   driver: Driver
   state: BoardState
-  job: Job | null              // primary job for ON_CALL / CLAIMED
+  job: Job | null              // primary job for ON_CALL / CLAIMED (null for job-less manual claims)
   extraJobs: Job[]             // other simultaneous commitments ("+N more")
   activeSince: Date | null
   estHours: number | null      // null when jobTotal is NaN (missing/TBD address)
@@ -30,7 +30,13 @@ export interface DriverBoardStatus {
   shiftStart: string | null    // display "H:MM AM"
   shiftEnd: string | null
   shiftPhase: 'before' | 'after' | null
+  claimedAt: Date | null       // manual claim timestamp (dispatcher grabbed the driver)
+  claimNote: string | null     // optional "claimed for …" note
 }
+
+// Manual (job-less) claims: dispatcher grabbed a driver before the call exists
+// in TowBook. Stored in settings key 'manual_claims', keyed by driver id.
+export type ManualClaims = Record<string, { at: string; note?: string }>
 
 export interface BoardInputs {
   drivers: Driver[]            // display set (already bucket+team filtered)
@@ -38,6 +44,7 @@ export interface BoardInputs {
   schedule: ScheduleEntry[]    // rows for yesterday + today (overnight carry-over)
   jobs: Job[]                  // today's jobs + all status='active' (any day)
   aliases: Record<string, number>  // normalized tb name → driver id (settings)
+  manualClaims: ManualClaims
   now: Date
   todayISO: string
   yesterdayISO: string
@@ -74,7 +81,7 @@ function fmtHM(d: Date): string {
 }
 
 export function computeBoard(inp: BoardInputs): BoardResult {
-  const { drivers, allDrivers, schedule, jobs, aliases, now, todayISO, yesterdayISO } = inp
+  const { drivers, allDrivers, schedule, jobs, aliases, manualClaims, now, todayISO, yesterdayISO } = inp
 
   // Roster name → id. Duplicate normalized names disable name-resolution for
   // that name (misattribution is worse than an unmatched call).
@@ -140,6 +147,7 @@ export function computeBoard(inp: BoardInputs): BoardResult {
       driver: d, state: 'NOT_SCHEDULED', job: null, extraJobs: [],
       activeSince: null, estHours: null, freeAt: null, overdue: false,
       actionStatus: null, offReason: null, shiftStart: null, shiftEnd: null, shiftPhase: null,
+      claimedAt: null, claimNote: null,
     }
 
     // 1 — ON_CALL: TowBook itself has this driver on an active call
@@ -159,19 +167,23 @@ export function computeBoard(inp: BoardInputs): BoardResult {
       continue
     }
 
-    // 2 — CLAIMED: assigned on the board, not confirmed by TowBook yet
+    // 2 — CLAIMED: assigned on the board (to a job) and/or manually claimed by
+    // a dispatcher before the call exists in TowBook. Not confirmed by TowBook.
     const claimed = jobs.filter(j => {
       const o = occ.get(j.id)!
       if (!o.boardIds.has(d.id) || o.tbIds.has(d.id)) return false
       return j.status === 'active' || (j.status === 'scheduled' && j.day === todayISO)
     })
-    if (claimed.length) {
-      const p = claimed[0]
-      const t = timing(p)
+    const mc = manualClaims[String(d.id)]
+    if (claimed.length || mc) {
+      const p = claimed[0] ?? null
+      const t = p ? timing(p) : { activeSince: null, estHours: null, freeAt: null }
       statuses.push({
         ...base, state: 'CLAIMED', job: p, extraJobs: claimed.slice(1),
         activeSince: t.activeSince, estHours: t.estHours, freeAt: t.freeAt,
-        actionStatus: p.actionStatus,
+        actionStatus: p?.actionStatus ?? null,
+        claimedAt: mc ? new Date(mc.at) : null,
+        claimNote: mc?.note ?? null,
       })
       continue
     }
@@ -233,4 +245,48 @@ export function computeBoard(inp: BoardInputs): BoardResult {
   }
 
   return { statuses, openCalls, unmatchedCalls }
+}
+
+// ── Planning view for a non-today date ──────────────────────────────
+// No live call data for other days — just who's scheduled / off / absent.
+
+export type PlanState = 'SCHEDULED' | 'OFF' | 'NOT_SCHEDULED'
+
+export interface DriverDayPlan {
+  driver: Driver
+  state: PlanState
+  shiftStart: string | null
+  shiftEnd: string | null
+  offReason: string | null
+  sortKey: number   // minutes-from-midnight of shift start (for ordering)
+}
+
+export function computeDayPlan(drivers: Driver[], schedule: ScheduleEntry[], dayISO: string): DriverDayPlan[] {
+  const byDriver = new Map<number, ScheduleEntry[]>()
+  for (const e of schedule) {
+    if (e.scheduleDate !== dayISO) continue
+    const list = byDriver.get(e.driverId)
+    if (list) list.push(e)
+    else byDriver.set(e.driverId, [e])
+  }
+  return drivers.map(d => {
+    const rows = byDriver.get(d.id) ?? []
+    const off = rows.find(e => e.entryType === 'off')
+    if (off) {
+      return { driver: d, state: 'OFF' as const, shiftStart: null, shiftEnd: null, offReason: off.offReason, sortKey: 9999 }
+    }
+    const shifts = rows.filter(e => e.entryType === 'shift' && e.startTime && e.endTime)
+    if (shifts.length) {
+      const first = shifts.reduce((a, b) => ((a.startTime ?? '') <= (b.startTime ?? '') ? a : b))
+      const w = windowFor(first)
+      const [hh, mm] = (first.startTime ?? '0:0').split(':').map(Number)
+      return {
+        driver: d, state: 'SCHEDULED' as const,
+        shiftStart: w ? fmtHM(w.start) : null,
+        shiftEnd: w ? fmtHM(w.end) : null,
+        offReason: null, sortKey: hh * 60 + mm,
+      }
+    }
+    return { driver: d, state: 'NOT_SCHEDULED' as const, shiftStart: null, shiftEnd: null, offReason: null, sortKey: 9998 }
+  })
 }
