@@ -2,8 +2,9 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { getSupabaseBrowserClient } from '@netcfs/auth/client'
-import { STATUS, CATEGORY_LABELS } from '@/lib/constants'
+import { STATUS, CATEGORY_LABELS, COMPANY_LABELS } from '@/lib/constants'
 import { SearchBar } from './search-bar'
+import { CompanyFilter } from './company-filter'
 import { LocationFilter } from './location-filter'
 import { CategoryFilter } from './category-filter'
 import { StatusTable } from './status-table'
@@ -73,6 +74,7 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
   const [error, setError] = useState('')
 
   const [search, setSearch] = useState('')
+  const [companyFilter, setCompanyFilter] = useState('all')
   const [locationFilter, setLocationFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [maintenanceFilter, setMaintenanceFilter] = useState(false)
@@ -123,8 +125,22 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
     }
   }, [fetchTrucks, fetchLastSynced, supabase])
 
+  // location_id → company for the top-level Company filter.
+  // Yards without a company are treated as NETC.
+  const locationCompany: Record<string, string> = {}
+  for (const l of locations) locationCompany[l.id] = l.company ?? 'netc'
+
+  const onCompanyChange = (v: string) => {
+    setCompanyFilter(v)
+    // Reset the yard filter if it belongs to a different company
+    if (v !== 'all' && locationFilter !== 'all' && (locationCompany[locationFilter] ?? 'netc') !== v) {
+      setLocationFilter('all')
+    }
+  }
+
   function filterTrucks(list: Truck[]) {
     return list.filter(t => {
+      if (companyFilter !== 'all' && (locationCompany[t.location_id ?? ''] ?? 'netc') !== companyFilter) return false
       if (locationFilter !== 'all' && t.location_id !== locationFilter) return false
       if (categoryFilter !== 'all' && t.category !== categoryFilter) return false
       if (maintenanceFilter && !isPMDue(t)) return false
@@ -302,16 +318,27 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
           </div>
         </div>
 
-        <LocationFilter locations={locations} value={locationFilter} onChange={setLocationFilter} />
+        <CompanyFilter value={companyFilter} onChange={onCompanyChange} />
+        <LocationFilter
+          locations={companyFilter === 'all' ? locations : locations.filter(l => (l.company ?? 'netc') === companyFilter)}
+          value={locationFilter}
+          onChange={setLocationFilter}
+        />
         <CategoryFilter value={categoryFilter} onChange={setCategoryFilter} />
 
         {/* Active filter chips */}
-        {(locationFilter !== 'all' || categoryFilter !== 'all' || search || maintenanceFilter) && (
+        {(companyFilter !== 'all' || locationFilter !== 'all' || categoryFilter !== 'all' || search || maintenanceFilter) && (
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem', marginTop: '-0.25rem' }}>
             {search && (
               <span style={chipStyle}>
                 Search: &ldquo;{search}&rdquo;
                 <button style={chipX} onClick={() => setSearch('')}>×</button>
+              </span>
+            )}
+            {companyFilter !== 'all' && (
+              <span style={chipStyle}>
+                {COMPANY_LABELS[companyFilter] ?? companyFilter}
+                <button style={chipX} onClick={() => setCompanyFilter('all')}>×</button>
               </span>
             )}
             {locationFilter !== 'all' && (
@@ -334,7 +361,7 @@ export function FleetDashboard({ profile }: { profile: FleetProfile }) {
             )}
             <button
               style={{ fontSize: '0.75rem', color: 'var(--on-surface-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0.25rem', textDecoration: 'underline' }}
-              onClick={() => { setSearch(''); setLocationFilter('all'); setCategoryFilter('all'); setMaintenanceFilter(false) }}
+              onClick={() => { setSearch(''); setCompanyFilter('all'); setLocationFilter('all'); setCategoryFilter('all'); setMaintenanceFilter(false) }}
             >
               Clear all
             </button>

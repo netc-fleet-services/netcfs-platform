@@ -48,6 +48,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
   ld_tow:    'LD Tow',
   roadside:  'Roadside',
   transport: 'Transport',
+  other:     'Other',
 }
 
 export const CHANGE_TYPE_LABELS: Record<string, string> = {
