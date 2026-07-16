@@ -1,11 +1,15 @@
 """
 TowBook → Supabase Calls Sync
-Runs every 15 minutes via GitHub Actions.
+Runs every 5 minutes via GitHub Actions (best-effort cron).
 
 Sync logic:
   - New call (in TowBook, not in DB)       → INSERT
   - Existing call (in both)                → UPDATE address/schedule fields, preserve yard/driver assignments
-  - Jobs are NEVER deleted — kept for historical reporting in the History tab.
+  - Jobs are NEVER deleted — kept for historical reporting.
+  - Live-board fields: `action_status` persists the raw TowBook action text;
+    `active_since` is stamped on the FIRST transition into status=active and
+    kept stable across re-syncs (the board computes free_at = active_since +
+    calculated job duration).
 
 Scrapes three tabs in precedence order: Scheduled → Current → Active.
 If the same call number appears in multiple tabs, the higher-precedence tab wins.
@@ -462,7 +466,7 @@ def sync_to_supabase(tb_calls):
                "pickup_zip, drop_zip, pickup_lat, pickup_lon, drop_lat, drop_lon, "
                "tb_scheduled, tb_reason, tb_driver, tb_driver_2, truck_and_equipment, day, "
                "yard_id, driver_id, driver_id_2, status, priority, notes, stops, added_at, "
-               "job_type, job_type_override")
+               "job_type, job_type_override, action_status, active_since")
     _PAGE = 1000
     all_jobs: list = []
     _offset = 0
@@ -568,6 +572,14 @@ def sync_to_supabase(tb_calls):
             row["notes"]       = ex.get("notes")
             row["stops"]       = ex.get("stops") or []
             row["status"]      = derived_status if derived_status is not None else ex["status"]
+            # Live-board fields: persist the raw TowBook action status, and stamp
+            # active_since on the FIRST transition into active (stable across
+            # subsequent syncs; reset only if the job re-enters active later).
+            row["action_status"] = call.get("action_status") or ex.get("action_status")
+            if row["status"] == "active" and (ex.get("status") != "active" or not ex.get("active_since")):
+                row["active_since"] = now
+            else:
+                row["active_since"] = ex.get("active_since")
             # Preserve manually-overridden job_type; otherwise re-classify from tb_reason
             if ex.get("job_type_override"):
                 row["job_type"]          = ex.get("job_type")
@@ -584,6 +596,8 @@ def sync_to_supabase(tb_calls):
             row["stops"]             = []
             row["added_at"]          = now
             row["status"]            = derived_status if derived_status is not None else "scheduled"
+            row["action_status"]     = call.get("action_status") or None
+            row["active_since"]      = now if row["status"] == "active" else None
             row["job_type"]          = classify_job_type(tb_reason_final)
             row["job_type_override"] = False
             inserts.append(row)
@@ -598,7 +612,7 @@ def sync_to_supabase(tb_calls):
     ]
     if vanished:
         ids = [ex["id"] for ex in vanished]
-        sb.from_("jobs").update({"status": "complete", "updated_at": now}).in_("id", ids).execute()
+        sb.from_("jobs").update({"status": "complete", "updated_at": now, "completed_at": now}).in_("id", ids).execute()
         complete_count = len(vanished)
         for ex in vanished:
             print(f"  → {ex['tb_call_num']} left dispatch — marked complete (day {ex.get('day')})")
