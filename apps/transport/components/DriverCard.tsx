@@ -4,6 +4,7 @@ import { C, fmtCall } from '../lib/config'
 import type { DriverBoardStatus } from '../lib/availability'
 import { cityFrom } from '../lib/geo'
 import { fT } from '../lib/utils'
+import { CallChips } from './CallChips'
 
 const STATE_COLOR: Record<string, { fg: string; bg: string }> = {
   AVAILABLE: { fg: C.gn, bg: C.gb },
@@ -124,9 +125,7 @@ export function DriverCard({ status: s, now, onRelease, onClaim, draggable, onDr
             ))}
           </div>
 
-          {s.extraJobs.length > 0 && (
-            <div style={{ marginTop: 4, fontSize: 11, color: C.dm }}>+{s.extraJobs.length} more call{s.extraJobs.length === 1 ? '' : 's'}</div>
-          )}
+          <CallChips jobs={s.extraJobs} />
         </div>
       )}
     </div>
