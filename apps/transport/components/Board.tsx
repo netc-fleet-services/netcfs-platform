@@ -5,12 +5,12 @@ import { db, jobToApp } from '../lib/db'
 import { sb } from '../lib/supabase'
 import {
   BOARD, C, COMPANY_ORDER, DEFAULT_YARDS, YARDS,
-  driverCompany, type TeamId,
+  driverCompany, fmtCall, type TeamId,
 } from '../lib/config'
 import type { Driver, DriverMatchItem, Job, ScheduleEntry, Yard } from '../lib/types'
 import { computeBoard, computeDayPlan, normName, type ManualClaims, type ManualClaimsByDay } from '../lib/availability'
 import { dayFull, dayNm, daySh, fT, genDays, isoD, todayISO } from '../lib/utils'
-import { crd, geoCache, ghRoute, jobCrd, routeCache, routeLookup, yCrd } from '../lib/geo'
+import { cityFrom, crd, geoCache, ghRoute, jobCrd, routeCache, routeLookup, yCrd } from '../lib/geo'
 import { DriverCard } from './DriverCard'
 import { OpenCallsRail } from './OpenCallsRail'
 import { OffStrip } from './OffStrip'
@@ -350,13 +350,14 @@ export function Board() {
 
   // ── Planning-view derivations (selected day ≠ today) ─────────────
   const dayPlan = useMemo(
-    () => computeDayPlan(filteredDrivers, schedule, selectedDay, manualClaims[selectedDay] ?? {}),
-    [filteredDrivers, schedule, selectedDay, manualClaims],
+    () => computeDayPlan(filteredDrivers, drivers, schedule, planJobs, selectedDay, manualClaims[selectedDay] ?? {}, aliases),
+    [filteredDrivers, drivers, schedule, planJobs, selectedDay, manualClaims, aliases],
   )
   const planScheduled = dayPlan.filter(p => p.state === 'SCHEDULED')
     .sort((a, b) => a.sortKey - b.sortKey || a.driver.name.localeCompare(b.driver.name))
   const planClaimed = dayPlan.filter(p => p.state === 'CLAIMED')
-    .sort((a, b) => a.driver.name.localeCompare(b.driver.name))
+    // Real TowBook/board assignments (with a call) first, then bare reservations.
+    .sort((a, b) => Number(!a.job) - Number(!b.job) || a.sortKey - b.sortKey || a.driver.name.localeCompare(b.driver.name))
   const planOff = dayPlan.filter(p => p.state === 'OFF')
   const planNot = dayPlan.filter(p => p.state === 'NOT_SCHEDULED')
 
@@ -625,6 +626,7 @@ export function Board() {
           {isPlanning ? (
             <>
               <span style={{ color: C.gn }}>{planScheduled.length} SCHEDULED</span>
+              {planClaimed.length > 0 && <span style={{ color: C.cy }}>{planClaimed.length} CLAIMED</span>}
               <span style={{ color: C.am }}>{planOff.length} OFF</span>
             </>
           ) : (
@@ -688,17 +690,36 @@ export function Board() {
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
                         <span style={{ fontSize: 21, fontWeight: 900, lineHeight: 1.12 }}>{p.driver.name}</span>
                         {p.driver.truck && <span style={{ fontSize: 13, color: C.dm, fontWeight: 700 }}>#{p.driver.truck}</span>}
-                        <button onClick={() => releaseClaim(p.driver.id, selectedDay)} title="Release this reservation"
-                          style={{ marginLeft: 'auto', background: 'transparent', border: '1px solid ' + C.bd, borderRadius: 6, color: C.dm, fontSize: 11, padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                          ✕ release
-                        </button>
+                        {p.job ? (
+                          <span style={{ marginLeft: 'auto', fontSize: 12, color: C.dm, fontWeight: 700 }}>{fmtCall(p.job.tbCallNum)}</span>
+                        ) : (
+                          <button onClick={() => releaseClaim(p.driver.id, selectedDay)} title="Release this reservation"
+                            style={{ marginLeft: 'auto', background: 'transparent', border: '1px solid ' + C.bd, borderRadius: 6, color: C.dm, fontSize: 11, padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                            ✕ release
+                          </button>
+                        )}
                       </div>
-                      <div style={{ marginTop: 6, fontSize: 13, fontWeight: 800, color: C.cy }}>
-                        RESERVED — ENTER CALL IN TOWBOOK
-                      </div>
+                      {p.job ? (
+                        <>
+                          <div style={{ marginTop: 6, fontSize: 13, fontWeight: 800, color: C.cy }}>
+                            ASSIGNED{p.job.jobType ? ` · ${p.job.jobType}` : ''}
+                          </div>
+                          <div style={{ marginTop: 3, fontSize: 13, color: C.tx, fontWeight: 600 }}>
+                            {cityFrom(p.job.pickupAddr) || '—'} → {cityFrom(p.job.dropAddr) || '—'}
+                          </div>
+                          {p.extraJobs.length > 0 && (
+                            <div style={{ marginTop: 3, fontSize: 11, color: C.dm }}>+{p.extraJobs.length} more call{p.extraJobs.length === 1 ? '' : 's'} this day</div>
+                          )}
+                        </>
+                      ) : (
+                        <div style={{ marginTop: 6, fontSize: 13, fontWeight: 800, color: C.cy }}>
+                          RESERVED — ENTER CALL IN TOWBOOK
+                        </div>
+                      )}
                       {p.claimNote && <div style={{ marginTop: 4, fontSize: 13, color: C.cy, fontWeight: 700 }}>“{p.claimNote}”</div>}
                       <div style={{ marginTop: 4, display: 'flex', gap: 12, fontSize: 12, color: C.dm }}>
                         {p.shiftStart && <span>shift {p.shiftStart} – {p.shiftEnd}</span>}
+                        {p.job?.tbScheduled && <span>{p.job.tbScheduled}</span>}
                         {p.claimedAt && <span>reserved {fT(p.claimedAt)}</span>}
                       </div>
                     </div>

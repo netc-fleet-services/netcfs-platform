@@ -63,6 +63,27 @@ export function normName(s: string | null | undefined): string {
   return String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
+// TowBook name → driver id. Built from the FULL roster so duplicate names can be
+// detected: a normalized name shared by two drivers resolves to null (ambiguous)
+// rather than mis-attributing a call. Falls back to the alias map otherwise.
+export function makeResolver(
+  allDrivers: Driver[],
+  aliases: Record<string, number>,
+): (tbName: string | null | undefined) => number | null {
+  const byName = new Map<string, number | null>()
+  for (const d of allDrivers) {
+    const n = normName(d.name)
+    if (!n) continue
+    byName.set(n, byName.has(n) ? null : d.id)
+  }
+  return (tbName) => {
+    const n = normName(tbName)
+    if (!n) return null
+    if (byName.has(n)) return byName.get(n) ?? null   // null = ambiguous
+    return aliases[n] ?? null
+  }
+}
+
 interface Window { start: Date; end: Date }
 
 // Shift row → concrete Date window. end <= start ⇒ overnight (rolls to next day).
@@ -88,18 +109,7 @@ export function computeBoard(inp: BoardInputs): BoardResult {
 
   // Roster name → id. Duplicate normalized names disable name-resolution for
   // that name (misattribution is worse than an unmatched call).
-  const byName = new Map<string, number | null>()
-  for (const d of allDrivers) {
-    const n = normName(d.name)
-    if (!n) continue
-    byName.set(n, byName.has(n) ? null : d.id)
-  }
-  const resolve = (tbName: string | null | undefined): number | null => {
-    const n = normName(tbName)
-    if (!n) return null
-    if (byName.has(n)) return byName.get(n) ?? null   // null = ambiguous
-    return aliases[n] ?? null
-  }
+  const resolve = makeResolver(allDrivers, aliases)
 
   // Per-job occupancy
   interface Occ { tbIds: Set<number>; boardIds: Set<number>; unmatchedNames: string[] }
@@ -258,19 +268,24 @@ export type PlanState = 'SCHEDULED' | 'CLAIMED' | 'OFF' | 'NOT_SCHEDULED'
 export interface DriverDayPlan {
   driver: Driver
   state: PlanState
+  job: Job | null            // the call they're already assigned to (TowBook or board), if any
+  extraJobs: Job[]           // additional calls that day ("+N more")
   shiftStart: string | null
   shiftEnd: string | null
   offReason: string | null
-  claimedAt: string | null   // ISO — when the dispatcher claimed them for this day
+  claimedAt: string | null   // ISO — when the dispatcher manually reserved them (job-less claim)
   claimNote: string | null
   sortKey: number   // minutes-from-midnight of shift start (for ordering)
 }
 
 export function computeDayPlan(
   drivers: Driver[],
+  allDrivers: Driver[],
   schedule: ScheduleEntry[],
+  jobs: Job[],
   dayISO: string,
   claims: ManualClaims = {},
+  aliases: Record<string, number> = {},
 ): DriverDayPlan[] {
   const byDriver = new Map<number, ScheduleEntry[]>()
   for (const e of schedule) {
@@ -279,6 +294,27 @@ export function computeDayPlan(
     if (list) list.push(e)
     else byDriver.set(e.driverId, [e])
   }
+
+  // Which drivers are already on a call this day — the dispatcher has already
+  // assigned them, whether in TowBook (tb_driver resolves to them) or on the
+  // board (driver_id). Those must read as CLAIMED, not free.
+  const resolve = makeResolver(allDrivers, aliases)
+  const jobsByDriver = new Map<number, Job[]>()
+  const addJob = (id: number | null, j: Job) => {
+    if (id == null) return
+    const l = jobsByDriver.get(id)
+    if (l) { if (!l.includes(j)) l.push(j) }
+    else jobsByDriver.set(id, [j])
+  }
+  for (const j of jobs) {
+    if (j.day !== dayISO) continue                 // guard; loader already scopes by day
+    if (j.status === 'complete') continue          // finished/cancelled calls don't reserve anyone
+    addJob(j.driverId, j)
+    addJob(j.driverId2, j)
+    addJob(resolve(j.tbDriver), j)
+    addJob(resolve(j.tbDriver2), j)
+  }
+
   return drivers.map(d => {
     const rows = byDriver.get(d.id) ?? []
     const off = rows.find(e => e.entryType === 'off')
@@ -297,17 +333,30 @@ export function computeDayPlan(
       sortKey = hh * 60 + mm
     }
 
+    const base = { driver: d, job: null as Job | null, extraJobs: [] as Job[], shiftStart, shiftEnd, offReason: null as string | null, claimedAt: null as string | null, claimNote: null as string | null, sortKey }
+
     if (off) {
-      // Off wins — an off driver can't be sent out, claim or not.
-      return { driver: d, state: 'OFF' as const, shiftStart: null, shiftEnd: null, offReason: off.offReason, claimedAt: null, claimNote: null, sortKey: 9999 }
+      // Off wins — an off driver can't be sent out, claim or not. If they're also
+      // on a call that day it's a scheduling conflict; the call still shows covered
+      // in the rail, so the clash is visible without overriding the OFF status.
+      return { ...base, state: 'OFF' as const, shiftStart: null, shiftEnd: null, offReason: off.offReason, sortKey: 9999 }
     }
+
+    // Already assigned to a call this day → CLAIMED, carrying the call itself.
+    const assigned = (jobsByDriver.get(d.id) ?? []).slice()
+      .sort((a, b) => (a.tbScheduled ?? '').localeCompare(b.tbScheduled ?? '') || (a.tbCallNum ?? '').localeCompare(b.tbCallNum ?? ''))
+    if (assigned.length) {
+      return { ...base, state: 'CLAIMED' as const, job: assigned[0], extraJobs: assigned.slice(1) }
+    }
+
+    // Manual reservation (no call in TowBook yet).
     const mc = claims[String(d.id)]
     if (mc) {
-      return { driver: d, state: 'CLAIMED' as const, shiftStart, shiftEnd, offReason: null, claimedAt: mc.at, claimNote: mc.note ?? null, sortKey }
+      return { ...base, state: 'CLAIMED' as const, claimedAt: mc.at, claimNote: mc.note ?? null }
     }
     if (shifts.length) {
-      return { driver: d, state: 'SCHEDULED' as const, shiftStart, shiftEnd, offReason: null, claimedAt: null, claimNote: null, sortKey }
+      return { ...base, state: 'SCHEDULED' as const }
     }
-    return { driver: d, state: 'NOT_SCHEDULED' as const, shiftStart: null, shiftEnd: null, offReason: null, claimedAt: null, claimNote: null, sortKey }
+    return { ...base, state: 'NOT_SCHEDULED' as const, shiftStart: null, shiftEnd: null }
   })
 }
