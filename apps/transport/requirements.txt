@@ -1,2 +1,3 @@
 playwright
 supabase
+tzdata          # zoneinfo needs this on Windows (local runs); no-op on Linux CI

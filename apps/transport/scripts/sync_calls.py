@@ -11,17 +11,27 @@ Sync logic:
     kept stable across re-syncs (the board computes free_at = active_since +
     calculated job duration).
 
-Scrapes three tabs in precedence order: Scheduled → Current → Active.
-If the same call number appears in multiple tabs, the higher-precedence tab wins.
-Active has final authority since it reflects the most current in-progress state.
+Scrapes five tabs in precedence order:
+  Scheduled → Current → Active → Completed → Cancelled
+If the same call number appears in multiple tabs, the later tab wins. Completed
+and Cancelled are last so a finished call that TowBook still lists in
+Current/Active is correctly retired instead of pinning its driver forever.
+(Waiting is skipped — Current is its superset: Active + Waiting.)
 
-Completion detection: any job that is status="active" in the DB but no longer
-appears in any scraped tab is assumed to have completed and is marked "complete".
+Completion detection is belt-and-braces:
+  1. Positive — the call turns up in the Completed or Cancelled tab.
+  2. Fallback — it is status="active" in the DB but absent from every tab.
+The fallback is SKIPPED when any live tab failed to scrape, since absence
+proves nothing then and acting on it would blank the whole board.
+
+active_since is parsed from the time TowBook embeds in the action status
+("Towing at 8:19 AM"), NOT from the scrape time — see parse_action_time.
 """
 
 import os, re, uuid, time, json
 import urllib.request, urllib.parse
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from playwright.sync_api import sync_playwright
 from supabase import create_client
 
@@ -273,11 +283,21 @@ def geocode(addr):
 
 # Tabs to scrape, in ascending precedence order — later tabs overwrite earlier
 # ones when the same call number appears in multiple tabs.
+# Completed and Cancelled come LAST on purpose: a call that has finished but is
+# still listed in Current/Active (TowBook does this) must be overridden by its
+# terminal entry, otherwise it pins its driver on the live board indefinitely.
+# Waiting is deliberately absent — Current is its superset (Active + Waiting).
 TABS = [
     ("Scheduled", "#atScheduled"),
     ("Current",   "#atCurrent"),
     ("Active",    "#atActive"),
+    ("Completed", "#atCompleted"),
+    ("Cancelled", "#atCancelled"),
 ]
+
+# Tabs the completion-by-disappearance check depends on. If any of these fails
+# to scrape, "missing from the dispatch" is meaningless and we must not act on it.
+LIVE_TABS = {"Scheduled", "Current", "Active"}
 
 def scrape_tab(page, tab_id, tab_name):
     """Click a dispatch tab and extract all visible call rows. Returns a list of call dicts."""
@@ -399,6 +419,7 @@ def scrape_calls():
     """
     # Keyed by call_num — later tabs overwrite earlier ones for the same key.
     merged = {}
+    failed_tabs = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -425,7 +446,7 @@ def scrape_calls():
         except Exception:
             print("Tab bar not found — DISPATCH_URL may need updating.")
             browser.close()
-            return []
+            return [], False
 
         for tab_name, tab_id in TABS:
             try:
@@ -447,17 +468,66 @@ def scrape_calls():
                 if day_overrides:
                     print(f"    ({day_overrides} future-dated calls kept their scheduled day)")
             except Exception as e:
+                failed_tabs.append(tab_name)
                 print(f"  Warning: failed to scrape {tab_name} tab — {e}")
 
         browser.close()
 
     calls = list(merged.values())
+    live_tabs_ok = not (LIVE_TABS & set(failed_tabs))
+    if failed_tabs:
+        print(f"Tabs that failed to scrape: {', '.join(failed_tabs)}")
     print(f"Total unique calls after merge: {len(calls)}")
-    return calls
+    return calls, live_tabs_ok
+
+# ── Action-status time parsing ─────────────────────────────────────────────────
+
+LOCAL_TZ = ZoneInfo("America/New_York")
+ACTION_TIME_RE = re.compile(r'(\d{1,2}):(\d{2})\s*([AaPp])\.?[Mm]')
+
+
+def parse_action_time(action_status, day_iso):
+    """Pull the real event time TowBook embeds in the action status.
+
+    Every active call carries one:
+      "Towing at 8:19 AM" · "On scene at 9:44 AM" · "Waiting since 4:12 PM"
+      "Rene Robin Enroute to scene 1:28 PM" · "Dispatched to Dan Potter as of 1:52 PM"
+
+    This exists because stamping active_since with the scrape time made every
+    call observed in the same run share a timestamp — a whole batch reading
+    "since 12:02 AM" after the first sync past midnight, which then poisoned
+    free_at (= active_since + job duration) and lit up false DUE BACK alerts.
+
+    Returns a UTC ISO string, or None when nothing parses (caller falls back to
+    the scrape time). TowBook prints a time with no date, so it is anchored to
+    the call's own day; anything landing more than 2h in the future is an
+    overnight wrap ("Waiting since 11:50 PM" read at 12:10 AM) and rolls back.
+    """
+    if not action_status or not day_iso:
+        return None
+    m = ACTION_TIME_RE.search(action_status)
+    if not m:
+        return None
+
+    hour, minute, half = int(m.group(1)), int(m.group(2)), m.group(3).lower()
+    if not (1 <= hour <= 12 and 0 <= minute <= 59):
+        return None
+    hour = hour % 12 + (12 if half == 'p' else 0)   # 12 AM → 0, 12 PM → 12
+
+    try:
+        d = date.fromisoformat(day_iso)
+    except (ValueError, TypeError):
+        return None
+
+    stamp = datetime(d.year, d.month, d.day, hour, minute, tzinfo=LOCAL_TZ)
+    if stamp > datetime.now(LOCAL_TZ) + timedelta(hours=2):
+        stamp -= timedelta(days=1)
+    return stamp.astimezone(timezone.utc).isoformat()
+
 
 # ── Supabase sync ──────────────────────────────────────────────────────────────
 
-def sync_to_supabase(tb_calls):
+def sync_to_supabase(tb_calls, live_tabs_ok=True):
     now = datetime.now(timezone.utc).isoformat()
 
     # Paginate through ALL jobs so existing is always complete — Supabase's default page
@@ -557,6 +627,11 @@ def sync_to_supabase(tb_calls):
             derived_status = "scheduled"
         elif "complet" in act:
             derived_status = "complete"
+        elif "cancel" in act:
+            # Must precede the catch-all: "Cancelled" contains no "complet", so
+            # without this the Cancelled tab would derive as ACTIVE and pin a
+            # driver to a call that was called off.
+            derived_status = "complete"
         elif act:
             derived_status = "active"
         elif call.get("source_tab") == "Active":
@@ -579,10 +654,16 @@ def sync_to_supabase(tb_calls):
             # active_since on the FIRST transition into active (stable across
             # subsequent syncs; reset only if the job re-enters active later).
             row["action_status"] = call.get("action_status") or ex.get("action_status")
-            if row["status"] == "active" and (ex.get("status") != "active" or not ex.get("active_since")):
-                row["active_since"] = now
-            else:
+            if row["status"] != "active":
                 row["active_since"] = ex.get("active_since")
+            elif ex.get("status") == "active" and ex.get("active_since"):
+                # Already running — freeze it. Phases advance (Dispatched →
+                # Enroute → On scene → Towing) and each carries its own time;
+                # active_since must keep meaning "when they started", since
+                # free_at is built on it.
+                row["active_since"] = ex["active_since"]
+            else:
+                row["active_since"] = parse_action_time(row["action_status"], row.get("day")) or now
             # Preserve manually-overridden job_type; otherwise re-classify from tb_reason
             if ex.get("job_type_override"):
                 row["job_type"]          = ex.get("job_type")
@@ -600,7 +681,10 @@ def sync_to_supabase(tb_calls):
             row["added_at"]          = now
             row["status"]            = derived_status if derived_status is not None else "scheduled"
             row["action_status"]     = call.get("action_status") or None
-            row["active_since"]      = now if row["status"] == "active" else None
+            row["active_since"]      = (
+                (parse_action_time(row["action_status"], row.get("day")) or now)
+                if row["status"] == "active" else None
+            )
             row["job_type"]          = classify_job_type(tb_reason_final)
             row["job_type_override"] = False
             inserts.append(row)
@@ -613,6 +697,12 @@ def sync_to_supabase(tb_calls):
         ex for ex in existing.values()
         if ex.get("status") == "active" and ex.get("tb_call_num") not in scraped_nums
     ]
+    if vanished and not live_tabs_ok:
+        # A tab we depend on failed to load, so its calls only LOOK vanished.
+        # Acting here would mark every active call complete and blank the board.
+        print(f"  SKIPPED completing {len(vanished)} vanished jobs — a live tab "
+              f"failed to scrape, so absence proves nothing this run.")
+        vanished = []
     if vanished:
         ids = [ex["id"] for ex in vanished]
         sb.from_("jobs").update({"status": "complete", "updated_at": now, "completed_at": now}).in_("id", ids).execute()
@@ -642,14 +732,14 @@ def sync_to_supabase(tb_calls):
 def main():
     print(f"[{datetime.now(timezone.utc).isoformat()}Z] Starting TowBook → Supabase sync")
 
-    tb_calls = scrape_calls()
+    tb_calls, live_tabs_ok = scrape_calls()
     print(f"Scraped {len(tb_calls)} unique calls across all tabs")
 
     if not tb_calls:
         print("No calls to sync — exiting.")
         return
 
-    sync_to_supabase(tb_calls)
+    sync_to_supabase(tb_calls, live_tabs_ok)
     print("Sync complete.")
 
 
