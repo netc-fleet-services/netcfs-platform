@@ -12,7 +12,7 @@
 //   6. NOT_SCHEDULED
 
 import type { Driver, Job, ScheduleEntry } from './types'
-import { jobTotal } from './utils'
+import { jobTotal, schedMs } from './utils'
 
 export type BoardState = 'ON_CALL' | 'CLAIMED' | 'AVAILABLE' | 'OUT_OF_SHIFT' | 'OFF' | 'NOT_SCHEDULED'
 
@@ -171,9 +171,12 @@ export function computeBoard(inp: BoardInputs): BoardResult {
         .sort((a, b) =>
           (b.freeAt?.getTime() ?? b.activeSince?.getTime() ?? 0) -
           (a.freeAt?.getTime() ?? a.activeSince?.getTime() ?? 0))
+      // Primary = the call they'll be free from LAST, so the countdown is honest.
+      // The other calls become chips, ordered by their scheduled time.
       const p = enriched[0]
+      const extras = enriched.slice(1).map(x => x.j).sort((a, b) => schedMs(a) - schedMs(b))
       statuses.push({
-        ...base, state: 'ON_CALL', job: p.j, extraJobs: enriched.slice(1).map(x => x.j),
+        ...base, state: 'ON_CALL', job: p.j, extraJobs: extras,
         activeSince: p.activeSince, estHours: p.estHours, freeAt: p.freeAt,
         overdue: !!(p.freeAt && now > p.freeAt), actionStatus: p.j.actionStatus,
       })
@@ -189,10 +192,11 @@ export function computeBoard(inp: BoardInputs): BoardResult {
     })
     const mc = manualClaims[String(d.id)]
     if (claimed.length || mc) {
-      const p = claimed[0] ?? null
+      const ordered = claimed.slice().sort((a, b) => schedMs(a) - schedMs(b) || (a.tbCallNum ?? '').localeCompare(b.tbCallNum ?? ''))
+      const p = ordered[0] ?? null   // earliest call headlines
       const t = p ? timing(p) : { activeSince: null, estHours: null, freeAt: null }
       statuses.push({
-        ...base, state: 'CLAIMED', job: p, extraJobs: claimed.slice(1),
+        ...base, state: 'CLAIMED', job: p, extraJobs: ordered.slice(1),
         activeSince: t.activeSince, estHours: t.estHours, freeAt: t.freeAt,
         actionStatus: p?.actionStatus ?? null,
         claimedAt: mc ? new Date(mc.at) : null,
@@ -344,7 +348,7 @@ export function computeDayPlan(
 
     // Already assigned to a call this day → CLAIMED, carrying the call itself.
     const assigned = (jobsByDriver.get(d.id) ?? []).slice()
-      .sort((a, b) => (a.tbScheduled ?? '').localeCompare(b.tbScheduled ?? '') || (a.tbCallNum ?? '').localeCompare(b.tbCallNum ?? ''))
+      .sort((a, b) => schedMs(a) - schedMs(b) || (a.tbCallNum ?? '').localeCompare(b.tbCallNum ?? ''))
     if (assigned.length) {
       return { ...base, state: 'CLAIMED' as const, job: assigned[0], extraJobs: assigned.slice(1) }
     }

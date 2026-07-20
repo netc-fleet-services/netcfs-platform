@@ -31,6 +31,36 @@ export function fT(d: string | Date): string {
 
 export function fMi(m: number | null | undefined): string { return Math.round(m || 0) + ' mi' }
 
+// TowBook's scheduled time is a display string like "7/21/26 11:00 AM".
+// schedMs turns it into a sortable epoch so a driver's calls order by real
+// time — a plain string sort puts "2:00 PM" before "8:00 AM" (2 < 8), which
+// silently broke chronological ordering. Unscheduled → +Infinity (sorts last).
+export function schedMs(job: Pick<Job, 'tbScheduled' | 'day'>): number {
+  const s = (job.tbScheduled ?? '').trim()
+  const full = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})\D+(\d{1,2}):(\d{2})\s*([AaPp])/)
+  if (full) {
+    const [, mo, d, y, hh, mm, ap] = full
+    const year = Number(y) < 100 ? 2000 + Number(y) : Number(y)
+    const h = (Number(hh) % 12) + (ap.toLowerCase() === 'p' ? 12 : 0)
+    return new Date(year, Number(mo) - 1, Number(d), h, Number(mm)).getTime()
+  }
+  // Time-only ("11:00 AM") — anchor to the job's day.
+  const t = s.match(/(\d{1,2}):(\d{2})\s*([AaPp])/)
+  if (t && job.day) {
+    const [, hh, mm, ap] = t
+    const [Y, Mo, D] = job.day.split('-').map(Number)
+    const h = (Number(hh) % 12) + (ap.toLowerCase() === 'p' ? 12 : 0)
+    return new Date(Y, (Mo || 1) - 1, D || 1, h, Number(mm)).getTime()
+  }
+  return Number.POSITIVE_INFINITY
+}
+
+// Short "11:00 AM" label pulled from the scheduled string (date dropped).
+export function schedLabel(job: Pick<Job, 'tbScheduled'>): string {
+  const m = (job.tbScheduled ?? '').match(/(\d{1,2}):(\d{2})\s*([AaPp])/)
+  return m ? `${Number(m[1])}:${m[2]} ${m[3].toUpperCase()}M` : ''
+}
+
 export function dLb(d: { name: string; truck: string }): string {
   return d.truck ? d.name + ' #' + d.truck : d.name
 }

@@ -9,9 +9,10 @@ import {
 } from '../lib/config'
 import type { Driver, DriverMatchItem, Job, ScheduleEntry, Yard } from '../lib/types'
 import { computeBoard, computeDayPlan, normName, type ManualClaims, type ManualClaimsByDay } from '../lib/availability'
-import { dayFull, dayNm, daySh, fT, genDays, isoD, todayISO } from '../lib/utils'
+import { dayFull, dayNm, daySh, fT, genDays, isoD, schedLabel, todayISO } from '../lib/utils'
 import { cityFrom, crd, geoCache, ghRoute, jobCrd, routeCache, routeLookup, yCrd } from '../lib/geo'
 import { DriverCard } from './DriverCard'
+import { CallChips } from './CallChips'
 import { OpenCallsRail } from './OpenCallsRail'
 import { OffStrip } from './OffStrip'
 import { SettingsPanel } from './SettingsPanel'
@@ -701,15 +702,19 @@ export function Board() {
                       </div>
                       {p.job ? (
                         <>
-                          <div style={{ marginTop: 6, fontSize: 13, fontWeight: 800, color: C.cy }}>
-                            ASSIGNED{p.job.jobType ? ` · ${p.job.jobType}` : ''}
+                          {/* Headline = first (earliest) call — lead with its time, big. */}
+                          <div style={{ marginTop: 7, display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 18, fontWeight: 900, letterSpacing: 0.5, color: C.cy, textTransform: 'uppercase', lineHeight: 1 }}>1st call</span>
+                            <span style={{ fontSize: 18, fontWeight: 900, color: C.cy, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
+                              {schedLabel(p.job) || 'time TBD'}
+                            </span>
+                            <span style={{ fontSize: 12, color: C.cy, fontWeight: 700 }}>{fmtCall(p.job.tbCallNum)}</span>
+                            {p.job.jobType && <span style={{ fontSize: 11, color: C.cy, border: '1px solid ' + C.cy, borderRadius: 4, padding: '1px 6px' }}>{p.job.jobType}</span>}
                           </div>
-                          <div style={{ marginTop: 3, fontSize: 13, color: C.tx, fontWeight: 600 }}>
+                          <div style={{ marginTop: 4, fontSize: 13, color: C.tx, fontWeight: 600 }}>
                             {cityFrom(p.job.pickupAddr) || '—'} → {cityFrom(p.job.dropAddr) || '—'}
                           </div>
-                          {p.extraJobs.length > 0 && (
-                            <div style={{ marginTop: 3, fontSize: 11, color: C.dm }}>+{p.extraJobs.length} more call{p.extraJobs.length === 1 ? '' : 's'} this day</div>
-                          )}
+                          <CallChips jobs={p.extraJobs} />
                         </>
                       ) : (
                         <div style={{ marginTop: 6, fontSize: 13, fontWeight: 800, color: C.cy }}>
@@ -717,9 +722,8 @@ export function Board() {
                         </div>
                       )}
                       {p.claimNote && <div style={{ marginTop: 4, fontSize: 13, color: C.cy, fontWeight: 700 }}>“{p.claimNote}”</div>}
-                      <div style={{ marginTop: 4, display: 'flex', gap: 12, fontSize: 12, color: C.dm }}>
+                      <div style={{ marginTop: 6, display: 'flex', gap: 12, fontSize: 12, color: C.dm }}>
                         {p.shiftStart && <span>shift {p.shiftStart} – {p.shiftEnd}</span>}
-                        {p.job?.tbScheduled && <span>{p.job.tbScheduled}</span>}
                         {p.claimedAt && <span>reserved {fT(p.claimedAt)}</span>}
                       </div>
                     </div>
