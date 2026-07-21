@@ -617,24 +617,24 @@ def sync_to_supabase(tb_calls, live_tabs_ok=True):
             "updated_at":   now,
         }
 
-        # Derive status from the action-status field (columnid 14).
-        # "Scheduled for action" → scheduled
-        # anything containing "complet" → complete
-        # any other non-empty value (On Scene, Towing at time, Waiting, …) → active
-        # empty (field not present) → fall back to tab name
+        # Derive status. Tab membership is authoritative for terminal states:
+        # a call in the Completed/Cancelled tab is done even if its action text
+        # still reads "Towing at 8:19 AM" (TowBook freezes the last action on a
+        # call cancelled mid-tow). Only fall back to the action text and the
+        # live tab name for non-terminal tabs.
+        tab = call.get("source_tab")
         act = call.get("action_status", "").strip().lower()
-        if act == "scheduled for action":
+        if tab in ("Completed", "Cancelled"):
+            derived_status = "complete"
+        elif act == "scheduled for action":
             derived_status = "scheduled"
         elif "complet" in act:
             derived_status = "complete"
         elif "cancel" in act:
-            # Must precede the catch-all: "Cancelled" contains no "complet", so
-            # without this the Cancelled tab would derive as ACTIVE and pin a
-            # driver to a call that was called off.
             derived_status = "complete"
         elif act:
             derived_status = "active"
-        elif call.get("source_tab") == "Active":
+        elif tab == "Active":
             derived_status = "active"
         else:
             derived_status = None   # no signal — keep existing DB status or default to scheduled
@@ -690,12 +690,17 @@ def sync_to_supabase(tb_calls, live_tabs_ok=True):
             inserts.append(row)
             new_count += 1
 
-    # Any job that was active in the DB but is no longer in the dispatch
-    # (Scheduled, Current, or Active tabs) has been completed.
+    # A job that was active OR scheduled in the DB but is no longer in ANY tab
+    # has left TowBook — completed or cancelled — so retire it. Scheduled matters
+    # because a call cancelled while still scheduled never becomes 'active', and
+    # would otherwise sit as a phantom open call forever (the Scheduled tab lists
+    # the full future, so absence there is real). If TowBook actually still has
+    # the call, the next scrape sees it and flips it right back.
     scraped_nums = {call["call_num"] for call in tb_calls}
     vanished = [
         ex for ex in existing.values()
-        if ex.get("status") == "active" and ex.get("tb_call_num") not in scraped_nums
+        if ex.get("status") in ("active", "scheduled")
+        and ex.get("tb_call_num") not in scraped_nums
     ]
     if vanished and not live_tabs_ok:
         # A tab we depend on failed to load, so its calls only LOOK vanished.
