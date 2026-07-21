@@ -102,8 +102,12 @@ def get_period() -> tuple[date, date]:
 # ── Data loaders ───────────────────────────────────────────────────────────────
 
 def load_drivers() -> list[dict]:
+    # Active roster only. Deactivated drivers (quit, or merged into another
+    # record) must not keep regenerating stale 0-mile snapshots each run.
+    # Their existing snapshots are left in place as history.
     return fetch_all(lambda: sb.table("drivers")
                      .select("id, name, yard, function")
+                     .eq("active", True)
                      .order("id"))
 
 def load_event_points(period_start: date, period_end: date) -> dict[int, int]:

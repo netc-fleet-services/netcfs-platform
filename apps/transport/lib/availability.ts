@@ -63,24 +63,51 @@ export function normName(s: string | null | undefined): string {
   return String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
-// TowBook name → driver id. Built from the FULL roster so duplicate names can be
-// detected: a normalized name shared by two drivers resolves to null (ambiguous)
-// rather than mis-attributing a call. Falls back to the alias map otherwise.
+export interface NameResolver {
+  // Best single driver id for a TowBook name, or null if unknown/ambiguous.
+  resolve: (tbName: string | null | undefined) => number | null
+  // Every roster id that carries this name (active preferred) — lets a caller
+  // disambiguate an ambiguous name using other evidence (e.g. a board driver_id).
+  candidates: (tbName: string | null | undefined) => number[]
+}
+
+// TowBook name → driver id. Duplicate names are handled two ways so a doubled
+// roster entry can't silently hide a driver:
+//   • Active wins — an inactive duplicate (a merged-away record) never makes a
+//     live name ambiguous.
+//   • Still-ambiguous names resolve to null, but `candidates` exposes the ids so
+//     the board can confirm via a job's driver_id.
 export function makeResolver(
   allDrivers: Driver[],
   aliases: Record<string, number>,
-): (tbName: string | null | undefined) => number | null {
-  const byName = new Map<string, number | null>()
+): NameResolver {
+  const active = new Map<string, number[]>()
+  const all = new Map<string, number[]>()
+  const push = (m: Map<string, number[]>, n: string, id: number) => {
+    const l = m.get(n); if (l) l.push(id); else m.set(n, [id])
+  }
   for (const d of allDrivers) {
     const n = normName(d.name)
     if (!n) continue
-    byName.set(n, byName.has(n) ? null : d.id)
+    push(all, n, d.id)
+    if (d.active) push(active, n, d.id)
   }
-  return (tbName) => {
+  const candsFor = (tbName: string | null | undefined): number[] => {
     const n = normName(tbName)
-    if (!n) return null
-    if (byName.has(n)) return byName.get(n) ?? null   // null = ambiguous
-    return aliases[n] ?? null
+    if (!n) return []
+    const a = active.get(n)
+    return (a && a.length ? a : all.get(n)) ?? []
+  }
+  return {
+    candidates: candsFor,
+    resolve: (tbName) => {
+      const n = normName(tbName)
+      if (!n) return null
+      const cands = candsFor(n)
+      if (cands.length === 1) return cands[0]
+      if (cands.length > 1) return null            // genuinely ambiguous
+      return aliases[n] ?? null
+    },
   }
 }
 
@@ -109,7 +136,7 @@ export function computeBoard(inp: BoardInputs): BoardResult {
 
   // Roster name → id. Duplicate normalized names disable name-resolution for
   // that name (misattribution is worse than an unmatched call).
-  const resolve = makeResolver(allDrivers, aliases)
+  const { resolve, candidates } = makeResolver(allDrivers, aliases)
 
   // Per-job occupancy
   interface Occ { tbIds: Set<number>; boardIds: Set<number>; unmatchedNames: string[] }
@@ -119,7 +146,17 @@ export function computeBoard(inp: BoardInputs): BoardResult {
     const unmatchedNames: string[] = []
     for (const nm of [j.tbDriver, j.tbDriver2]) {
       if (!normName(nm)) continue
-      const id = resolve(nm)
+      let id = resolve(nm)
+      if (id == null) {
+        // Name is ambiguous (two roster rows share it). If dispatch already put
+        // one of those exact candidates on this call via driver_id, trust that
+        // to confirm the TowBook match instead of dropping it to UNMATCHED.
+        const cands = candidates(nm)
+        if (cands.length > 1) {
+          if (j.driverId && cands.includes(j.driverId)) id = j.driverId
+          else if (j.driverId2 && cands.includes(j.driverId2)) id = j.driverId2
+        }
+      }
       if (id != null) tbIds.add(id)
       else unmatchedNames.push(nm)
     }
@@ -302,7 +339,7 @@ export function computeDayPlan(
   // Which drivers are already on a call this day — the dispatcher has already
   // assigned them, whether in TowBook (tb_driver resolves to them) or on the
   // board (driver_id). Those must read as CLAIMED, not free.
-  const resolve = makeResolver(allDrivers, aliases)
+  const { resolve } = makeResolver(allDrivers, aliases)
   const jobsByDriver = new Map<number, Job[]>()
   const addJob = (id: number | null, j: Job) => {
     if (id == null) return
