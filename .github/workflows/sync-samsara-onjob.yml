@@ -1,0 +1,52 @@
+# ═══════════════════════════════════════════════
+# Samsara → Supabase "On Job" Sync
+#
+# Sets trucks.on_job (the fleet tracker's "On Job" badge) from live Samsara
+# vehicle state, and stamps settings.last_synced_on_job. Replaces an
+# out-of-repo sync that silently stopped on 2026-06-19.
+#
+# Runs every 10 minutes, or on-demand via the Actions "Run workflow" button.
+#
+# Required repository secrets (already configured for the other Samsara syncs):
+#   SAMSARA_API_KEY      — Samsara API token
+#   SUPABASE_URL         — from Supabase Dashboard → Settings → API
+#   SUPABASE_SERVICE_KEY — service role key (bypasses RLS) — NOT the anon key
+# ═══════════════════════════════════════════════
+
+name: Sync Samsara On-Job
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # every 10 minutes (best-effort)
+  workflow_dispatch:          # allow manual trigger
+
+# Never let two runs overlap.
+concurrency:
+  group: sync-samsara-onjob
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/inspections/requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r apps/inspections/requirements.txt
+
+      - name: Run on-job sync
+        env:
+          SAMSARA_API_KEY:      ${{ secrets.SAMSARA_API_KEY }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python apps/inspections/scripts/sync_samsara_onjob.py
